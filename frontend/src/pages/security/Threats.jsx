@@ -10,6 +10,15 @@ import S1Mttr from '../CyberHygen/S1Mttr.jsx';
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
 const tooltipStyle = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12 };
 
+// Shared donut styling so every pie chart in this file looks the same:
+// thick ring, rounded segment caps, and a bit of breathing room between slices.
+const DONUT_PROPS = {
+  innerRadius: '55%',
+  outerRadius: '85%',
+  cornerRadius: 10,
+  paddingAngle: 3,
+};
+
 // Canonical ATT&CK kill-chain order — S1's tactic names are matched against
 // this case-insensitively; anything unmatched falls into a trailing 'Other'
 // column so no observed data is silently dropped.
@@ -60,6 +69,61 @@ function topN(counts, n) {
     .sort((a, b) => b[1] - a[1])
     .slice(0, n)
     .map(([name, value]) => ({ name, value }));
+}
+
+// Donut chart with its legend split left/right of the ring (rather than
+// below it). Each entry needs { name, value, fill }. onSliceClick receives
+// the clicked entry's data, same as recharts' native Pie onClick.
+function LegendItem({ color, name, value }) {
+  return (
+    <div className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--foreground)' }}>
+      <span
+        className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
+        style={{ backgroundColor: color }}
+      />
+      <span className="font-semibold whitespace-nowrap">{name}</span>
+      <span className="text-[var(--muted)]">({value})</span>
+    </div>
+  );
+}
+
+function SideLegendDonut({ data, onSliceClick }) {
+  const midpoint = Math.ceil(data.length / 2);
+  const leftItems = data.slice(0, midpoint);
+  const rightItems = data.slice(midpoint);
+
+  return (
+    <div className="flex items-center h-full px-2 gap-2">
+      <div className="flex flex-col gap-4 shrink-0">
+        {leftItems.map((d) => (
+          <LegendItem key={d.name} color={d.fill} name={d.name} value={d.value} />
+        ))}
+      </div>
+      <div className="flex-1 min-w-0 h-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={data}
+              dataKey="value"
+              {...DONUT_PROPS}
+              cursor="pointer"
+              onClick={onSliceClick}
+            >
+              {data.map((entry, i) => <Cell key={i} fill={entry.fill} stroke="none" />)}
+            </Pie>
+            <Tooltip contentStyle={tooltipStyle} />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+      {rightItems.length > 0 && (
+        <div className="flex flex-col gap-4 shrink-0">
+          {rightItems.map((d) => (
+            <LegendItem key={d.name} color={d.fill} name={d.name} value={d.value} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function KpiCard({ title, value, subtitle, accent, onClick }) {
@@ -259,9 +323,6 @@ export default function Threats() {
   const mitreData = useMemo(() => {
     const c = {};
     threats.forEach((t) => {
-      // A threat can list the same technique across multiple indicator
-      // entries — dedupe per threat so counts match DetailView's per-threat
-      // `.some()` filter instead of counting every occurrence.
       const seen = new Set();
       (t.indicators || []).forEach((ind) => {
         (ind.tactics || []).forEach((tac) => {
@@ -277,10 +338,6 @@ export default function Threats() {
     const byTactic = {};
     matrixFilter.filtered.forEach((t) => {
       const isUnresolved = ['unresolved', 'active'].includes(t.threatInfo?.incidentStatus);
-      // A single threat can repeat the same technique across multiple
-      // indicator entries under the same tactic — dedupe per (tactic,
-      // technique) cell so one threat contributes at most once, matching
-      // the per-threat count shown when drilling into DetailView.
       const seenCells = new Set();
       (t.indicators || []).forEach((ind) => {
         (ind.tactics || []).forEach((tac) => {
@@ -429,8 +486,6 @@ export default function Threats() {
     );
   }
 
-
-
   return (
     <div className="p-4 sm:p-6 space-y-6">
 
@@ -470,14 +525,24 @@ export default function Threats() {
 
       {/* KPI row */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <KpiCard title="Total Threats" value={kpis.total} accent="#3b82f6" />
+        <KpiCard title="Total Threats" value={kpis.total} accent="#3b82f6"
+          onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'total_threats', title: 'Total threats' } })} />
+
         <KpiCard title="Mitigated" value={kpis.mitigated} accent="#10b981"
-          subtitle={`${kpis.total > 0 ? Math.round((kpis.mitigated / kpis.total) * 100) : 0}% of total`} />
+          subtitle={`${kpis.total > 0 ? Math.round((kpis.mitigated / kpis.total) * 100) : 0}% of total`}
+          onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mitigated', value: 'mitigated', title: 'Mitigated Threats' } })} />
+
         <KpiCard title="Unresolved" value={kpis.unresolved} accent="#ef4444"
-          onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'unresolved', title: 'Unresolved Threats' } })} />
-        <KpiCard title="Fileless" value={kpis.fileless} accent="#f59e0b" />
-        <KpiCard title="Avg MTTD" value={formatDuration(kpis.avgMttd)} accent="#8b5cf6" subtitle="time to detect" />
-        <KpiCard title="Avg MTTM" value={formatDuration(kpis.avgMttm)} accent="#06b6d4" subtitle="time to mitigate" />
+          onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'unresolved_threats', title: 'Unresolved Threats' } })} />
+
+        <KpiCard title="Fileless" value={kpis.fileless} accent="#f59e0b"
+          onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'fileless', value: 'true', title: 'Fileless Threats' } })} />
+
+        <KpiCard title="Avg MTTD" value={formatDuration(kpis.avgMttd)} accent="#8b5cf6" subtitle="time to detect"
+          onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mttd', title: 'Mean Time to Detect' } })} />
+
+        <KpiCard title="Avg MTTM" value={formatDuration(kpis.avgMttm)} accent="#06b6d4" subtitle="time to mitigate"
+          onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mttm', title: 'Mean Time to Mitigate' } })} />
       </div>
 
       {/* Threat Trend */}
@@ -488,8 +553,9 @@ export default function Threats() {
             <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
             <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--muted)' }} tickFormatter={(v) => v.slice(5)} />
             <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-            <Tooltip contentStyle={tooltipStyle} />
-            <Line type="monotone" dataKey="count" stroke="#3b82f6" strokeWidth={2} dot={false} name="Threats" />
+            <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'var(--card-bg)' }} />
+            <Line type="monotone" dataKey="count" stroke="#3b82f6" strokeWidth={2} dot={false} name="Threats"
+              onClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'threatTrend', value: data.date, title: `Threats on ${data.date}` } })} />
           </LineChart>
         </ResponsiveContainer>
       </ChartCard>
@@ -530,46 +596,30 @@ export default function Threats() {
 
       {/* Classification + Fileless + Mitigation Outcomes */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <ChartCard title="Classification" height={240}
+        <ChartCard title="Classification" height={280}
           controls={<DateFilter from={classFilter.from} to={classFilter.to} onFromChange={classFilter.setFrom} onToChange={classFilter.setTo} onClear={classFilter.clear} />}>
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie data={classificationData} innerRadius="38%" outerRadius="62%" dataKey="value" paddingAngle={2} cursor="pointer"
-                onClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'classification', value: data.name, title: `${data.name} Threats` } })}>
-                {classificationData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
-              </Pie>
-              <Tooltip contentStyle={tooltipStyle} />
-              <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
-            </PieChart>
-          </ResponsiveContainer>
+          <SideLegendDonut
+            data={classificationData}
+            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'classification', value: data.name, title: `${data.name} Threats` } })}
+          />
         </ChartCard>
 
-        <ChartCard title="Fileless vs File-based" height={240}
+        <ChartCard title="Fileless vs File-based" height={280}
           controls={<DateFilter from={filelessFilter.from} to={filelessFilter.to} onFromChange={filelessFilter.setFrom} onToChange={filelessFilter.setTo} onClear={filelessFilter.clear} />}>
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie data={filelessData} innerRadius="38%" outerRadius="62%" dataKey="value" paddingAngle={2}>
-                {filelessData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
-              </Pie>
-              <Tooltip contentStyle={tooltipStyle} />
-              <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
-            </PieChart>
-          </ResponsiveContainer>
+          <SideLegendDonut
+            data={filelessData}
+            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: data.name === 'Fileless' ? 'fileless' : 'fileless_type', value: data.name === 'Fileless' ? 'true' : 'false', title: `${data.name} Threats` } })}
+          />
         </ChartCard>
 
-        <ChartCard title="Mitigation Outcomes" height={240}
+        <ChartCard title="Mitigation Outcomes" height={280}
           controls={<DateFilter from={mitigFilter.from} to={mitigFilter.to} onFromChange={mitigFilter.setFrom} onToChange={mitigFilter.setTo} onClear={mitigFilter.clear} />}>
           {mitigationRateData.length === 0
             ? <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No mitigation data</p></div>
-            : <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={mitigationRateData} innerRadius="38%" outerRadius="62%" dataKey="value" paddingAngle={2}>
-                  {mitigationRateData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
-                </Pie>
-                <Tooltip contentStyle={tooltipStyle} />
-                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
-              </PieChart>
-            </ResponsiveContainer>
+            : <SideLegendDonut
+                data={mitigationRateData}
+                onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mitigationStatusArray', value: data.name, title: `Threats with ${data.name} status` } })}
+              />
           }
         </ChartCard>
       </div>
@@ -586,7 +636,8 @@ export default function Threats() {
                 <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={110} />
                 <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
                 <Tooltip contentStyle={tooltipStyle} />
-                <Bar dataKey="value" fill="#f59e0b" radius={[0, 4, 4, 0]} maxBarSize={18} name="Threats" />
+                <Bar dataKey="value" fill="#f59e0b" radius={[0, 4, 4, 0]} maxBarSize={18} name="Threats" cursor="pointer"
+                  onClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'processUser', value: data.name, title: `Threats by user ${data.name}` } })} />
               </BarChart>
             </ResponsiveContainer>
           }
@@ -594,52 +645,12 @@ export default function Threats() {
 
         <ChartCard title="Severity / Confidence Distribution" height={280}
           controls={<DateFilter from={severityFilter.from} to={severityFilter.to} onFromChange={severityFilter.setFrom} onToChange={severityFilter.setTo} onClear={severityFilter.clear} />}>
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie data={severityData} innerRadius="38%" outerRadius="62%" dataKey="value" paddingAngle={2}>
-                {severityData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
-              </Pie>
-              <Tooltip contentStyle={tooltipStyle} />
-              <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
-            </PieChart>
-          </ResponsiveContainer>
+          <SideLegendDonut
+            data={severityData}
+            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'confidenceLevel', value: data.name, title: `Threats with ${data.name} confidence` } })}
+          />
         </ChartCard>
       </div>
-
-      {/* MTTD + MTTM trends */}
-      {/* <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ChartCard title="MTTD Trend" subtitle="Mean time to detect (minutes)" height={240}
-          controls={<DateFilter from={mttdFilter.from} to={mttdFilter.to} onFromChange={mttdFilter.setFrom} onToChange={mttdFilter.setTo} onClear={mttdFilter.clear} />}>
-          {mttdTrend.length === 0
-            ? <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No MTTD data</p></div>
-            : <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={mttdTrend} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--muted)' }} tickFormatter={(v) => v.slice(5)} />
-                  <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} tickFormatter={(v) => `${v}m`} />
-                  <Tooltip contentStyle={tooltipStyle} formatter={(v) => [`${v}m`, 'Avg MTTD']} />
-                  <Line type="monotone" dataKey="avg" stroke="#8b5cf6" strokeWidth={2} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
-          }
-        </ChartCard>
-
-        <ChartCard title="MTTM Trend" subtitle="Mean time to mitigate (minutes)" height={240}
-          controls={<DateFilter from={mttmFilter.from} to={mttmFilter.to} onFromChange={mttmFilter.setFrom} onToChange={mttmFilter.setTo} onClear={mttmFilter.clear} />}>
-          {mttmTrend.length === 0
-            ? <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No MTTM data</p></div>
-            : <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={mttmTrend} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--muted)' }} tickFormatter={(v) => v.slice(5)} />
-                  <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} tickFormatter={(v) => `${v}m`} />
-                  <Tooltip contentStyle={tooltipStyle} formatter={(v) => [`${v}m`, 'Avg MTTM']} />
-                  <Line type="monotone" dataKey="avg" stroke="#06b6d4" strokeWidth={2} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
-          }
-        </ChartCard>
-      </div> */}
 
       {/* By Site + By Group */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -653,7 +664,8 @@ export default function Threats() {
                 <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={110} />
                 <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
                 <Tooltip contentStyle={tooltipStyle} />
-                <Bar dataKey="value" fill="#10b981" radius={[0, 4, 4, 0]} maxBarSize={18} name="Threats" />
+                <Bar dataKey="value" fill="#10b981" radius={[0, 4, 4, 0]} maxBarSize={18} name="Threats" cursor="pointer"
+                  onClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'site', value: data.name, title: `Threats in site ${data.name}` } })} />
               </BarChart>
             </ResponsiveContainer>
           }
@@ -669,7 +681,8 @@ export default function Threats() {
                 <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={110} />
                 <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
                 <Tooltip contentStyle={tooltipStyle} />
-                <Bar dataKey="value" fill="#ec4899" radius={[0, 4, 4, 0]} maxBarSize={18} name="Threats" />
+                <Bar dataKey="value" fill="#ec4899" radius={[0, 4, 4, 0]} maxBarSize={18} name="Threats" cursor="pointer"
+                  onClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'group', value: data.name, title: `Threats in group ${data.name}` } })} />
               </BarChart>
             </ResponsiveContainer>
           }

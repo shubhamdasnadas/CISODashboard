@@ -1,14 +1,123 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import {
+  PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  BarChart, Bar
+} from 'recharts';
 import api from '../../api.js';
+
+const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
+const tooltipStyle = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12 };
+
+// Shared donut styling so every pie chart in this file looks the same:
+// thick ring, rounded segment caps, and a bit of breathing room between slices.
+const DONUT_PROPS = {
+  innerRadius: '50%',
+  outerRadius: '80%',
+  cornerRadius: 10,
+  paddingAngle: 2,
+};
+
+// Legend item component
+function LegendItem({ color, name, value, onClick }) {
+  return (
+    <div
+      onClick={onClick}
+      className="flex items-center gap-2 px-1.5 py-1.5 rounded-md hover:bg-[var(--muted-bg)]/40 transition-colors cursor-pointer group"
+    >
+      <span
+        className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 shadow-sm"
+        style={{ backgroundColor: color }}
+      />
+      <span className="text-[11px] font-semibold text-[var(--foreground)] group-hover:text-indigo-400 transition-colors">
+        {name}
+      </span>
+      <span className="text-[10px] text-[var(--muted)] group-hover:text-[var(--foreground)] transition-colors">
+        ({value})
+      </span>
+    </div>
+  );
+}
+
+// Improved Donut chart with side-by-side legends
+function ImprovedDonut({ data, onSliceClick }) {
+  if (data.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-sm text-[var(--muted)]">No data available</p>
+      </div>
+    );
+  }
+
+  // Split legend items between left and right
+  const midpoint = Math.ceil(data.length / 2);
+  const leftItems = data.slice(0, midpoint);
+  const rightItems = data.slice(midpoint);
+
+  return (
+    <div className="flex items-center h-72 px-2 gap-3">
+      {/* Left Legend */}
+      <div className="flex flex-col gap-3 justify-center shrink-0">
+        {leftItems.map((item) => (
+          <LegendItem
+            key={item.name}
+            color={item.fill}
+            name={item.name}
+            value={item.value}
+            onClick={() => onSliceClick(item)}
+          />
+        ))}
+      </div>
+
+      {/* Center Chart */}
+      <div className="flex-1 min-w-0 h-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={data}
+              dataKey="value"
+              {...DONUT_PROPS}
+              cursor="pointer"
+              onClick={onSliceClick}
+              animationBegin={0}
+              animationDuration={400}
+            >
+              {data.map((entry, i) => (
+                <Cell key={`cell-${i}`} fill={entry.fill} stroke="var(--card-bg)" strokeWidth={2} />
+              ))}
+            </Pie>
+            <Tooltip
+              contentStyle={tooltipStyle}
+              formatter={(value) => [`${value} agents`, 'Count']}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Right Legend */}
+      {rightItems.length > 0 && (
+        <div className="flex flex-col gap-3 justify-center shrink-0">
+          {rightItems.map((item) => (
+            <LegendItem
+              key={item.name}
+              color={item.fill}
+              name={item.name}
+              value={item.value}
+              onClick={() => onSliceClick(item)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function parseDate(v) {
   if (!v) return null;
   const d = new Date(v);
   return isNaN(d.getTime()) ? null : d;
 }
-
-const tooltipStyle = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12 };
 
 function DateFilter({ from, to, onFromChange, onToChange, onClear }) {
   return (
@@ -29,11 +138,11 @@ function DateFilter({ from, to, onFromChange, onToChange, onClear }) {
 
 function useCardFilter(agents) {
   const [from, setFrom] = useState('');
-  const [to, setTo]     = useState('');
+  const [to, setTo] = useState('');
   const filtered = useMemo(() => {
     if (!from && !to) return agents;
     const f = from ? new Date(from) : null;
-    const t = to   ? new Date(to + 'T23:59:59') : null;
+    const t = to ? new Date(to + 'T23:59:59') : null;
     return agents.filter((a) => {
       const d = parseDate(a.lastActiveDate);
       if (!d) return false;
@@ -82,6 +191,8 @@ function TableWrap({ cols, rows, emptyMsg = 'None' }) {
   if (rows.length === 0) {
     return <div className="px-4 py-6 text-center text-sm text-[var(--muted)]">{emptyMsg}</div>;
   }
+  // Check if rows are JSX elements (have props) or plain arrays
+  const isJSX = typeof rows[0] === 'object' && rows[0] !== null && '$$typeof' in rows[0];
   return (
     <div className="overflow-x-auto max-h-64 overflow-y-auto">
       <table className="w-full text-xs">
@@ -93,13 +204,19 @@ function TableWrap({ cols, rows, emptyMsg = 'None' }) {
           </tr>
         </thead>
         <tbody className="divide-y divide-[var(--card-border)]">
-          {rows.map((row, i) => (
-            <tr key={i} className="hover:bg-[var(--muted-bg)]/60">
-              {row.map((cell, j) => (
-                <td key={j} className="px-3 py-2 text-[var(--foreground)] whitespace-nowrap max-w-[200px] truncate">{cell ?? '—'}</td>
-              ))}
-            </tr>
-          ))}
+          {isJSX ? (
+            rows.map((row, i) => (
+              <tr key={i}>{row}</tr>
+            ))
+          ) : (
+            rows.map((row, i) => (
+              <tr key={i} className="hover:bg-[var(--muted-bg)]/60">
+                {row.map((cell, j) => (
+                  <td key={j} className="px-3 py-2 text-[var(--foreground)] whitespace-nowrap max-w-[200px] truncate">{cell ?? '—'}</td>
+                ))}
+              </tr>
+            ))
+          )}
         </tbody>
       </table>
     </div>
@@ -120,28 +237,28 @@ function ProgressBar({ value, max, color = '#6366f1' }) {
 
 export default function S1Agent() {
   const navigate = useNavigate();
-  const [agents, setAgents]   = useState([]);
+  const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openUser, setOpenUser] = useState(null);
   const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo]     = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   useEffect(() => {
     api.get('/sentinelone/db/agents')
       .then((r) => setAgents(r.data?.agents || r.data?.data || []))
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setLoading(false));
   }, []);
 
   const inactiveDays = (a) => Math.floor((Date.now() - new Date(a.lastActiveDate)) / 86400000);
-  const scanAgeDays  = (a) => a.lastSuccessfulScanDate ? Math.floor((Date.now() - new Date(a.lastSuccessfulScanDate)) / 86400000) : null;
-  const fmt          = (d) => d ? new Date(d).toLocaleDateString() : '—';
+  const scanAgeDays = (a) => a.lastSuccessfulScanDate ? Math.floor((Date.now() - new Date(a.lastSuccessfulScanDate)) / 86400000) : null;
+  const fmt = (d) => d ? new Date(d).toLocaleDateString() : '—';
 
   // Global filtered agents by header date
   const filteredAgents = useMemo(() => {
     if (!dateFrom && !dateTo) return agents;
     const f = dateFrom ? new Date(dateFrom) : null;
-    const t = dateTo   ? new Date(dateTo + 'T23:59:59') : null;
+    const t = dateTo ? new Date(dateTo + 'T23:59:59') : null;
     return agents.filter((a) => {
       const d = parseDate(a.lastActiveDate);
       if (!d) return false;
@@ -152,31 +269,31 @@ export default function S1Agent() {
   }, [agents, dateFrom, dateTo]);
 
   // Per-card filters
-  const inactiveFilter   = useCardFilter(agents);
+  const inactiveFilter = useCardFilter(agents);
   const oldVersionFilter = useCardFilter(agents);
-  const fwFilter         = useCardFilter(agents);
-  const threatsFilter    = useCardFilter(agents);
-  const scansFilter      = useCardFilter(agents);
-  const userMapFilter    = useCardFilter(agents);
-  const siteFilter       = useCardFilter(agents);
-  const osFilter         = useCardFilter(agents);
-  const networkFilter    = useCardFilter(agents);
-  const riskyFilter      = useCardFilter(agents);
+  const fwFilter = useCardFilter(agents);
+  const threatsFilter = useCardFilter(agents);
+  const scansFilter = useCardFilter(agents);
+  const userMapFilter = useCardFilter(agents);
+  const siteFilter = useCardFilter(agents);
+  const osFilter = useCardFilter(agents);
+  const networkFilter = useCardFilter(agents);
+  const riskyFilter = useCardFilter(agents);
 
   const kpis = useMemo(() => {
-    const total   = filteredAgents.length;
-    const active  = filteredAgents.filter((a) => a.isActive).length;
+    const total = filteredAgents.length;
+    const active = filteredAgents.filter((a) => a.isActive).length;
     const inactive = total - active;
     const threats = filteredAgents.filter((a) => (a.activeThreats || 0) > 0).length;
     const outdated = filteredAgents.filter((a) => !a.isUpToDate).length;
-    const health  = Math.round((active / Math.max(1, total)) * 100);
+    const health = Math.round((active / Math.max(1, total)) * 100);
     return { total, active, inactive, threats, outdated, health };
   }, [filteredAgents]);
 
   const inactiveMachines = useMemo(() =>
     inactiveFilter.filtered.filter((a) => !a.isActive && inactiveDays(a) > 7)
       .sort((a, b) => inactiveDays(b) - inactiveDays(a))
-  , [inactiveFilter.filtered]);
+    , [inactiveFilter.filtered]);
 
   const oldVersion = useMemo(() => oldVersionFilter.filtered.filter((a) => !a.isUpToDate), [oldVersionFilter.filtered]);
 
@@ -185,7 +302,7 @@ export default function S1Agent() {
   const activeThreats = useMemo(() =>
     threatsFilter.filtered.filter((a) => (a.activeThreats || 0) > 0)
       .sort((a, b) => b.activeThreats - a.activeThreats)
-  , [threatsFilter.filtered]);
+    , [threatsFilter.filtered]);
 
   const oldScans = useMemo(() => scansFilter.filtered.filter((a) => a.scanStatus !== 'finished'), [scansFilter.filtered]);
 
@@ -238,16 +355,89 @@ export default function S1Agent() {
       const reasons = [];
       let score = 0;
       if ((a.activeThreats || 0) > 0) { score += a.activeThreats * 30; reasons.push(`${a.activeThreats} active threat(s)`); }
-      if (a.infected)          { score += 20; reasons.push('infected'); }
-      if (!a.firewallEnabled)  { score += 20; reasons.push('firewall off'); }
-      if (!a.isActive)         { score += 15; reasons.push('inactive'); }
-      if (!a.isUpToDate)       { score += 15; reasons.push('outdated'); }
+      if (a.infected) { score += 20; reasons.push('infected'); }
+      if (!a.firewallEnabled) { score += 20; reasons.push('firewall off'); }
+      if (!a.isActive) { score += 15; reasons.push('inactive'); }
+      if (!a.isUpToDate) { score += 15; reasons.push('outdated'); }
       return { ...a, riskScore: score, reasons };
     })
-    .filter((a) => a.riskScore > 0)
-    .sort((a, b) => b.riskScore - a.riskScore)
-    .slice(0, 20)
-  , [riskyFilter.filtered]);
+      .filter((a) => a.riskScore > 0)
+      .sort((a, b) => b.riskScore - a.riskScore)
+      .slice(0, 20)
+    , [riskyFilter.filtered]);
+
+  // Pie chart data computations
+  const osDistribution = useMemo(() => {
+    const map = {};
+    filteredAgents.forEach((a) => {
+      const os = a.osName || 'Unknown';
+      map[os] = (map[os] || 0) + 1;
+    });
+    return Object.entries(map)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, value], i) => ({ name, value, fill: CHART_COLORS[i % CHART_COLORS.length] }));
+  }, [filteredAgents]);
+
+  const siteDistribution = useMemo(() => {
+    const map = {};
+    filteredAgents.forEach((a) => {
+      const site = a.siteName || 'Unknown';
+      map[site] = (map[site] || 0) + 1;
+    });
+    return Object.entries(map)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([name, value], i) => ({ name, value, fill: CHART_COLORS[i % CHART_COLORS.length] }));
+  }, [filteredAgents]);
+
+  const activeStatusDistribution = useMemo(() => {
+    const active = filteredAgents.filter((a) => a.isActive).length;
+    const inactive = filteredAgents.length - active;
+    return [
+      { name: 'Active', value: active, fill: '#10b981' },
+      { name: 'Inactive', value: inactive, fill: '#ef4444' },
+    ].filter((d) => d.value > 0);
+  }, [filteredAgents]);
+
+  const firewallStatusDistribution = useMemo(() => {
+    const enabled = filteredAgents.filter((a) => a.firewallEnabled).length;
+    const disabled = filteredAgents.length - enabled;
+    return [
+      { name: 'Enabled', value: enabled, fill: '#3b82f6' },
+      { name: 'Disabled', value: disabled, fill: '#f59e0b' },
+    ].filter((d) => d.value > 0);
+  }, [filteredAgents]);
+
+  const agentVersionStatus = useMemo(() => {
+    const upToDate = filteredAgents.filter((a) => a.isUpToDate).length;
+    const outdated = filteredAgents.length - upToDate;
+    return [
+      { name: 'Up to Date', value: upToDate, fill: '#10b981' },
+      { name: 'Outdated', value: outdated, fill: '#ef4444' },
+    ].filter((d) => d.value > 0);
+  }, [filteredAgents]);
+
+  const networkStatusDistribution = useMemo(() => {
+    const map = {};
+    filteredAgents.forEach((a) => {
+      const s = a.networkStatus || 'Unknown';
+      map[s] = (map[s] || 0) + 1;
+    });
+    return Object.entries(map)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, value], i) => ({ name, value, fill: CHART_COLORS[i % CHART_COLORS.length] }));
+  }, [filteredAgents]);
+
+  const scanStatusDistribution = useMemo(() => {
+    const map = {};
+    filteredAgents.forEach((a) => {
+      const s = a.scanStatus || 'Unknown';
+      map[s] = (map[s] || 0) + 1;
+    });
+    return Object.entries(map)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, value], i) => ({ name, value, fill: CHART_COLORS[i % CHART_COLORS.length] }));
+  }, [filteredAgents]);
 
   if (loading) {
     return (
@@ -307,13 +497,70 @@ export default function S1Agent() {
 
       {/* KPI row */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <KpiCard title="Total Agents"   value={kpis.total}    accent="#3b82f6" />
-        <KpiCard title="Active"         value={kpis.active}   accent="#10b981" subtitle={`${kpis.health}% health`} />
-        <KpiCard title="Inactive"       value={kpis.inactive} accent="#ef4444" />
-        <KpiCard title="Active Threats" value={kpis.threats}  accent="#f59e0b"
+        <KpiCard title="Total Agents" value={kpis.total} accent="#3b82f6"
+          onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'all', title: 'All Agents' } })} />
+        <KpiCard title="Active" value={kpis.active} accent="#10b981" subtitle={`${kpis.health}% health`}
+          onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'active', title: 'Active Agents' } })} />
+        <KpiCard title="Inactive" value={kpis.inactive} accent="#ef4444"
+          onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'inactive', title: 'Inactive Agents' } })} />
+        <KpiCard title="Active Threats" value={kpis.threats} accent="#f59e0b"
           onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'activeThreats', title: 'Endpoints with Active Threats' } })} />
-        <KpiCard title="Outdated"       value={kpis.outdated} accent="#8b5cf6" />
-        <KpiCard title="Health Score"   value={`${kpis.health}%`} accent="#06b6d4" subtitle="active/total" />
+        <KpiCard title="Outdated" value={kpis.outdated} accent="#8b5cf6"
+          onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'outdated', title: 'Outdated Agents' } })} />
+        <KpiCard title="Health Score" value={`${kpis.health}%`} accent="#06b6d4" subtitle="active/total" />
+      </div>
+
+      {/* Pie Chart Overview */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <SectionCard title="OS Distribution" count={osDistribution.length}>
+          <ImprovedDonut
+            data={osDistribution}
+            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'osName', value: data.name, title: `Agents with OS: ${data.name}` } })}
+          />
+        </SectionCard>
+
+        <SectionCard title="Active Status" count={activeStatusDistribution.length}>
+          <ImprovedDonut
+            data={activeStatusDistribution}
+            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'isActive', value: data.name === 'Active' ? 'true' : 'false', title: `${data.name} Agents` } })}
+          />
+        </SectionCard>
+
+        <SectionCard title="Firewall Status" count={firewallStatusDistribution.length}>
+          <ImprovedDonut
+            data={firewallStatusDistribution}
+            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'firewallEnabled', value: data.name === 'Enabled' ? 'true' : 'false', title: `Firewall ${data.name}` } })}
+          />
+        </SectionCard>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+        <SectionCard title="Agent Version" count={agentVersionStatus.length}>
+          <ImprovedDonut
+            data={agentVersionStatus}
+            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'isUpToDate', value: data.name === 'Up to Date' ? 'true' : 'false', title: `${data.name} Agents` } })}
+          />
+        </SectionCard>
+        <SectionCard title="Site Distribution" count={siteDistribution.length}>
+          <ImprovedDonut
+            data={siteDistribution}
+            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'siteName', value: data.name, title: `Agents in Site: ${data.name}` } })}
+          />
+        </SectionCard>
+
+        <SectionCard title="Network Status" count={networkStatusDistribution.length}>
+          <ImprovedDonut
+            data={networkStatusDistribution}
+            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'networkStatus', value: data.name, title: `Network Status: ${data.name}` } })}
+          />
+        </SectionCard>
+
+        <SectionCard title="Scan Status" count={scanStatusDistribution.length}>
+          <ImprovedDonut
+            data={scanStatusDistribution}
+            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'scanStatus', value: data.name, title: `Scan Status: ${data.name}` } })}
+          />
+        </SectionCard>
       </div>
 
       {/* 1. Inactive Machines */}
@@ -321,7 +568,19 @@ export default function S1Agent() {
         controls={<DateFilter from={inactiveFilter.from} to={inactiveFilter.to} onFromChange={inactiveFilter.setFrom} onToChange={inactiveFilter.setTo} onClear={inactiveFilter.clear} />}>
         <TableWrap
           cols={['Machine', 'User', 'Site', 'Last Active', 'Days Inactive']}
-          rows={inactiveMachines.map((a) => [a.computerName, a.lastLoggedInUserName, a.siteName, fmt(a.lastActiveDate), inactiveDays(a)])}
+          rows={inactiveMachines.map((a, i) => (
+            <tr
+              key={i}
+              onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'inactiveMachines', value: a.computerName, title: `Inactive Machine: ${a.computerName}` } })}
+              className="hover:bg-[var(--muted-bg)]/60 cursor-pointer"
+            >
+              <td className="px-3 py-2 font-medium text-[var(--foreground)]">{a.computerName}</td>
+              <td className="px-3 py-2 text-[var(--muted)]">{a.lastLoggedInUserName}</td>
+              <td className="px-3 py-2 text-[var(--muted)]">{a.siteName}</td>
+              <td className="px-3 py-2 text-[var(--muted)]">{fmt(a.lastActiveDate)}</td>
+              <td className="px-3 py-2 text-[var(--muted)]">{inactiveDays(a)}</td>
+            </tr>
+          ))}
           emptyMsg="No inactive machines over 7 days"
         />
       </SectionCard>
@@ -331,7 +590,18 @@ export default function S1Agent() {
         controls={<DateFilter from={oldVersionFilter.from} to={oldVersionFilter.to} onFromChange={oldVersionFilter.setFrom} onToChange={oldVersionFilter.setTo} onClear={oldVersionFilter.clear} />}>
         <TableWrap
           cols={['Machine', 'User', 'Site', 'Current Version']}
-          rows={oldVersion.map((a) => [a.computerName, a.lastLoggedInUserName, a.siteName, a.agentVersion])}
+          rows={oldVersion.map((a, i) => (
+            <tr
+              key={i}
+              onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'outdatedAgent', value: a.computerName, title: `Outdated Agent: ${a.computerName}` } })}
+              className="hover:bg-[var(--muted-bg)]/60 cursor-pointer"
+            >
+              <td className="px-3 py-2 font-medium text-[var(--foreground)]">{a.computerName}</td>
+              <td className="px-3 py-2 text-[var(--muted)]">{a.lastLoggedInUserName}</td>
+              <td className="px-3 py-2 text-[var(--muted)]">{a.siteName}</td>
+              <td className="px-3 py-2 text-[var(--muted)]">{a.agentVersion}</td>
+            </tr>
+          ))}
           emptyMsg="All agents are up to date"
         />
       </SectionCard>
@@ -341,7 +611,18 @@ export default function S1Agent() {
         controls={<DateFilter from={fwFilter.from} to={fwFilter.to} onFromChange={fwFilter.setFrom} onToChange={fwFilter.setTo} onClear={fwFilter.clear} />}>
         <TableWrap
           cols={['Machine', 'User', 'Site', 'Last IP']}
-          rows={fwDisabled.map((a) => [a.computerName, a.lastLoggedInUserName, a.siteName, a.lastIpToMgmt])}
+          rows={fwDisabled.map((a, i) => (
+            <tr
+              key={i}
+              onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'firewallDisabled', value: a.computerName, title: `Firewall Disabled: ${a.computerName}` } })}
+              className="hover:bg-[var(--muted-bg)]/60 cursor-pointer"
+            >
+              <td className="px-3 py-2 font-medium text-[var(--foreground)]">{a.computerName}</td>
+              <td className="px-3 py-2 text-[var(--muted)]">{a.lastLoggedInUserName}</td>
+              <td className="px-3 py-2 text-[var(--muted)]">{a.siteName}</td>
+              <td className="px-3 py-2 text-[var(--muted)]">{a.lastIpToMgmt}</td>
+            </tr>
+          ))}
           emptyMsg="All agents have firewall enabled"
         />
       </SectionCard>
@@ -351,7 +632,19 @@ export default function S1Agent() {
         controls={<DateFilter from={threatsFilter.from} to={threatsFilter.to} onFromChange={threatsFilter.setFrom} onToChange={threatsFilter.setTo} onClear={threatsFilter.clear} />}>
         <TableWrap
           cols={['Machine', 'User', 'Site', 'Threat Count', 'Mitigation Mode']}
-          rows={activeThreats.map((a) => [a.computerName, a.lastLoggedInUserName, a.siteName, a.activeThreats, a.mitigationMode])}
+          rows={activeThreats.map((a, i) => (
+            <tr
+              key={i}
+              onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'activeThreats', value: a.computerName, title: `Active Threats: ${a.computerName}` } })}
+              className="hover:bg-[var(--muted-bg)]/60 cursor-pointer"
+            >
+              <td className="px-3 py-2 font-medium text-[var(--foreground)]">{a.computerName}</td>
+              <td className="px-3 py-2 text-[var(--muted)]">{a.lastLoggedInUserName}</td>
+              <td className="px-3 py-2 text-[var(--muted)]">{a.siteName}</td>
+              <td className="px-3 py-2 text-[var(--muted)]">{a.activeThreats}</td>
+              <td className="px-3 py-2 text-[var(--muted)]">{a.mitigationMode}</td>
+            </tr>
+          ))}
           emptyMsg="No active threats"
         />
       </SectionCard>
@@ -361,7 +654,19 @@ export default function S1Agent() {
         controls={<DateFilter from={scansFilter.from} to={scansFilter.to} onFromChange={scansFilter.setFrom} onToChange={scansFilter.setTo} onClear={scansFilter.clear} />}>
         <TableWrap
           cols={['Machine', 'User', 'Last Scan', 'Scan Age (days)', 'Status']}
-          rows={oldScans.map((a) => [a.computerName, a.lastLoggedInUserName, fmt(a.lastSuccessfulScanDate), scanAgeDays(a), a.scanStatus])}
+          rows={oldScans.map((a, i) => (
+            <tr
+              key={i}
+              onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'oldScan', value: a.computerName, title: `Old Scan: ${a.computerName}` } })}
+              className="hover:bg-[var(--muted-bg)]/60 cursor-pointer"
+            >
+              <td className="px-3 py-2 font-medium text-[var(--foreground)]">{a.computerName}</td>
+              <td className="px-3 py-2 text-[var(--muted)]">{a.lastLoggedInUserName}</td>
+              <td className="px-3 py-2 text-[var(--muted)]">{fmt(a.lastSuccessfulScanDate)}</td>
+              <td className="px-3 py-2 text-[var(--muted)]">{scanAgeDays(a)}</td>
+              <td className="px-3 py-2 text-[var(--muted)]">{a.scanStatus}</td>
+            </tr>
+          ))}
           emptyMsg="All scans finished"
         />
       </SectionCard>
@@ -403,7 +708,11 @@ export default function S1Agent() {
                       </thead>
                       <tbody className="divide-y divide-[var(--card-border)]">
                         {devices.map((d, i) => (
-                          <tr key={i} className="hover:bg-[var(--card-bg)]">
+                          <tr
+                            key={i}
+                            onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'agentDetail', value: d.computerName, title: `Agent Detail: ${d.computerName}` } })}
+                            className="hover:bg-[var(--card-bg)] cursor-pointer"
+                          >
                             <td className="px-2 py-1.5 font-medium text-[var(--foreground)]">{d.computerName}</td>
                             <td className="px-2 py-1.5 text-[var(--muted)]">{d.osName}</td>
                             <td className="px-2 py-1.5 text-[var(--muted)]">{d.siteName}</td>
@@ -439,7 +748,11 @@ export default function S1Agent() {
             </thead>
             <tbody className="divide-y divide-[var(--card-border)]">
               {siteHealth.map(({ site, total, active, inactive, score }) => (
-                <tr key={site} className="hover:bg-[var(--muted-bg)]/60">
+                <tr
+                  key={site}
+                  onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'agentSite', value: site, title: `Site Health: ${site}` } })}
+                  className="hover:bg-[var(--muted-bg)]/60 cursor-pointer"
+                >
                   <td className="px-3 py-2 font-medium text-[var(--foreground)]">{site}</td>
                   <td className="px-3 py-2 text-[var(--muted)]">{total}</td>
                   <td className="px-3 py-2 text-green-600">{active}</td>
@@ -466,7 +779,11 @@ export default function S1Agent() {
             </thead>
             <tbody className="divide-y divide-[var(--card-border)]">
               {osOutdated.map(({ os, total, outdated, coverage }) => (
-                <tr key={os} className="hover:bg-[var(--muted-bg)]/60">
+                <tr
+                  key={os}
+                  onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'os', value: os, title: `OS Outdated: ${os}` } })}
+                  className="hover:bg-[var(--muted-bg)]/60 cursor-pointer"
+                >
                   <td className="px-3 py-2 font-medium text-[var(--foreground)]">{os}</td>
                   <td className="px-3 py-2 text-[var(--muted)]">{total}</td>
                   <td className="px-3 py-2 text-yellow-600">{outdated}</td>
@@ -492,7 +809,11 @@ export default function S1Agent() {
             </thead>
             <tbody className="divide-y divide-[var(--card-border)]">
               {networkStatus.map(({ status, count }) => (
-                <tr key={status} className="hover:bg-[var(--muted-bg)]/60">
+                <tr
+                  key={status}
+                  onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'networkStatus', value: status, title: `Network Status: ${status}` } })}
+                  className="hover:bg-[var(--muted-bg)]/60 cursor-pointer"
+                >
                   <td className="px-3 py-2 font-medium text-[var(--foreground)] capitalize">{status}</td>
                   <td className="px-3 py-2 text-[var(--muted)]">{count}</td>
                   <td className="px-3 py-2 min-w-[140px]"><ProgressBar value={count} max={networkFilter.filtered.length} color="#3b82f6" /></td>

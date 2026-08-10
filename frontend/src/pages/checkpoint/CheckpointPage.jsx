@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../../api';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import CheckpointDashboard from './CheckpointDashboard';
@@ -234,6 +235,7 @@ function EventModal({ event, onClose }) {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function CheckpointPage() {
+  const navigate = useNavigate();
   const { selectedProviders } = useProviders();
   const activeTool = selectedProviders.emailSecurity || 'Check Point Harmony';
   const [events, setEvents] = useState([]);
@@ -293,6 +295,27 @@ export default function CheckpointPage() {
   const toggleCard = (key) => setOpenCard(prev => prev === key ? null : key);
   const toggleChartType = (t) => {
     setChartTypes(prev => prev.includes(t) ? (prev.length > 1 ? prev.filter(x => x !== t) : prev) : [...prev, t]);
+  };
+
+  // Handle bar click in Events per Day chart
+  const handleChartClick = (data, name) => {
+    if (!data || !name) return;
+    const date = data.date;
+    const type = name;
+    const count = data[name];
+    if (!count || count === 0) return;
+    
+    navigate('/security/detail', {
+      state: { 
+        dataset: 'checkpoint', 
+        filterId: 'checkpointDate', 
+        value: date, 
+        title: `${type} events on ${date}`,
+        dateFrom: chartStart,
+        dateTo: chartEnd,
+        additionalFilter: { filterId: 'checkpointType', value: type }
+      }
+    });
   };
 
   // Cards: date-filtered events
@@ -469,7 +492,17 @@ export default function CheckpointPage() {
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} angle={-30} textAnchor="end" height={50} />
                 <YAxis tick={{ fontSize: 11 }} />
                 <Tooltip />
-                {chartTypes.map(t => <Bar key={t} dataKey={t} stackId="a" fill={CHART_COLORS[t] || '#6366f1'} radius={[2,2,0,0]} />)}
+                {chartTypes.map(t => (
+                  <Bar
+                    key={t}
+                    dataKey={t}
+                    stackId="a"
+                    fill={CHART_COLORS[t] || '#6366f1'}
+                    radius={[2,2,0,0]}
+                    cursor="pointer"
+                    onClick={(data) => handleChartClick(data.payload, t)}
+                  />
+                ))}
               </BarChart>
             ) : (
               <LineChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 30 }}>
@@ -477,7 +510,18 @@ export default function CheckpointPage() {
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} angle={-30} textAnchor="end" height={50} />
                 <YAxis tick={{ fontSize: 11 }} />
                 <Tooltip />
-                {chartTypes.map(t => <Line key={t} type="monotone" dataKey={t} stroke={CHART_COLORS[t] || '#6366f1'} strokeWidth={2} dot={false} />)}
+                {chartTypes.map(t => (
+                  <Line
+                    key={t}
+                    type="monotone"
+                    dataKey={t}
+                    stroke={CHART_COLORS[t] || '#6366f1'}
+                    strokeWidth={2}
+                    dot={false}
+                    cursor="pointer"
+                    onClick={(data) => handleChartClick(data.payload, t)}
+                  />
+                ))}
               </LineChart>
             )}
           </ResponsiveContainer>

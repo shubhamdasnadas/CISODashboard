@@ -6,8 +6,73 @@ import {
 } from 'recharts';
 import api from '../../api.js';
 
+const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
 const COLORS = { CRITICAL: '#a855f7', HIGH: '#ef4444', MEDIUM: '#eab308', LOW: '#3b82f6', UNKNOWN: '#64748b' };
 const tooltipStyle = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12 };
+
+// Shared donut styling so every pie chart in this file looks the same:
+// thick ring, rounded segment caps, and a bit of breathing room between slices.
+const DONUT_PROPS = {
+  innerRadius: '55%',
+  outerRadius: '85%',
+  cornerRadius: 10,
+  paddingAngle: 3,
+};
+
+// Donut chart with its legend split left/right of the ring (rather than
+// below it). Each entry needs { name, value, fill }. onSliceClick receives
+// the clicked entry's data, same as recharts' native Pie onClick.
+function LegendItem({ color, name, value }) {
+  return (
+    <div className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--foreground)' }}>
+      <span
+        className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
+        style={{ backgroundColor: color }}
+      />
+      <span className="font-semibold whitespace-nowrap">{name}</span>
+      <span className="text-[var(--muted)]">({value})</span>
+    </div>
+  );
+}
+
+function SideLegendDonut({ data, onSliceClick }) {
+  const midpoint = Math.ceil(data.length / 2);
+  const leftItems = data.slice(0, midpoint);
+  const rightItems = data.slice(midpoint);
+
+  return (
+    <div className="flex items-center h-full px-2 gap-2">
+      <div className="flex flex-col gap-4 shrink-0">
+        {leftItems.map((d) => (
+          <LegendItem key={d.name} color={d.fill} name={d.name} value={d.value} />
+        ))}
+      </div>
+      <div className="flex-1 min-w-0 h-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={data}
+              dataKey="value"
+              {...DONUT_PROPS}
+              cursor="pointer"
+              onClick={onSliceClick}
+            >
+              {data.map((entry, i) => <Cell key={i} fill={entry.fill} stroke="none" />)}
+            </Pie>
+            <Tooltip contentStyle={tooltipStyle} />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+      {rightItems.length > 0 && (
+        <div className="flex flex-col gap-4 shrink-0">
+          {rightItems.map((d) => (
+            <LegendItem key={d.name} color={d.fill} name={d.name} value={d.value} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function shortName(v) {
   return v?.length > 18 ? v.slice(0, 18) + '...' : (v || '');
@@ -93,6 +158,19 @@ export default function S1Cve() {
 
   const goToDetail = (state) => navigate('/security/detail', { state: { ...state, dateFrom, dateTo } });
 
+  // Memoized filtered raw CVE records for DetailView navigation
+  const filteredRawCves = useMemo(() => {
+    return apps.filter((r) => {
+      if (!hasDateFilter) return true;
+      const d = parseDate(r.detectionDate);
+      if (!d) return false;
+      const key = d.toISOString().slice(0, 10);
+      if (dateFrom && key < dateFrom) return false;
+      if (dateTo && key > dateTo) return false;
+      return true;
+    });
+  }, [apps, dateFrom, dateTo, hasDateFilter]);
+
   const filteredApps = useMemo(() => {
     if (!hasDateFilter) return apps;
     return apps.filter((r) => {
@@ -154,6 +232,7 @@ export default function S1Cve() {
       ? (apps.reduce((s, r) => s + sc(r), 0) / apps.length).toFixed(1)
       : 0;
 
+      
     const severityMap = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 };
     apps.forEach((r) => {
       const s = (r.severity || 'UNKNOWN').toUpperCase();
@@ -181,7 +260,7 @@ export default function S1Cve() {
     const endpointImpact = [...appList]
       .sort((a, b) => b.endpointCount - a.endpointCount)
       .slice(0, 10)
-      .map((a) => ({ name: shortName(a.name), endpoints: a.endpointCount }));
+      .map((a) => ({ name: shortName(a.name), fullName: a.name, endpoints: a.endpointCount }));
 
     const scoreRangeBuckets = [
       { name: 'Low (0-3.9)',  fill: '#3b82f6', count: 0 },
@@ -206,22 +285,35 @@ export default function S1Cve() {
     const vendorRisk = Object.entries(vendorCounts)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 10)
-      .map(([name, cves]) => ({ name: shortName(name), cves, fullName: name }));
+      .map(([name, cves], i) => ({ name: shortName(name), cves, fullName: name, fill: CHART_COLORS[i % CHART_COLORS.length] }));
 
     const statusCounts = {};
     apps.forEach((r) => { const s = r.status || 'Unknown'; statusCounts[s] = (statusCounts[s] || 0) + 1; });
-    const estimateStatus = Object.entries(statusCounts)
-      .map(([name, value], i) => ({ name, value, fill: ['#f97316','#22c55e','#3b82f6','#a855f7'][i % 4] }));
+    const statusDistribution = Object.entries(statusCounts)
+      .map(([name, value], i) => ({ name, value, fill: CHART_COLORS[i % CHART_COLORS.length] }));
 
     const criticalApps = appList
       .filter((a) => a.highestSeverity === 'CRITICAL')
       .sort((a, b) => b.cveCount - a.cveCount)
       .slice(0, 6);
 
+    // Pie chart data for SideLegendDonut
+    const severityPieData = severityDistribution;
+    
+    const scoreRangePieData = scoreRange;
+    
+    const vendorPieData = vendorRisk.map((v) => ({ name: v.name, value: v.cves, fill: v.fill }));
+    
+    const agingPieData = cveAging.map((a, i) => ({ name: a.name, value: a.count, fill: CHART_COLORS[i % CHART_COLORS.length] }));
+
     return {
       totalApplications, totalCves, totalEndpoints, avgScore,
       severityMap, severityDistribution, topRiskyApps,
-      cveAging, endpointImpact, scoreRange, vendorRisk, estimateStatus, criticalApps,
+      cveAging, endpointImpact, scoreRange, vendorRisk, statusDistribution, criticalApps,
+      severityPieData,
+      scoreRangePieData,
+      vendorPieData,
+      agingPieData,
     };
   }, [filteredApps]);
 
@@ -247,7 +339,8 @@ export default function S1Cve() {
 
   const { totalApplications, totalCves, totalEndpoints, avgScore, severityMap,
           severityDistribution, topRiskyApps, cveAging, endpointImpact,
-          scoreRange, vendorRisk, estimateStatus, criticalApps } = dashboardData;
+          scoreRange, vendorRisk, statusDistribution, criticalApps,
+          severityPieData, scoreRangePieData, vendorPieData, agingPieData } = dashboardData;
 
   return (
     <div className="p-4 sm:p-6 space-y-6">
@@ -294,7 +387,8 @@ export default function S1Cve() {
       {/* Stat cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
         <StatCard title="Applications"  value={totalApplications}         color="default" />
-        <StatCard title="Total CVEs"    value={totalCves}                 color="default" />
+        <StatCard title="Total CVEs"    value={totalCves}                 color="default"
+          onClick={() => goToDetail({ dataset: 'cve', filterId: 'all', title: 'All CVEs' })} />
         <StatCard title="Critical Severity Apps" value={severityMap.CRITICAL}      color="red"
           onClick={() => goToDetail({ dataset: 'cve', filterId: 'severity', value: 'CRITICAL', title: 'Critical Severity CVEs' })} />
         <StatCard title="High Severity Apps"     value={severityMap.HIGH}          color="red"
@@ -311,31 +405,22 @@ export default function S1Cve() {
         {/* Severity Distribution donut */}
         <ChartCard title="Severity Distribution">
           <div style={{ height: 280 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={severityDistribution} innerRadius={65} outerRadius={95} dataKey="value" paddingAngle={3} cursor="pointer"
-                  onClick={(data) => goToDetail({ dataset: 'cve', filterId: 'severity', value: data.name, title: `${data.name} Severity CVEs` })}>
-                  {severityDistribution.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
-                </Pie>
-                <Tooltip contentStyle={tooltipStyle} />
-                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
-              </PieChart>
-            </ResponsiveContainer>
+            {severityPieData.length === 0 ? (
+              <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No severity data</p></div>
+            ) : (
+              <SideLegendDonut data={severityPieData} onSliceClick={(data) => goToDetail({ dataset: 'cve', filterId: 'severity', value: data.name, title: `${data.name} Severity CVEs` })} />
+            )}
           </div>
         </ChartCard>
 
         {/* Base Score Range donut */}
         <ChartCard title="Base Score Range">
           <div style={{ height: 280 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={scoreRange} innerRadius={65} outerRadius={95} dataKey="value" paddingAngle={3}>
-                  {scoreRange.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
-                </Pie>
-                <Tooltip contentStyle={tooltipStyle} />
-                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
-              </PieChart>
-            </ResponsiveContainer>
+            {scoreRangePieData.length === 0 ? (
+              <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No score data</p></div>
+            ) : (
+              <SideLegendDonut data={scoreRangePieData} onSliceClick={(data) => goToDetail({ dataset: 'cve', filterId: 'scoreRange', value: data.name, title: `CVEs in ${data.name} score range` })} />
+            )}
           </div>
         </ChartCard>
 
@@ -364,7 +449,8 @@ export default function S1Cve() {
                 <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} />
                 <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
                 <Tooltip contentStyle={tooltipStyle} />
-                <Bar dataKey="count" fill="#38bdf8" radius={[4, 4, 0, 0]} maxBarSize={50} name="Apps" />
+                <Bar dataKey="count" fill="#38bdf8" radius={[4, 4, 0, 0]} maxBarSize={50} name="Apps" 
+                onClick={(data) => goToDetail({ dataset: 'cve', filterId: 'cveAgingBucket', value: data.name, title: `CVEs in ${data.name} days aging bucket` })}/>
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -379,7 +465,8 @@ export default function S1Cve() {
                 <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} angle={-25} textAnchor="end" />
                 <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
                 <Tooltip contentStyle={tooltipStyle} />
-                <Bar dataKey="endpoints" fill="#22c55e" radius={[4, 4, 0, 0]} maxBarSize={30} name="Endpoints" />
+                <Bar dataKey="endpoints" fill="#22c55e" radius={[4, 4, 0, 0]} maxBarSize={30} name="Endpoints" 
+                onClick={(data) => goToDetail({ dataset: 'cve', filterId: 'endpointImpact', value: data.fullName, title: `CVEs for ${data.fullName}` })}/>
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -396,7 +483,8 @@ export default function S1Cve() {
                     <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={100} />
                     <XAxis type="number"   tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
                     <Tooltip content={<CustomRiskTooltip />} />
-                    <Bar dataKey="cves" fill="#f97316" radius={[0, 4, 4, 0]} maxBarSize={18} name="CVEs" />
+                    <Bar dataKey="cves" fill="#f97316" radius={[0, 4, 4, 0]} maxBarSize={18} name="CVEs" 
+                    onClick={(data) => goToDetail({ dataset: 'cve', filterId: 'CVEs', value: data.fullName, title: `CVEs for vendor ${data.fullName}` })}/>
                   </BarChart>
                 </ResponsiveContainer>
             }
@@ -411,7 +499,11 @@ export default function S1Cve() {
           <h2 className="text-sm font-bold text-[var(--foreground)] mb-3">Critical Applications</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {criticalApps.map((app, i) => (
-              <div key={i} className="bg-[var(--card-bg)] border-l-4 border-purple-500 border border-[var(--card-border)] rounded-xl p-4 shadow-sm">
+              <div
+                key={i}
+                onClick={() => goToDetail({ dataset: 'cve', filterId: 'topRiskyApp', value: app.name, title: `CVEs for ${app.name}` })}
+                className="bg-[var(--card-bg)] border-l-4 border-purple-500 border border-[var(--card-border)] rounded-xl p-4 shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+              >
                 <p className="text-sm font-bold text-[var(--foreground)] truncate mb-3" title={app.name}>{app.name}</p>
                 <div className="grid grid-cols-2 gap-y-2 gap-x-4">
                   <Info label="Severity"  value={<span className="text-purple-600 font-bold">{app.highestSeverity}</span>} />

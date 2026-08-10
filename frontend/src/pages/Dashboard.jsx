@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ResponsiveGridLayout, noCompactor } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
@@ -173,6 +174,7 @@ function mapCpEvent(e) {
 // ── Main Dashboard ──────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const { currentOrg } = useOrg();
+  const navigate = useNavigate();
 
   // ── S1 data ─────────────────────────────────────────────────────────────────
   const [s1Data, setS1Data] = useState([]);
@@ -1030,13 +1032,13 @@ export default function Dashboard() {
                                 <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} angle={-20} textAnchor="end" />
                                 <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
                                 <Tooltip contentStyle={tooltipStyle} />
-                                <Bar dataKey="value" radius={[4, 4, 0, 0]}>{mitigationData.map((d, i) => <Cell key={i} fill={d.fill} />)}</Bar>
+                                <Bar dataKey="value" radius={[4, 4, 0, 0]} cursor="pointer" onClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mitigationStatus', value: data.name, title: `Threats with ${data.name} mitigation status` } })}>{mitigationData.map((d, i) => <Cell key={i} fill={d.fill} />)}</Bar>
                               </BarChart>
                             </ResponsiveContainer>
                           ) : mitigationChart === 'probability' ? (
                             <div className="h-full overflow-auto space-y-3 pt-2 px-1">
                               {mitigationData.map((d) => (
-                                <div key={d.name}>
+                                <div key={d.name} className="cursor-pointer" onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mitigationStatus', value: d.name, title: `Threats with ${d.name} mitigation status` } })}>
                                   <div className="flex justify-between text-xs text-[var(--muted)] mb-1"><span className="font-medium capitalize">{d.name}</span><span>{mitigationTotal > 0 ? ((d.value / mitigationTotal) * 100).toFixed(1) : 0}%</span></div>
                                   <div className="w-full bg-[var(--muted-bg)] rounded-full h-2.5"><div className="h-2.5 rounded-full" style={{ width: mitigationTotal > 0 ? `${(d.value / mitigationTotal) * 100}%` : '0%', backgroundColor: d.fill }} /></div>
                                 </div>
@@ -1046,9 +1048,7 @@ export default function Dashboard() {
                             <div className="relative h-full flex items-center justify-center">
                               <ResponsiveContainer width="100%" height="100%">
                                 <PieChart>
-                                  <Pie data={mitigationData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="50%" outerRadius="70%" paddingAngle={2}>
-                                    {mitigationData.map((d, i) => <Cell key={i} fill={d.fill} />)}
-                                  </Pie>
+                                  <Pie data={mitigationData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="50%" outerRadius="70%" paddingAngle={2} cursor="pointer" onClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mitigationStatus', value: data.name, title: `Threats with ${data.name} mitigation status` } })}>{mitigationData.map((d, i) => <Cell key={i} fill={d.fill} />)}</Pie>
                                   <Tooltip contentStyle={tooltipStyle} />
                                   <Legend iconSize={9} wrapperStyle={{ fontSize: 11, color: 'var(--muted)' }} />
                                 </PieChart>
@@ -1083,7 +1083,7 @@ export default function Dashboard() {
                               <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
                               <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={65} />
                               <Tooltip contentStyle={tooltipStyle} />
-                              <Bar dataKey="value" radius={[0, 4, 4, 0]}>{severityData.map((d, i) => <Cell key={i} fill={d.fill} />)}</Bar>
+                              <Bar dataKey="value" radius={[0, 4, 4, 0]} cursor="pointer" onClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'confidenceLevel', value: data.name, title: `Threats with ${data.name} confidence` } })}>{severityData.map((d, i) => <Cell key={i} fill={d.fill} />)}</Bar>
                             </BarChart>
                           </ResponsiveContainer>
                         )}

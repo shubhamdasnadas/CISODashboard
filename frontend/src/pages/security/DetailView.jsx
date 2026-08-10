@@ -186,21 +186,61 @@ const DATASET_CONFIG = {
 };
 
 const FILTERS = {
+  // Special filter that returns all rows (for "All Threats" etc.)
+  all:            () => true,
   unresolved:      (t) => ['unresolved', 'active'].includes(t.threatInfo?.incidentStatus),
   topEndpoint:      (t, value) => t.agentRealtimeInfo?.agentComputerName === value,
   classification:   (t, value) => (t.threatInfo?.classification || 'Unknown') === value,
   severity:         (r, value) => (r.severity || 'UNKNOWN').toUpperCase() === value,
   topRiskyApp:      (r, value) => (r.applicationName || r.application || 'Unknown') === value,
+  // CVE-specific filters for S1Cve dashboard cards
+  cveAgingApp:      (r, value) => (r.applicationName || r.application || 'Unknown') === value,
+  endpointImpact:   (r, value) => (r.applicationName || r.application || 'Unknown') === value,
+  CVEs:             (r, value) => (r.applicationVendor || 'Unknown') === value,
+  // CVE Aging bucket filter - filters by daysDetected range
+  cveAgingBucket:   (r, value) => {
+    const d = parseInt(r.daysDetected, 10) || 0;
+    if (value === '0-30') return d <= 30;
+    if (value === '31-90') return d > 30 && d <= 90;
+    if (value === '91-180') return d > 90 && d <= 180;
+    if (value === '180+') return d > 180;
+    return false;
+  },
   mitreTechnique:   (t, value) => (t.indicators || []).some((ind) =>
     (ind.tactics || []).some((tac) => (tac.techniques || []).some((tech) => tech.name === value))),
   mitreTactic:      (t, value) => (t.indicators || []).some((ind) =>
     (ind.tactics || []).some((tac) => (tac.name || '').toLowerCase() === value.toLowerCase())),
   activeThreats:    (a) => (a.activeThreats || 0) > 0,
   agentDetail:      (a, value) => a.computerName === value,
+  active:           (a) => a.isActive === true,
+  inactive:         (a) => a.isActive === false,
+  outdated:         (a) => a.isUpToDate === false,
+  inactiveMachines: (a, value) => a.computerName === value,
+  outdatedAgent:    (a, value) => a.computerName === value,
+  firewallDisabled: (a, value) => a.computerName === value && a.firewallEnabled === false,
+  oldScan:          (a, value) => a.computerName === value,
+  agentSite:        (a, value) => (a.siteName || 'Unknown') === value,
+  os:               (a, value) => (a.osName || 'Unknown') === value,
+  networkStatus:    (a, value) => (a.networkStatus || a.network_status || 'Unknown') === value,
   criticalEvents:   (e) => Number(e.severity) >= 4,
   checkpointSeverity: (e, value) => String(e.severity ?? '?') === value,
   checkpointState:  (e, value) => (e.state ?? 'unknown') === value,
   checkpointConfidence: (e, value) => (e.confidenceIndicator ?? 'unknown').toLowerCase() === value,
+  checkpointDate: (e, value) => {
+    const d = parseDate(e.eventCreated);
+    if (!d) return false;
+    const key = d.toISOString().slice(0, 10);
+    
+    // Special handling for 'last7days'
+    if (value === 'last7days') {
+      const now = Date.now();
+      const DAY = 86_400_000;
+      return (now - d.getTime()) < 7 * DAY;
+    }
+    
+    return key === value;
+  },
+  checkpointType: (e, value) => (e.type ?? 'unknown') === value,
   senderDomain:     (e, value) => {
     const parts = (e.senderAddress || '').split('@');
     return parts.length >= 2 && parts[parts.length - 1].toLowerCase() === value;
@@ -212,12 +252,61 @@ const FILTERS = {
     const sender = (e.senderAddress || '').toLowerCase();
     return matches.some((m) => { const lm = m.toLowerCase(); return lm === value && lm !== sender; });
   },
+  // Threats dataset filters
+  total_threats:    () => true,
+  mitigated:        (t, value) => (t.threatInfo?.mitigationStatus || '').toLowerCase() === (value || '').toLowerCase(),
+  unresolved_threats:       (t) => ['unresolved', 'active'].includes(t.threatInfo?.incidentStatus),
+  fileless:         (t) => t.threatInfo?.isFileless === true,
+  fileless_type:    (t, value) => {
+    // fileless_type value would be 'true' or 'false' from the pie chart
+    const isFileless = t.threatInfo?.isFileless === true;
+    return String(isFileless) === String(value);
+  },
+  mttd:             (t) => {
+    const created = parseDate(t.threatInfo?.createdAt);
+    const identified = parseDate(t.threatInfo?.identifiedAt);
+    return !!(created && identified && created > identified);
+  },
+  mttm:             (t) => {
+    const identified = parseDate(t.threatInfo?.identifiedAt);
+    const successEntry = (t.mitigationStatus || []).find((s) => s.status === 'success');
+    if (!identified || !successEntry) return false;
+    const ended = parseDate(successEntry.mitigationEndedAt);
+    return !!ended;
+  },
+  threatTrend:      (t, value) => {
+    const created = parseDate(t.threatInfo?.createdAt);
+    if (!created || !value) return false;
+    return created.toISOString().slice(0, 10) === value;
+  },
+  processUser:      (t, value) => (t.threatInfo?.processUser || '') === value,
+  site:             (t, value) => (t.agentRealtimeInfo?.siteName || 'Unknown') === value,
+  group:            (t, value) => (t.agentRealtimeInfo?.groupName || 'Unknown') === value,
+  mitigationStatus: (t, value) => (t.threatInfo?.mitigationStatus || '').toLowerCase() === (value || '').toLowerCase(),
+  mitigationStatusArray: (t, value) => (t.mitigationStatus || []).some((s) => s.status?.toLowerCase() === (value || '').toLowerCase()),
+  isFileless:       (t, value) => t.threatInfo?.isFileless === value,
+  topUser:          (t, value) => (t.threatInfo?.processUser || '') === value,
+  confidenceLevel:  (t, value) => (t.threatInfo?.confidenceLevel || 'Unknown') === value,
+  siteName:         (t, value) => (t.agentRealtimeInfo?.siteName || 'Unknown') === value,
+  groupName:        (t, value) => (t.agentRealtimeInfo?.groupName || 'Unknown') === value,
+  avgMttd:          (t) => {
+    const created = parseDate(t.threatInfo?.createdAt);
+    const identified = parseDate(t.threatInfo?.identifiedAt);
+    return !!(created && identified && created > identified);
+  },
+  avgMttm:          (t) => {
+    const identified = parseDate(t.threatInfo?.identifiedAt);
+    const successEntry = (t.mitigationStatus || []).find((s) => s.status === 'success');
+    if (!identified || !successEntry) return false;
+    const ended = parseDate(successEntry.mitigationEndedAt);
+    return !!ended;
+  },
 };
 
 export default function DetailView() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { dataset, filterId, value, title, dateFrom: incomingDateFrom, dateTo: incomingDateTo } = location.state || {};
+  const { dataset, filterId, value, title, dateFrom: incomingDateFrom, dateTo: incomingDateTo, additionalFilter } = location.state || {};
 
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -228,6 +317,9 @@ export default function DetailView() {
 
   const config = dataset ? DATASET_CONFIG[dataset] : null;
   const filterFn = filterId ? FILTERS[filterId] : (config?.raw ? () => true : null);
+  // Handle additional filter from chart clicks (e.g., filter by type AND date)
+  const additionalFilterFn = additionalFilter?.filterId ? FILTERS[additionalFilter.filterId] : null;
+  const additionalFilterValue = additionalFilter?.value;
 
   useEffect(() => {
     if (!config) { setLoading(false); return; }
@@ -253,7 +345,7 @@ export default function DetailView() {
       .catch(() => setMitreDescriptions({}));
   }, [filterId]);
 
-  useEffect(() => { setPage(1); }, [dateFrom, dateTo, filterId, value, location.state]);
+  useEffect(() => { setPage(1); }, [dateFrom, dateTo, filterId, value, additionalFilter, additionalFilterValue, location.state]);
 
   const dateValue = (r) => {
     const d = config?.dateField ? parseDate(config.dateField(r)) : null;
@@ -266,6 +358,11 @@ export default function DetailView() {
     if (!config || !filterFn) return { processedRows: [], capped: false, totalCount: 0 };
 
     let result = rows.filter((r) => filterFn(r, value));
+
+    // Apply additional filter if present (e.g., from chart click)
+    if (additionalFilterFn && additionalFilterValue) {
+      result = result.filter((r) => additionalFilterFn(r, additionalFilterValue));
+    }
 
     if (hasDateFilter) {
       result = result.filter((r) => {
@@ -303,7 +400,7 @@ export default function DetailView() {
     }
 
     return { processedRows: result, capped: didCap, totalCount };
-  }, [rows, filterFn, value, dateFrom, dateTo, hasDateFilter, filterId, config]);
+  }, [rows, filterFn, value, dateFrom, dateTo, hasDateFilter, filterId, config, additionalFilterFn, additionalFilterValue]);
 
   const eventTotal = useMemo(
     () => (config?.raw ? sumFirewallCount(processedRows) : null),

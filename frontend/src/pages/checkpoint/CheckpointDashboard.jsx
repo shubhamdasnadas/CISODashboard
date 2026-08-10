@@ -257,7 +257,7 @@ function CumulativeTimeline({ events }) {
 }
 
 // Widget 8: Last 7 Days
-function WeekOverWeek({ events }) {
+function WeekOverWeek({ events, goToDetail, dateFrom, dateTo }) {
   const stats = useMemo(() => {
     const now = Date.now();
     const DAY = 86_400_000;
@@ -270,7 +270,10 @@ function WeekOverWeek({ events }) {
   const up = pct !== null && pct > 0;
   const down = pct !== null && pct < 0;
   return (
-    <WidgetCard title="Last 7 Days">
+    <WidgetCard 
+      title="Last 7 Days" 
+      onClick={() => goToDetail('checkpointDate', 'last7days', 'Events in Last 7 Days', dateFrom, dateTo)}
+    >
       <div className="flex flex-col items-center justify-center py-5 gap-2">
         <p className="text-5xl font-bold text-[var(--foreground)]">{current}</p>
         <p className="text-xs text-[var(--muted)]">events this week</p>
@@ -290,14 +293,17 @@ function WeekOverWeek({ events }) {
 }
 
 // Widget 9: Average Severity
-function AvgSeverity({ events }) {
+function AvgSeverity({ events, goToDetail, dateFrom, dateTo }) {
   const avg = useMemo(() => {
     const valid = events.filter(e => e.severity !== '' && !isNaN(Number(e.severity)));
     if (valid.length === 0) return null;
     return (valid.reduce((s,e) => s+Number(e.severity), 0) / valid.length).toFixed(1);
   }, [events]);
   return (
-    <WidgetCard title="Average Severity">
+    <WidgetCard 
+      title="Average Severity"
+      onClick={() => goToDetail('checkpointSeverity', 'high', 'High Severity Events', dateFrom, dateTo)}
+    >
       <div className="flex flex-col items-center justify-center py-5 gap-1">
         <p className="text-5xl font-bold text-amber-500">{avg ?? '—'}</p>
         <p className="text-sm text-[var(--muted)]">out of 5</p>
@@ -307,10 +313,10 @@ function AvgSeverity({ events }) {
 }
 
 // Widget 10: Critical Events
-function CriticalEvents({ events, goToDetail }) {
+function CriticalEvents({ events, goToDetail, dateFrom, dateTo }) {
   const count = useMemo(() => events.filter(e => Number(e.severity) >= 4).length, [events]);
   return (
-    <WidgetCard title="Critical Events" onClick={() => goToDetail('criticalEvents', null, 'Critical Events')}>
+    <WidgetCard title="Critical Events" onClick={() => goToDetail('criticalEvents', null, 'Critical Events', dateFrom, dateTo)}>
       <div className="flex flex-col items-center justify-center py-5 gap-1">
         <p className="text-5xl font-bold text-red-500">{count}</p>
         <p className="text-sm text-[var(--muted)]">severity ≥ 4</p>
@@ -399,8 +405,15 @@ export default function CheckpointDashboard({ events }) {
   const [dateTo, setDateTo]     = useState('');
   const hasDateFilter = !!(dateFrom || dateTo);
 
-  const goToDetail = (filterId, value, title) => navigate('/security/detail', {
-    state: { dataset: 'checkpoint', filterId, value, title, dateFrom, dateTo },
+  const goToDetail = (filterId, value, title, overrideDateFrom, overrideDateTo) => navigate('/security/detail', {
+    state: { 
+      dataset: 'checkpoint', 
+      filterId, 
+      value, 
+      title, 
+      dateFrom: overrideDateFrom ?? dateFrom, 
+      dateTo: overrideDateTo ?? dateTo 
+    },
   });
 
   const filteredEvents = useMemo(() => {
@@ -444,9 +457,9 @@ export default function CheckpointDashboard({ events }) {
 
       {/* KPI row */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <WeekOverWeek events={filteredEvents} />
-        <AvgSeverity events={filteredEvents} />
-        <CriticalEvents events={filteredEvents} goToDetail={goToDetail} />
+        <WeekOverWeek events={filteredEvents} goToDetail={goToDetail} dateFrom={dateFrom} dateTo={dateTo} />
+        <AvgSeverity events={filteredEvents} goToDetail={goToDetail} dateFrom={dateFrom} dateTo={dateTo} />
+        <CriticalEvents events={filteredEvents} goToDetail={goToDetail} dateFrom={dateFrom} dateTo={dateTo} />
       </div>
 
       {/* Donut charts */}
