@@ -430,3 +430,17 @@ CREATE TABLE IF NOT EXISTS ms_defender_library_files (
   data      JSONB NOT NULL DEFAULT '{}',
   synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ============================================================
+-- COMPLIANCE HEALTH SCORES
+-- Stores EDR, Email Security, and Ticketing MTTR percentages
+-- with an auto-computed Average and a timestamp.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS compliance_health_scores (
+  id                   SERIAL       PRIMARY KEY,
+  edr_percentage       NUMERIC(5,2) NOT NULL DEFAULT 0,
+  email_percentage     NUMERIC(5,2) NOT NULL DEFAULT 0,
+  ticketing_percentage NUMERIC(5,2) NOT NULL DEFAULT 0,
+  average_percentage   NUMERIC(5,2) NOT NULL DEFAULT 0,
+  created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);

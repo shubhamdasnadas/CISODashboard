@@ -1,13 +1,55 @@
-import React from 'react';
+import React, { useEffect, useState, useRef } from 'react';
+import api from '../../api';
 
-const S1Mttr = ({ total, mitigated }) => {
-    console.log("S1Mttr props:", { total, mitigated });
+const S1Mttr = ({ total: propTotal, mitigated: propMitigated }) => {
+    const [total, setTotal] = useState(propTotal || 0);
+    const [mitigated, setMitigated] = useState(propMitigated || 0);
+    const [loading, setLoading] = useState(!(propTotal > 0 || propMitigated > 0));
+    const savedRef = useRef(false);
+
+    useEffect(() => {
+        // If props already have data, skip fetching — just mark as loaded
+        if (propTotal > 0 || propMitigated > 0) {
+            setLoading(false);
+            return;
+        }
+
+        const fetchData = async () => {
+            try {
+                setLoading(true);
+                const response = await api.get('/compliance-health-scores/edr');
+                const { total: t, mitigated: m } = response.data;
+                setTotal(t || 0);
+                setMitigated(m || 0);
+            } catch (err) {
+                console.error('[S1Mttr] Failed to fetch EDR data:', err.message);
+            } finally {
+                setLoading(false);
+            }
+        };
+        fetchData();
+    }, [propTotal, propMitigated]);
 
     // Calculate the percentage
     const percentage = total > 0 ? (mitigated / total) * 100 : 0;
     const unmitigatedPercentage = 100 - percentage;
     const clampedPercentage = Math.min(Math.max(percentage, 0), 100);
-    localStorage.setItem("s1Mttr", clampedPercentage.toFixed(0))
+
+    // Save to localStorage and DB after data is loaded (once per data change)
+    useEffect(() => {
+        if (loading) return;
+        localStorage.setItem("s1Mttr", clampedPercentage.toFixed(0));
+        if (total > 0 && !savedRef.current) {
+            savedRef.current = true;
+            api.patch('/compliance-health-scores/update', {
+                field: 'edr_percentage',
+                value: parseFloat(clampedPercentage.toFixed(2)),
+            }).then(() => {
+                console.log('[S1Mttr] Saved edr_percentage to DB:', clampedPercentage.toFixed(2));
+            }).catch(err => console.error('[S1Mttr] Failed to save EDR score:', err.message));
+        }
+    }, [loading, total, mitigated, clampedPercentage]);
+
     // Calculate stroke dasharray for both portions
     const circumference = 219.8; // Arc length for semi-circle
     const greenDash = (clampedPercentage / 100) * circumference;
@@ -72,7 +114,9 @@ const S1Mttr = ({ total, mitigated }) => {
 
     return (
         <div style={containerStyle}>
-            {/* Gauge Section */}
+            {loading ? (
+                <div style={{ color: '#94a3b8', textAlign: 'center' }}>Loading...</div>
+            ) : (
             <div style={gaugeContainerStyle}>
                 <svg
                     width="240"
@@ -131,6 +175,7 @@ const S1Mttr = ({ total, mitigated }) => {
                     </div>
                 </div>
             </div>
+            )}
         </div>
     );
 };

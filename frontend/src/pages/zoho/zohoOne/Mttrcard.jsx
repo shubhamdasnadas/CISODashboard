@@ -50,7 +50,7 @@ function MttrGauge({ title, score, hours, subtitle }) {
   );
 }
 
-export default function Mttrcard({ tickets }) {
+export default function Mttrcard({ tickets, onCardClick }) {
   const { avgResolutionTime, avgScore } = useMemo(() => {
     const times = tickets.map(t => {
       const created = new Date(getCreatedDate(t));
@@ -64,7 +64,7 @@ export default function Mttrcard({ tickets }) {
   }, [tickets]);
 
   return (
-    <div className="w-full rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-lg">
+    <div className="w-full rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-lg cursor-pointer hover:shadow-xl transition-shadow" onClick={() => { if (onCardClick) onCardClick(); }}>
       <h2 className="mb-6 text-xl font-bold text-white">MTTR Score</h2>
       <MttrGauge title="Average MTTR" score={calculateMttrScore(avgScore)} hours={avgResolutionTime} subtitle="Mean Time To Resolution" />
     </div>

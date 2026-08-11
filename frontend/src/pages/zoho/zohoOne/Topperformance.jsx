@@ -30,7 +30,7 @@ const getScore = (hours) => {
   return Math.max(10, Math.min(100, s));
 };
 
-export default function Topperformance({ tickets }) {
+export default function Topperformance({ tickets, onRowClick }) {
   const tableData = useMemo(() => {
     const map = {};
     tickets.forEach(t => {
@@ -66,7 +66,8 @@ export default function Topperformance({ tickets }) {
               {tableData.length === 0 ? (
                 <tr><td colSpan={4} className="px-5 py-8 text-center text-sm text-[var(--muted)]">No closed tickets found</td></tr>
               ) : tableData.map((row, idx) => (
-                <tr key={row.engineerName} className="hover:bg-[var(--muted-bg)] transition-colors">
+                <tr key={row.engineerName} className="hover:bg-[var(--muted-bg)] transition-colors cursor-pointer"
+                  onClick={() => { if (onRowClick) onRowClick(row.engineerName); }}>
                   <td className="px-5 py-4 border-b border-[var(--card-border)]">
                     <div className="flex items-center gap-3">
                       <span className="flex h-7 w-7 items-center justify-center rounded-full bg-red-100 text-red-700 text-xs font-bold">{idx + 1}</span>

@@ -46,7 +46,7 @@ function slicePath(y1, y2) {
   return `M ${lx1} ${y1} L ${rx1} ${y1} L ${rx2} ${y2} L ${lx2} ${y2} Z`;
 }
 
-export default function Funneldiagram({ tickets = [], loading = false }) {
+export default function Funneldiagram({ tickets = [], loading = false, onSliceClick }) {
   const [tooltip, setTooltip]   = useState(null);
 
   const statusCounts = useMemo(() => {
@@ -74,6 +74,7 @@ export default function Funneldiagram({ tickets = [], loading = false }) {
           <svg viewBox={`0 0 ${SVG_W} ${SVG_H}`} width="100%" style={{ display: 'block', minWidth: 600 }}>
             {slices.map(s => (
               <path key={s.status} d={slicePath(s.y1, s.y2)} fill={s.color} stroke="#fff" strokeWidth={1.5} style={{ cursor: 'pointer' }}
+                onClick={() => { if (s.count > 0 && onSliceClick) onSliceClick(s); }}
                 onMouseEnter={e => {
                   const svg = e.target.ownerSVGElement;
                   const rect = svg.getBoundingClientRect();
@@ -116,7 +117,8 @@ export default function Funneldiagram({ tickets = [], loading = false }) {
           {statusCounts.filter(c => c.count > 0).map(c => {
             const idx = FUNNEL_STATUSES.indexOf(c.status);
             return (
-              <div key={c.status} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div key={c.status} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: c.count > 0 ? 'pointer' : 'default' }}
+                onClick={() => { if (c.count > 0 && onSliceClick) onSliceClick(c); }}>
                 <div style={{ width: 12, height: 12, borderRadius: 3, background: SLICE_COLORS[idx] ?? '#aaa', flexShrink: 0 }} />
                 <span style={{ fontSize: 13, color: '#333', fontWeight: 500 }}>{c.status} ({c.count})</span>
               </div>

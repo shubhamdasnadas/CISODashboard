@@ -23,7 +23,7 @@ const formatHour = (h) => {
 
 const fmt = (s, opts) => s ? new Date(s).toLocaleString('en-GB', opts) : '-';
 
-export default function Hourbasedset({ tickets }) {
+export default function Hourbasedset({ tickets, onCellClick }) {
   const [activeTooltip, setActiveTooltip] = useState(null);
 
   const heatmapData = useMemo(() => {
@@ -72,7 +72,7 @@ export default function Hourbasedset({ tickets }) {
                   return (
                     <div key={key} className="relative">
                       <div
-                        onClick={() => setActiveTooltip(activeTooltip === key ? null : key)}
+                        onClick={() => { setActiveTooltip(activeTooltip === key ? null : key); if (bucket.count > 0 && onCellClick) onCellClick(day, hour); }}
                         className="rounded-md border border-white hover:scale-105 transition-all duration-200 cursor-pointer"
                         style={{ width: CELL_SIZE, height: CELL_SIZE, backgroundColor: getColor(bucket.count, maxCount) }}
                       />

@@ -38,6 +38,7 @@ const syncRoutes = require('./routes/syncRoute');
 const adminOrgsRoutes = require('./routes/adminOrgs');
 const memberRoutes = require('./routes/memberRoute');
 const microsoftRoutes = require('./routes/microsoft');
+const complianceHealthScoresRoutes = require('./routes/compliance_health_scores');
 
 // Sync services (for cron)
 const { syncSentinelOne } = require('./services/sentinelone');
@@ -83,6 +84,7 @@ app.use('/api/analytics', withOrg, analyticsRoutes);
 app.use('/api/sync', withOrg, syncRoutes);
 app.use('/api/member', [authMiddleware], memberRoutes);
 app.use('/api/microsoft', withOrg, microsoftRoutes);
+app.use('/api/compliance-health-scores', withOrg, complianceHealthScoresRoutes);
 
 // Admin routes (superAdmin only — orgMiddleware not needed, uses centralPool directly)
 app.use('/api/admin', [authMiddleware], adminOrgsRoutes);

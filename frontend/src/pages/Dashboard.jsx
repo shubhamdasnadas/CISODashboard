@@ -1390,7 +1390,7 @@ export default function Dashboard() {
 
       {/* ── MTTR Summary Card ───────────────────────────────────────────────── */}
       <div className="mt-8 mb-2 w-1/2">
-        <h2 className="text-sm font-bold text-[var(--foreground)] mb-4">MTTR Summary</h2>
+        <h2 className="text-sm font-bold text-[var(--foreground)] mb-4">Health Score</h2>
         <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] shadow-sm overflow-hidden ">
           <AllCommonmttr />
         </div>

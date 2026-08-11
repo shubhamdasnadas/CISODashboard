@@ -183,6 +183,31 @@ const DATASET_CONFIG = {
     raw: true,
     dateField: (row) => getFirstValue(row, FIREWALL_DATE_COLS, null),
   },
+  // Zoho tickets — same "raw rows via router state" pattern as firewall.
+  // Zohoone.jsx already has the tickets loaded and passes them when navigating.
+  zoho: {
+    raw: true,
+    dateField: (t) => t.created_at || t.createdTime || t.createdAt,
+    cols: ['Ticket #', 'Subject', 'Status', 'Priority', 'Department', 'Contact', 'Assignee', 'Channel', 'Type', 'Created At'],
+    rowFn: (t) => {
+      const norm = (v) => (v != null ? String(v).trim() : '');
+      const dept = norm(t.department?.name) || norm(t.departmentName) || 'Unknown';
+      const contact = `${norm(t.contact?.firstName)} ${norm(t.contact?.lastName)}`.trim() || norm(t.contact?.email) || 'Unknown';
+      const assignee = `${norm(t.assignee?.firstName)} ${norm(t.assignee?.lastName)}`.trim() || 'Unassigned';
+      return [
+        t.ticketNumber || t.ticket_no || '—',
+        t.subject || '—',
+        t.status || '—',
+        t.priority || '—',
+        dept,
+        contact,
+        assignee,
+        t.channel || '—',
+        t.type || t.classification || '—',
+        fmt(t.created_at || t.createdTime || t.createdAt),
+      ];
+    },
+  },
 };
 
 const FILTERS = {
@@ -197,6 +222,14 @@ const FILTERS = {
   cveAgingApp:      (r, value) => (r.applicationName || r.application || 'Unknown') === value,
   endpointImpact:   (r, value) => (r.applicationName || r.application || 'Unknown') === value,
   CVEs:             (r, value) => (r.applicationVendor || 'Unknown') === value,
+  scoreRange:       (r, value) => {
+    const s = parseFloat(r.baseScore) || 0;
+    if (value === 'Low (0-3.9)')  return s < 4;
+    if (value === 'Med (4-6.9)')  return s >= 4 && s < 7;
+    if (value === 'High (7-8.9)') return s >= 7 && s < 9;
+    if (value === 'Crit (9-10)')  return s >= 9;
+    return false;
+  },
   // CVE Aging bucket filter - filters by daysDetected range
   cveAgingBucket:   (r, value) => {
     const d = parseInt(r.daysDetected, 10) || 0;
@@ -221,7 +254,12 @@ const FILTERS = {
   oldScan:          (a, value) => a.computerName === value,
   agentSite:        (a, value) => (a.siteName || 'Unknown') === value,
   os:               (a, value) => (a.osName || 'Unknown') === value,
+  osName:           (a, value) => (a.osName || 'Unknown') === value,
   networkStatus:    (a, value) => (a.networkStatus || a.network_status || 'Unknown') === value,
+  scanStatus:       (a, value) => (a.scanStatus || 'Unknown') === value,
+  isActive:         (a, value) => String(a.isActive) === value,
+  firewallEnabled:  (a, value) => String(a.firewallEnabled) === value,
+  isUpToDate:       (a, value) => String(a.isUpToDate) === value,
   criticalEvents:   (e) => Number(e.severity) >= 4,
   checkpointSeverity: (e, value) => String(e.severity ?? '?') === value,
   checkpointState:  (e, value) => (e.state ?? 'unknown') === value,
@@ -251,6 +289,49 @@ const FILTERS = {
     if (!matches) return false;
     const sender = (e.senderAddress || '').toLowerCase();
     return matches.some((m) => { const lm = m.toLowerCase(); return lm === value && lm !== sender; });
+  },
+  // ── Zoho ticket filters ──────────────────────────────────────────────────
+  zohoStatus:       (t, value) => (t.status || '') === value,
+  zohoPriority:     (t, value) => (t.priority || '') === value,
+  zohoDepartment:   (t, value) => {
+    const norm = (v) => (v != null ? String(v).trim() : '');
+    const dept = norm(t.department?.name) || norm(t.departmentName) || 'Unknown';
+    return dept === value;
+  },
+  zohoAll:          () => true,
+  zohoOpen:         (t) => (t.status || '') === 'Open',
+  zohoHighPriority: (t) => t.priority === 'High' || t.priority === 'Critical',
+  zohoClosed:       (t) => ['Closed', 'Technically Closed', 'Resolved'].includes(t.status || ''),
+  zohoDay:          (t, value) => {
+    const ca = t.created_at || t.createdTime || t.createdAt;
+    const d = new Date(ca);
+    if (!ca || isNaN(d.getTime())) return false;
+    const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    return days[d.getDay()] === value;
+  },
+  zohoAssignee:     (t, value) => {
+    const norm = (v) => (v != null ? String(v).trim() : '');
+    const name = `${norm(t.assignee?.firstName)} ${norm(t.assignee?.lastName)}`.trim() || 'Unassigned';
+    return name === value;
+  },
+  zohoTicketNo:     (t, value) => {
+    const norm = (v) => (v != null ? String(v).trim() : '');
+    return (norm(t.ticket_no) || norm(t.ticketNumber)) === value;
+  },
+  zohoStatusGroup:  (t, value) => {
+    const s = String(t.status || '').trim().toLowerCase();
+    const groups = {
+      'Open':          ['open', 're-open'],
+      'WIP':           ['wip'],
+      'On Hold':       ['on hold', 'on hold by customer'],
+      'Revert Awaited': ['revert awaited - customer', 'revert awaited - oem', 'revert awaited - vendor'],
+      'Closed':        ['closed', 'technically closed'],
+      'Escalated':     ['escalated'],
+      'Duplicate':     ['duplicate'],
+      'Acknowledge':   ['acknowledge'],
+    };
+    const matchers = groups[value] || [value.toLowerCase()];
+    return matchers.includes(s);
   },
   // Threats dataset filters
   total_threats:    () => true,
@@ -455,14 +536,18 @@ export default function DetailView() {
     );
   }
 
-  // Raw firewall rows have no fixed schema — derive columns from whatever
-  // keys are actually present across the matched rows.
-  const displayCols = config.raw
-    ? Array.from(new Set(rows.flatMap((r) => Object.keys(r))))
-    : config.cols;
-  const displayRowFn = config.raw
-    ? (row) => displayCols.map((c) => row[c])
-    : config.rowFn;
+  // Raw rows have no fixed schema — use custom cols/rowFn if provided (e.g.
+  // Zoho), otherwise derive columns from whatever keys are present on the rows.
+  const displayCols = config.cols
+    ? config.cols
+    : config.raw
+      ? Array.from(new Set(rows.flatMap((r) => Object.keys(r))))
+      : config.cols;
+  const displayRowFn = config.rowFn
+    ? config.rowFn
+    : config.raw
+      ? (row) => displayCols.map((c) => row[c])
+      : config.rowFn;
 
   return (
     <div className="p-4 sm:p-6 space-y-4">

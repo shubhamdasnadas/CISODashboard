@@ -6,7 +6,7 @@ const isSameMonth = (date, ref) => date.getMonth() === ref.getMonth() && date.ge
 
 const getMonthName = (date) => date.toLocaleString('en-IN', { month: 'short' });
 
-export default function Zohoticketcount({ tickets = [], loading = false }) {
+export default function Zohoticketcount({ tickets = [], loading = false, onCardClick }) {
 
   const counts = useMemo(() => {
     let open = 0, wip = 0, onHold = 0, revertAwaited = 0, closed = 0;
@@ -52,8 +52,9 @@ export default function Zohoticketcount({ tickets = [], loading = false }) {
           const isIncrease = counts.closedDifference > 0;
           const isDecrease = counts.closedDifference < 0;
           return (
-            <div key={card.title} className="rounded-2xl border shadow-sm p-4 relative overflow-hidden"
-              style={{ backgroundColor: card.bg, borderColor: card.color }}>
+            <div key={card.title} className="rounded-2xl border shadow-sm p-4 relative overflow-hidden cursor-pointer hover:shadow-md transition-shadow"
+              style={{ backgroundColor: card.bg, borderColor: card.color }}
+              onClick={() => { if (card.count > 0 && onCardClick) onCardClick(card); }}>
               <div className="flex items-start justify-between gap-2">
                 <p className="text-sm font-semibold mb-2" style={{ color: card.color }}>{card.title}</p>
                 {card.isClosedCard && (

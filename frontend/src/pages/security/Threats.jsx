@@ -578,7 +578,7 @@ export default function Threats() {
             </ResponsiveContainer>
           }
         </ChartCard>
-        <ChartCard title="SentinelOne MTTR" subtitle="Threat count per machine" height={300}>
+        <ChartCard title="SentinelOne Health Score" subtitle="Threat count per machine" height={300}>
           <S1Mttr total={kpis.total} mitigated={kpis.mitigated}/>
         </ChartCard>
 

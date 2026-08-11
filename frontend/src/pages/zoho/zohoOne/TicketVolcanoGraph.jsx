@@ -26,7 +26,7 @@ function getTicketHours(ticket) {
   return (endDate - createdDate) / (1000 * 60 * 60);
 }
 
-export default function TicketVolcanoGraph({ tickets }) {
+export default function TicketVolcanoGraph({ tickets, onBarClick }) {
   const graphBuckets = useMemo(() => {
     const counts = buckets.map(b => ({ ...b, count: 0 }));
     tickets.forEach(ticket => {
@@ -65,7 +65,7 @@ export default function TicketVolcanoGraph({ tickets }) {
           {graphBuckets.map(bucket => {
             const heightPercent = Math.max(bucket.count > 0 ? 12 : 2, (bucket.count / maxCount) * 82);
             return (
-              <div key={bucket.label} className="flex h-full flex-1 flex-col items-center justify-end">
+              <div key={bucket.label} className="flex h-full flex-1 flex-col items-center justify-end cursor-pointer" onClick={() => { if (bucket.count > 0 && onBarClick) onBarClick(bucket.label, bucket.min, bucket.max); }}>
                 <div className="relative flex h-full w-full items-end justify-center">
                   <div className="relative" style={{ width: BAR_W + DEPTH_X, height: `${heightPercent}%` }}>
                     <svg viewBox={`0 0 ${BAR_W + DEPTH_X} 100`} preserveAspectRatio="none" className="absolute inset-0 h-full w-full overflow-visible">
@@ -85,7 +85,8 @@ export default function TicketVolcanoGraph({ tickets }) {
 
       <div className="mt-4 grid gap-3 sm:grid-cols-5">
         {graphBuckets.map(bucket => (
-          <div key={bucket.label} className="rounded-md border border-[var(--card-border)] bg-[var(--muted-bg)] px-3 py-2">
+          <div key={bucket.label} className="rounded-md border border-[var(--card-border)] bg-[var(--muted-bg)] px-3 py-2 cursor-pointer hover:shadow-md transition-shadow"
+            onClick={() => { if (bucket.count > 0 && onBarClick) onBarClick(bucket.label, bucket.min, bucket.max); }}>
             <div className="flex items-center gap-2">
               <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: bucket.color }} />
               <span className="text-xs font-bold uppercase text-[var(--muted)]">{bucket.label}</span>

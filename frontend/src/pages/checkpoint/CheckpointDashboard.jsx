@@ -41,6 +41,111 @@ function EmptyState() {
   return <div className="flex items-center justify-center h-32 text-sm text-[var(--muted)]">No data available</div>;
 }
 
+// Shared donut styling — thick ring, rounded segment caps, breathing room between slices.
+const DONUT_PROPS = {
+  innerRadius: '50%',
+  outerRadius: '80%',
+  cornerRadius: 10,
+  paddingAngle: 2,
+};
+
+// Legend item component (side-by-side legend for improved donuts)
+function LegendItem({ color, name, value, onClick }) {
+  return (
+    <div
+      onClick={onClick}
+      className="flex items-center gap-2 px-1.5 py-1.5 rounded-md hover:bg-[var(--muted-bg)]/40 transition-colors cursor-pointer group"
+    >
+      <span
+        className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 shadow-sm"
+        style={{ backgroundColor: color }}
+      />
+      <span className="text-[11px] font-semibold text-[var(--foreground)] group-hover:text-indigo-400 transition-colors">
+        {name}
+      </span>
+      <span className="text-[10px] text-[var(--muted)] group-hover:text-[var(--foreground)] transition-colors">
+        ({value})
+      </span>
+    </div>
+  );
+}
+
+// Improved Donut chart with side-by-side legends (left + right)
+function ImprovedDonut({ data, onSliceClick }) {
+  if (data.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-sm text-[var(--muted)]">No data available</p>
+      </div>
+    );
+  }
+
+  const midpoint = Math.ceil(data.length / 2);
+  const leftItems = data.slice(0, midpoint);
+  const rightItems = data.slice(midpoint);
+
+  return (
+    <div className="flex items-center h-72 px-2 gap-3">
+      {/* Left Legend */}
+      <div className="flex flex-col gap-3 justify-center shrink-0">
+        {leftItems.map((item) => (
+          <LegendItem
+            key={item.name}
+            color={item.fill}
+            name={item.name}
+            value={item.value}
+            onClick={() => onSliceClick(item)}
+          />
+        ))}
+      </div>
+
+      {/* Center Chart */}
+      <div className="flex-1 min-w-0 h-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={data}
+              dataKey="value"
+              {...DONUT_PROPS}
+              cursor="pointer"
+              onClick={onSliceClick}
+              animationBegin={0}
+              animationDuration={400}
+            >
+              {data.map((entry, i) => (
+                <Cell key={`cell-${i}`} fill={entry.fill} stroke="var(--card-bg)" strokeWidth={2} />
+              ))}
+            </Pie>
+            <Tooltip
+              contentStyle={TOOLTIP_STYLE}
+              formatter={(value) => {
+                const n = Number(value);
+                const total = data.reduce((s, d) => s + d.value, 0);
+                return [`${n} (${Math.round((n / total) * 100)}%)`, ''];
+              }}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Right Legend */}
+      {rightItems.length > 0 && (
+        <div className="flex flex-col gap-3 justify-center shrink-0">
+          {rightItems.map((item) => (
+            <LegendItem
+              key={item.name}
+              color={item.fill}
+              name={item.name}
+              value={item.value}
+              onClick={() => onSliceClick(item)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Widget 1: Severity Distribution
 const SEV_COLORS = ['#22c55e','#84cc16','#f59e0b','#f97316','#ef4444'];
 
@@ -54,27 +159,20 @@ const SEV_LABELS = {
 };
 
 function SeverityDonut({ events, goToDetail }) {
-  const { data, total } = useMemo(() => {
+  const data = useMemo(() => {
     const counts = {};
     events.forEach(e => { const s = e.severity ?? '?'; counts[s] = (counts[s] || 0) + 1; });
-    const data = Object.entries(counts)
+    return Object.entries(counts)
       .sort(([a],[b]) => Number(a)-Number(b))
-      .map(([sev,value]) => ({ name: SEV_LABELS[sev] ?? `Sev ${sev}`, code: sev, value }));
-    return { data, total: data.reduce((s,d) => s+d.value, 0) };
+      .map(([sev,value]) => ({ name: SEV_LABELS[sev] ?? `Sev ${sev}`, code: sev, value, fill: SEV_COLORS[Number(sev) % SEV_COLORS.length] }));
   }, [events]);
-  if (total === 0) return <WidgetCard title="Severity Distribution"><EmptyState /></WidgetCard>;
+  if (data.length === 0) return <WidgetCard title="Severity Distribution"><EmptyState /></WidgetCard>;
   return (
     <WidgetCard title="Severity Distribution">
-      <ResponsiveContainer width="100%" height={220}>
-        <PieChart>
-          <Pie data={data} cx="50%" cy="50%" innerRadius={55} outerRadius={80} paddingAngle={2} dataKey="value" cursor="pointer"
-            onClick={(d) => goToDetail('checkpointSeverity', d.code, `${d.name} Severity Events`)}>
-            {data.map((_,i) => <Cell key={i} fill={SEV_COLORS[i % SEV_COLORS.length]} />)}
-          </Pie>
-          <Tooltip formatter={(v) => { const n = Number(v); return [`${n} (${Math.round((n/total)*100)}%)`, '']; }} contentStyle={TOOLTIP_STYLE} />
-          <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-        </PieChart>
-      </ResponsiveContainer>
+      <ImprovedDonut
+        data={data}
+        onSliceClick={(d) => goToDetail('checkpointSeverity', d.code, `${d.name} Severity Events`)}
+      />
     </WidgetCard>
   );
 }
@@ -83,25 +181,18 @@ function SeverityDonut({ events, goToDetail }) {
 const STATE_COLORS = { new:'#ef4444', pending:'#f97316', detected:'#f59e0b', remediated:'#22c55e', closed:'#3b82f6', done:'#10b981' };
 
 function StateDonut({ events, goToDetail }) {
-  const { data, total } = useMemo(() => {
+  const data = useMemo(() => {
     const counts = {};
     events.forEach(e => { const s = e.state ?? 'unknown'; counts[s] = (counts[s]||0)+1; });
-    const data = Object.entries(counts).map(([name,value]) => ({ name, value }));
-    return { data, total: data.reduce((s,d) => s+d.value, 0) };
+    return Object.entries(counts).map(([name,value]) => ({ name, value, fill: STATE_COLORS[name] ?? '#6366f1' }));
   }, [events]);
-  if (total === 0) return <WidgetCard title="Event State Breakdown"><EmptyState /></WidgetCard>;
+  if (data.length === 0) return <WidgetCard title="Event State Breakdown"><EmptyState /></WidgetCard>;
   return (
     <WidgetCard title="Event State Breakdown">
-      <ResponsiveContainer width="100%" height={220}>
-        <PieChart>
-          <Pie data={data} cx="50%" cy="50%" innerRadius={55} outerRadius={80} paddingAngle={2} dataKey="value" cursor="pointer"
-            onClick={(d) => goToDetail('checkpointState', d.name, `"${d.name}" State Events`)}>
-            {data.map((d,i) => <Cell key={i} fill={STATE_COLORS[d.name] ?? '#6366f1'} />)}
-          </Pie>
-          <Tooltip formatter={(v) => { const n = Number(v); return [`${n} (${Math.round((n/total)*100)}%)`, '']; }} contentStyle={TOOLTIP_STYLE} />
-          <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-        </PieChart>
-      </ResponsiveContainer>
+      <ImprovedDonut
+        data={data}
+        onSliceClick={(d) => goToDetail('checkpointState', d.name, `"${d.name}" State Events`)}
+      />
     </WidgetCard>
   );
 }
@@ -172,25 +263,18 @@ function TopSenders({ events, goToDetail }) {
 const CONF_COLORS = { malicious:'#ef4444', suspicious:'#f97316', detected:'#f59e0b', unknown:'#94a3b8' };
 
 function ConfidenceDonut({ events, goToDetail }) {
-  const { data, total } = useMemo(() => {
+  const data = useMemo(() => {
     const counts = {};
     events.forEach(e => { const c = (e.confidenceIndicator ?? 'unknown').toLowerCase(); counts[c] = (counts[c]||0)+1; });
-    const data = Object.entries(counts).map(([name,value]) => ({ name, value }));
-    return { data, total: data.reduce((s,d) => s+d.value, 0) };
+    return Object.entries(counts).map(([name,value]) => ({ name, value, fill: CONF_COLORS[name] ?? '#6366f1' }));
   }, [events]);
-  if (total === 0) return <WidgetCard title="Confidence Indicator"><EmptyState /></WidgetCard>;
+  if (data.length === 0) return <WidgetCard title="Confidence Indicator"><EmptyState /></WidgetCard>;
   return (
     <WidgetCard title="Confidence Indicator">
-      <ResponsiveContainer width="100%" height={220}>
-        <PieChart>
-          <Pie data={data} cx="50%" cy="50%" innerRadius={55} outerRadius={80} paddingAngle={2} dataKey="value" cursor="pointer"
-            onClick={(d) => goToDetail('checkpointConfidence', d.name, `"${d.name}" Confidence Events`)}>
-            {data.map((d,i) => <Cell key={i} fill={CONF_COLORS[d.name] ?? '#6366f1'} />)}
-          </Pie>
-          <Tooltip formatter={(v) => { const n = Number(v); return [`${n} (${Math.round((n/total)*100)}%)`, '']; }} contentStyle={TOOLTIP_STYLE} />
-          <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-        </PieChart>
-      </ResponsiveContainer>
+      <ImprovedDonut
+        data={data}
+        onSliceClick={(d) => goToDetail('checkpointConfidence', d.name, `"${d.name}" Confidence Events`)}
+      />
     </WidgetCard>
   );
 }

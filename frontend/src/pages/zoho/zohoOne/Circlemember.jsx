@@ -41,7 +41,7 @@ function packAssigneeCircles(assignees, corpR) {
   });
 }
 
-function CorpCircle({ corp, corpR, colorScheme }) {
+function CorpCircle({ corp, corpR, colorScheme, onCircleClick }) {
   const packed = useMemo(() => packAssigneeCircles(corp.assignees, corpR), [corp.assignees, corpR]);
 
   const getInitials = (name) => {
@@ -62,6 +62,7 @@ function CorpCircle({ corp, corpR, colorScheme }) {
             style={{ position: 'absolute', width: p.r * 2, height: p.r * 2, borderRadius: '50%', background: `radial-gradient(circle at 35% 35%, ${color.from}, ${color.to})`, border: '1.5px solid rgba(255,255,255,0.25)', boxShadow: '0 2px 12px rgba(220,80,60,0.35)', left: corpR + p.x - p.r, top: corpR + p.y - p.r, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', zIndex: 5, cursor: 'pointer', transition: 'transform 0.18s ease' }}
             onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.08)'; }}
             onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; }}
+            onClick={() => { if (onCircleClick) onCircleClick(assignee.name, corp.corporation); }}
           >
             <span style={{ fontSize: Math.max(12, Math.min(22, p.r * 0.45)), fontWeight: 800, color: '#fff', textAlign: 'center', lineHeight: 1 }}>{getInitials(assignee.name)}</span>
             <span style={{ fontSize: Math.max(7, Math.min(10, p.r * 0.18)), color: 'rgba(255,255,255,0.9)', marginTop: 4, textAlign: 'center', maxWidth: p.r * 1.6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{assignee.count} Tickets</span>
@@ -72,7 +73,7 @@ function CorpCircle({ corp, corpR, colorScheme }) {
   );
 }
 
-export default function Circlemember({ tickets }) {
+export default function Circlemember({ tickets, onCircleClick }) {
   const containerRef = useRef(null);
   const [containerSize, setContainerSize] = useState(700);
 
@@ -130,7 +131,7 @@ export default function Circlemember({ tickets }) {
           const pos = packCircles(corpRadii, circleR)[idx] ?? { x: 0, y: 0 };
           return (
             <div key={corp.corporation} style={{ position: 'absolute', left: circleR + pos.x - r, top: circleR + pos.y - r }}>
-              <CorpCircle corp={corp} corpR={r} colorScheme={CORP_COLORS[idx % CORP_COLORS.length]} />
+              <CorpCircle corp={corp} corpR={r} colorScheme={CORP_COLORS[idx % CORP_COLORS.length]} onCircleClick={onCircleClick} />
             </div>
           );
         })}

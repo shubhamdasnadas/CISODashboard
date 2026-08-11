@@ -544,7 +544,7 @@ export default function S1Agent() {
         <SectionCard title="Site Distribution" count={siteDistribution.length}>
           <ImprovedDonut
             data={siteDistribution}
-            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'siteName', value: data.name, title: `Agents in Site: ${data.name}` } })}
+            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'agentSite', value: data.name, title: `Agents in Site: ${data.name}` } })}
           />
         </SectionCard>
 

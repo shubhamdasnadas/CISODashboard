@@ -81,6 +81,88 @@ router.get('/aggregate', async (req, res) => {
   }
 });
 
+// ─── Compliance Health Scores ──────────────────────────────────────────────────
+// Keeps one "latest" health-score snapshot per org.
+// POST upserts (deletes old rows then inserts new), GET returns the latest.
+
+// Ensure the compliance_health_scores table exists (idempotent)
+async function ensureHealthScoresTable(pool) {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS compliance_health_scores (
+      id                   SERIAL       PRIMARY KEY,
+      edr_percentage       NUMERIC(5,2) NOT NULL DEFAULT 0,
+      email_percentage     NUMERIC(5,2) NOT NULL DEFAULT 0,
+      ticketing_percentage NUMERIC(5,2) NOT NULL DEFAULT 0,
+      average_percentage   NUMERIC(5,2) NOT NULL DEFAULT 0,
+      created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    )
+  `);
+}
+
+// GET /api/dashboard/health-scores — returns the latest health score for this org
+router.get('/health-scores', async (req, res) => {
+  try {
+    await ensureHealthScoresTable(req.orgPool);
+    const { rows } = await req.orgPool.query(
+      'SELECT id, edr_percentage, email_percentage, ticketing_percentage, average_percentage, created_at FROM compliance_health_scores ORDER BY created_at DESC LIMIT 1'
+    );
+    if (rows.length === 0) {
+      return res.json({ score: null });
+    }
+    res.json({ score: rows[0] });
+  } catch (err) {
+    console.error('[health-scores] GET error:', err.message);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET /api/dashboard/health-scores/history — returns all stored health scores (newest first)
+router.get('/health-scores/history', async (req, res) => {
+  try {
+    await ensureHealthScoresTable(req.orgPool);
+    const { rows } = await req.orgPool.query(
+      'SELECT id, edr_percentage, email_percentage, ticketing_percentage, average_percentage, created_at FROM compliance_health_scores ORDER BY created_at DESC'
+    );
+    res.json({ scores: rows });
+  } catch (err) {
+    console.error('[health-scores] GET history error:', err.message);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// POST /api/dashboard/health-scores — save / update the health score snapshot
+// Body: { edr_percentage, email_percentage, ticketing_percentage }
+// average_percentage is computed server-side.
+// Behaviour: keeps only ONE row per org (delete old → insert new).
+router.post('/health-scores', async (req, res) => {
+  try {
+    await ensureHealthScoresTable(req.orgPool);
+
+    const { edr_percentage, email_percentage, ticketing_percentage } = req.body;
+
+    const edr = parseFloat(edr_percentage) || 0;
+    const email = parseFloat(email_percentage) || 0;
+    const ticketing = parseFloat(ticketing_percentage) || 0;
+    const average = Math.round(((edr + email + ticketing) / 3) * 100) / 100;
+
+    // Delete existing rows so we always keep only the latest snapshot
+    await req.orgPool.query('DELETE FROM compliance_health_scores');
+
+    const { rows } = await req.orgPool.query(
+      `INSERT INTO compliance_health_scores (edr_percentage, email_percentage, ticketing_percentage, average_percentage, created_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       RETURNING id, edr_percentage, email_percentage, ticketing_percentage, average_percentage, created_at`,
+      [edr, email, ticketing, average]
+    );
+
+    console.log('[health-scores] Saved:', { edr, email, ticketing, average, id: rows[0].id });
+    res.status(201).json({ score: rows[0] });
+  } catch (err) {
+    console.error('[health-scores] POST error:', err.message);
+    res.status(500).json({ message: err.message });
+  }
+});
+
 // GET /api/dashboard/stats
 router.get('/stats', async (req, res) => {
   try {

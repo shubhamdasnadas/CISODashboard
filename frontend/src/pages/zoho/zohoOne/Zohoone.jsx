@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../../../api';
 import { useProviders } from '../../../context/ProviderContext.jsx';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
@@ -36,7 +37,7 @@ const filterTicketsByPeriod = (tickets, from, to) => tickets.filter((ticket) => 
   return (!start || createdDate >= start) && (!end || createdDate <= end);
 });
 
-function WidgetDateFilter({ tickets = [], children }) {
+function WidgetDateFilter({ tickets = [], children, onCountClick }) {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const safeTickets = Array.isArray(tickets) ? tickets : [];
@@ -45,7 +46,10 @@ function WidgetDateFilter({ tickets = [], children }) {
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
-        <span className="mr-auto text-[var(--muted)]">{getPeriodLabel(from, to)} · {filteredTickets.length} tickets</span>
+        <span className={"mr-auto text-[var(--muted)]" + (onCountClick ? " cursor-pointer hover:text-indigo-600 hover:underline" : "")}
+          onClick={onCountClick ? () => onCountClick(filteredTickets) : undefined}>
+          {getPeriodLabel(from, to)} · {filteredTickets.length} tickets
+        </span>
         <input aria-label="Widget from date" type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)}
           className="h-8 rounded-md border border-[var(--card-border)] bg-[var(--card-bg)] px-2 text-xs text-[var(--foreground)] outline-none focus:ring-2 focus:ring-indigo-500" />
         <input aria-label="Widget to date" type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)}
@@ -76,6 +80,119 @@ const STATUS_COLORS = {
 };
 
 const PRIORITY_COLORS = { High: '#ef4444', Critical: '#dc2626', Medium: '#f59e0b', Low: '#22c55e' };
+
+// ── Shared Donut Styling ──────────────────────────────────────────────────────
+
+const TOOLTIP_STYLE = {
+  background: 'var(--card-bg)',
+  border: '1px solid var(--card-border)',
+  borderRadius: 8,
+  fontSize: 12,
+};
+
+const DONUT_PROPS = {
+  innerRadius: '50%',
+  outerRadius: '80%',
+  cornerRadius: 10,
+  paddingAngle: 2,
+};
+
+// Legend item component (side-by-side legend for improved donuts)
+function LegendItem({ color, name, value, onClick }) {
+  return (
+    <div
+      onClick={onClick}
+      className="flex items-center gap-2 px-1.5 py-1.5 rounded-md hover:bg-[var(--muted-bg)]/40 transition-colors cursor-pointer group"
+    >
+      <span
+        className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 shadow-sm"
+        style={{ backgroundColor: color }}
+      />
+      <span className="text-[11px] font-semibold text-[var(--foreground)] group-hover:text-indigo-400 transition-colors">
+        {name}
+      </span>
+      <span className="text-[10px] text-[var(--muted)] group-hover:text-[var(--foreground)] transition-colors">
+        ({value})
+      </span>
+    </div>
+  );
+}
+
+// Improved Donut chart with side-by-side legends (left + right)
+function ImprovedDonut({ data, onSliceClick }) {
+  if (data.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-sm text-[var(--muted)]">No data available</p>
+      </div>
+    );
+  }
+
+  const midpoint = Math.ceil(data.length / 2);
+  const leftItems = data.slice(0, midpoint);
+  const rightItems = data.slice(midpoint);
+
+  return (
+    <div className="flex items-center h-72 px-2 gap-3">
+      {/* Left Legend */}
+      <div className="flex flex-col gap-3 justify-center shrink-0">
+        {leftItems.map((item) => (
+          <LegendItem
+            key={item.name}
+            color={item.fill}
+            name={item.name}
+            value={item.value}
+            onClick={() => onSliceClick && onSliceClick(item)}
+          />
+        ))}
+      </div>
+
+      {/* Center Chart */}
+      <div className="flex-1 min-w-0 h-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={data}
+              dataKey="value"
+              {...DONUT_PROPS}
+              cursor="pointer"
+              onClick={onSliceClick}
+              animationBegin={0}
+              animationDuration={400}
+            >
+              {data.map((entry, i) => (
+                <Cell key={`cell-${i}`} fill={entry.fill} stroke="var(--card-bg)" strokeWidth={2} />
+              ))}
+            </Pie>
+            <Tooltip
+              contentStyle={TOOLTIP_STYLE}
+              formatter={(value) => {
+                const n = Number(value);
+                const total = data.reduce((s, d) => s + d.value, 0);
+                return [`${n.toLocaleString('en-IN')} (${Math.round((n / total) * 100)}%)`, ''];
+              }}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Right Legend */}
+      {rightItems.length > 0 && (
+        <div className="flex flex-col gap-3 justify-center shrink-0">
+          {rightItems.map((item) => (
+            <LegendItem
+              key={item.name}
+              color={item.fill}
+              name={item.name}
+              value={item.value}
+              onClick={() => onSliceClick && onSliceClick(item)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function timeAgo(iso) {
   if (!iso) return '—';
@@ -206,7 +323,7 @@ function HoverCount({ title, count, tickets }) {
 }
 
 // ── TicketListCard ─────────────────────────────────────────────────────────────
-function TicketListCard({ tickets, loading }) {
+function TicketListCard({ tickets, loading, onTicketClick }) {
   const [assignee, setAssignee] = useState('all');
   const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState({});
@@ -289,7 +406,12 @@ function TicketListCard({ tickets, loading }) {
                           {isExpanded ? '^' : 'v'}
                         </button>
                       </td>
-                      <td className="px-4 py-3 font-medium text-[var(--foreground)]">{ticket.subject || '-'}</td>
+                      <td className="px-4 py-3 font-medium text-[var(--foreground)]">
+                        <button type="button" onClick={() => onTicketClick && onTicketClick(ticket)}
+                          className="text-left hover:text-indigo-600 hover:underline transition-colors cursor-pointer">
+                          {ticket.subject || '-'}
+                        </button>
+                      </td>
                     </tr>
                     {isExpanded && (
                       <tr key={`${key}-exp`} className="border-t border-[var(--card-border)] bg-[var(--card-bg)]">
@@ -342,7 +464,7 @@ function TicketListCard({ tickets, loading }) {
 }
 
 // ── TicketTrendWidget ─────────────────────────────────────────────────────────
-function TicketTrendWidget({ tickets, activeDay, setActiveDay, loading }) {
+function TicketTrendWidget({ tickets, activeDay, setActiveDay, loading, onBarClick }) {
   const trend = useMemo(() => {
     const grouped = weekdays.map(day => ({ day, tickets: [] }));
     tickets.forEach(t => {
@@ -396,9 +518,9 @@ function TicketTrendWidget({ tickets, activeDay, setActiveDay, loading }) {
                   {count}
                 </button>
                 <button type="button" aria-label={`${row.day}: ${count} tickets`}
-                  className="w-full min-w-12 rounded-t-md transition-all hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full min-w-12 rounded-t-md transition-all hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
                   style={{ height: `${height}%`, backgroundColor: barColors[idx] }}
-                  onClick={() => setActiveDay(prev => prev === row.day ? null : row.day)} />
+                  onClick={() => { setActiveDay(prev => prev === row.day ? null : row.day); if (onBarClick && count > 0) onBarClick(row.day); }} />
                 <div className="text-xs font-semibold text-[var(--muted)]">{row.day}</div>
               </div>
             );
@@ -410,7 +532,7 @@ function TicketTrendWidget({ tickets, activeDay, setActiveDay, loading }) {
 }
 
 // ── EngineerPerformanceWidget ──────────────────────────────────────────────────
-function EngineerPerformanceWidget({ tickets, loading }) {
+function EngineerPerformanceWidget({ tickets, loading, onEngineerClick }) {
   const engPerf = useMemo(() => {
     const grouped = {};
     tickets.forEach(t => {
@@ -433,7 +555,8 @@ function EngineerPerformanceWidget({ tickets, loading }) {
           </tr></thead>
           <tbody>
             {engPerf.map(row => (
-              <tr key={row.engineer}>
+              <tr key={row.engineer} onClick={() => onEngineerClick && onEngineerClick(row.engineer)}
+                className="cursor-pointer hover:bg-[var(--muted-bg)]/60 transition-colors">
                 <td className="py-1.5 pr-6 font-medium text-[var(--foreground)]">{row.engineer}</td>
                 <td className="py-1.5 text-right"><HoverCount title={`${row.engineer} open tickets`} count={row.open.length} tickets={row.open} /></td>
                 <td className="py-1.5 text-right"><HoverCount title={`${row.engineer} closed tickets`} count={row.closed.length} tickets={row.closed} /></td>
@@ -448,7 +571,7 @@ function EngineerPerformanceWidget({ tickets, loading }) {
 }
 
 // ── ResolutionHeatmapWidget ────────────────────────────────────────────────────
-function ResolutionHeatmapWidget({ tickets, loading }) {
+function ResolutionHeatmapWidget({ tickets, loading, onCellClick }) {
   const agingMatrix = useMemo(() => {
     const grouped = {};
     tickets.forEach(t => {
@@ -483,7 +606,9 @@ function ResolutionHeatmapWidget({ tickets, loading }) {
                   const bt = row.buckets[b]; const cnt = bt.length;
                   const intensity = cnt / maxAging;
                   return (
-                    <div key={b} className="rounded-md border border-[var(--card-border)] px-3 py-2" style={{ backgroundColor: cnt ? `rgba(79, 70, 229, ${0.12 + intensity * 0.45})` : 'var(--card-bg)' }}>
+                    <div key={b} className={`rounded-md border border-[var(--card-border)] px-3 py-2 ${cnt > 0 ? 'cursor-pointer hover:brightness-90 transition-all' : ''}`}
+                      style={{ backgroundColor: cnt ? `rgba(79, 70, 229, ${0.12 + intensity * 0.45})` : 'var(--card-bg)' }}
+                      onClick={() => { if (cnt > 0 && onCellClick) onCellClick(row.department, b); }}>
                       <div className="mb-1 flex items-center justify-between gap-2 md:hidden"><span className="text-xs font-semibold text-[var(--muted)]">{b}</span></div>
                       <div className="flex items-center justify-between gap-2 md:justify-center">
                         <span className="h-2 w-2 rounded-full bg-indigo-500" />
@@ -504,7 +629,7 @@ function ResolutionHeatmapWidget({ tickets, loading }) {
 }
 
 // ── MonthlyVolumeWidget ────────────────────────────────────────────────────────
-function MonthlyVolumeWidget({ tickets, loading }) {
+function MonthlyVolumeWidget({ tickets, loading, onCellClick }) {
   const monthMatrix = useMemo(() => {
     const monthMap = new Map(); const deptMap = {};
     tickets.forEach(t => {
@@ -546,7 +671,9 @@ function MonthlyVolumeWidget({ tickets, loading }) {
                   const mt = row.monthTickets[m.key] || []; const cnt = mt.length;
                   const intensity = cnt / maxMonth;
                   return (
-                    <div key={m.key} className="rounded-md border border-[var(--card-border)] px-3 py-2" style={{ backgroundColor: cnt ? `rgba(8, 145, 178, ${0.12 + intensity * 0.45})` : 'var(--card-bg)' }}>
+                    <div key={m.key} className={`rounded-md border border-[var(--card-border)] px-3 py-2 ${cnt > 0 ? 'cursor-pointer hover:brightness-90 transition-all' : ''}`}
+                      style={{ backgroundColor: cnt ? `rgba(8, 145, 178, ${0.12 + intensity * 0.45})` : 'var(--card-bg)' }}
+                      onClick={() => { if (cnt > 0 && onCellClick) onCellClick(row.department, m.label); }}>
                       <div className="mb-1 flex items-center justify-between gap-2 md:hidden"><span className="text-xs font-semibold text-[var(--muted)]">{m.label}</span></div>
                       <div className="flex items-center justify-between gap-2 md:justify-center">
                         <span className="h-2 w-2 rounded-full bg-cyan-600" />
@@ -568,8 +695,10 @@ function MonthlyVolumeWidget({ tickets, loading }) {
 
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function Zohoone() {
+  const navigate = useNavigate();
   const { selectedProviders } = useProviders();
   const activeTool = selectedProviders.ticketing || 'Zoho Desk';
+
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(false);
   const [activeDay, setActiveDay] = useState(null);
@@ -578,6 +707,8 @@ export default function Zohoone() {
   const [search, setSearch] = useState('');
   const [lastSynced, setLastSynced] = useState(null);
   const [info, setInfo] = useState('');
+  const [overviewPage, setOverviewPage] = useState(1);
+  const overviewPageSize = 10;
 
   const fetchTickets = useCallback(async () => {
     setLoading(true);
@@ -602,6 +733,11 @@ export default function Zohoone() {
     fetchTickets();
   }, [fetchTickets]);
 
+  // Reset overview table page when search changes
+  useEffect(() => {
+    setOverviewPage(1);
+  }, [search]);
+
   const handleSync = async () => {
     setSyncing(true);
     setError('');
@@ -621,13 +757,20 @@ export default function Zohoone() {
     }
   };
 
+  // Helper to navigate to the detail view with Zoho ticket data
+  const goToDetail = useCallback((filterId, value, title, overrideRows) => {
+    navigate('/security/detail', {
+      state: { dataset: 'zoho', filterId, value, title, rows: overrideRows || tickets },
+    });
+  }, [navigate, tickets]);
+
   const statusCounts = useMemo(() => Object.entries(
     tickets.reduce((acc, t) => {
       const s = t.status || 'Unknown';
       acc[s] = (acc[s] || 0) + 1;
       return acc;
     }, {})
-  ).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value), [tickets]);
+  ).map(([name, value]) => ({ name, value, fill: STATUS_COLORS[name] || '#6366f1' })).sort((a, b) => b.value - a.value), [tickets]);
 
   const priorityCounts = useMemo(() => Object.entries(
     tickets.reduce((acc, t) => {
@@ -651,6 +794,16 @@ export default function Zohoone() {
     getContactName(t).toLowerCase().includes(search.toLowerCase()) ||
     getDeptName(t).toLowerCase().includes(search.toLowerCase())
   ), [tickets, search]);
+
+  // ── Overview table pagination ────────────────────────────────────────────────
+  const overviewPageCount = Math.max(Math.ceil(overviewFiltered.length / overviewPageSize), 1);
+  const overviewSafePage = Math.min(overviewPage, overviewPageCount);
+  const overviewStartIndex = overviewFiltered.length ? (overviewSafePage - 1) * overviewPageSize : 0;
+  const overviewEndIndex = Math.min(overviewStartIndex + overviewPageSize, overviewFiltered.length);
+  const overviewVisible = overviewFiltered.slice(overviewStartIndex, overviewEndIndex);
+  const overviewPages = Array.from({ length: overviewPageCount }, (_, i) => i + 1)
+    .filter(p => p === 1 || p === overviewPageCount || Math.abs(p - overviewSafePage) <= 1);
+  const goToOverviewPage = (p) => setOverviewPage(Math.min(Math.max(p, 1), overviewPageCount));
 
 
 
@@ -700,12 +853,13 @@ export default function Zohoone() {
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: 'Total', value: tickets.length, color: '#6366f1' },
-          { label: 'Open', value: tickets.filter(t => t.status === 'Open').length, color: '#3b82f6' },
-          { label: 'High Priority', value: tickets.filter(t => t.priority === 'High' || t.priority === 'Critical').length, color: '#ef4444' },
-          { label: 'Closed', value: tickets.filter(t => ['Closed', 'Technically Closed', 'Resolved'].includes(t.status)).length, color: '#22c55e' },
+          { label: 'Total', value: tickets.length, color: '#6366f1', filterId: 'zohoAll', filterValue: 'all', title: 'All Zoho Tickets' },
+          { label: 'Open', value: tickets.filter(t => t.status === 'Open').length, color: '#3b82f6', filterId: 'zohoOpen', filterValue: 'Open', title: 'Open Zoho Tickets' },
+          { label: 'High Priority', value: tickets.filter(t => t.priority === 'High' || t.priority === 'Critical').length, color: '#ef4444', filterId: 'zohoHighPriority', filterValue: 'High', title: 'High Priority Zoho Tickets' },
+          { label: 'Closed', value: tickets.filter(t => ['Closed', 'Technically Closed', 'Resolved'].includes(t.status)).length, color: '#22c55e', filterId: 'zohoClosed', filterValue: 'Closed', title: 'Closed Zoho Tickets' },
         ].map(s => (
-          <div key={s.label} className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-5">
+          <div key={s.label} onClick={() => goToDetail(s.filterId, s.filterValue, s.title)}
+            className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-5 cursor-pointer hover:shadow-md transition-shadow">
             <p className="text-sm text-[var(--muted)] mb-1.5">{s.label}</p>
             <p className="text-3xl font-bold" style={{ color: s.color }}>{loading ? '—' : s.value}</p>
           </div>
@@ -715,7 +869,7 @@ export default function Zohoone() {
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-6">
-          <h3 className="font-semibold text-[var(--foreground)] mb-4">Ticketing MTTR</h3>
+          <h3 className="font-semibold text-[var(--foreground)] mb-4">Ticketing Health Score</h3>
           {/* <ResponsiveContainer width="100%" height={200}> */}
             <Ticketingmttr tickets={tickets} loading={loading} />
           {/* </ResponsiveContainer> */}
@@ -723,15 +877,7 @@ export default function Zohoone() {
 
         <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-6">
           <h3 className="font-semibold text-[var(--foreground)] mb-4">By Status</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <PieChart>
-              <Pie data={statusCounts} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={75} label={({ name, percent }) => percent > 0.05 ? `${(percent * 100).toFixed(0)}%` : ''}>
-                {statusCounts.map(e => <Cell key={e.name} fill={STATUS_COLORS[e.name] || '#6366f1'} />)}
-              </Pie>
-              <Tooltip contentStyle={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8 }} />
-              <Legend />
-            </PieChart>
-          </ResponsiveContainer>
+          <ImprovedDonut data={statusCounts} onSliceClick={(data) => goToDetail('zohoStatus', data.name, `Zoho Tickets with "${data.name}" status`)} />
         </div>
 
         <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-6">
@@ -742,7 +888,8 @@ export default function Zohoone() {
               <XAxis dataKey="name" tick={{ fontSize: 12, fill: 'var(--muted)' }} />
               <YAxis tick={{ fontSize: 12, fill: 'var(--muted)' }} />
               <Tooltip contentStyle={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8 }} />
-              <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+              <Bar dataKey="value" radius={[4, 4, 0, 0]} cursor="pointer"
+                onClick={(data) => goToDetail('zohoPriority', data.name, `Zoho Tickets with "${data.name}" priority`)}>
                 {priorityCounts.map(e => <Cell key={e.name} fill={PRIORITY_COLORS[e.name] || '#6b7280'} />)}
               </Bar>
             </BarChart>
@@ -757,21 +904,11 @@ export default function Zohoone() {
               <XAxis type="number" tick={{ fontSize: 11, fill: 'var(--muted)' }} />
               <YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 10, fill: 'var(--muted)' }} />
               <Tooltip contentStyle={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8 }} />
-              <Bar dataKey="value" fill="#6366f1" radius={[0, 4, 4, 0]} />
+              <Bar dataKey="value" fill="#6366f1" radius={[0, 4, 4, 0]} cursor="pointer"
+                onClick={(data) => goToDetail('zohoDepartment', data.name, `Zoho Tickets in "${data.name}" department`)} />
             </BarChart>
           </ResponsiveContainer>
         </div>
-      </div>
-
-      {/* Search + Table */}
-      <div>
-        <input
-          type="text" placeholder="Search by subject, contact, or department…"
-          value={search} onChange={e => setSearch(e.target.value)}
-          className="w-full max-w-sm px-4 py-2.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-[var(--foreground)] mb-4"
-        />
-
-
       </div>
 
       {/* ── Analytics ─────────────────────────────────────────────────────────── */}
@@ -783,13 +920,34 @@ export default function Zohoone() {
         <div className="text-sm text-[var(--muted)]">{loading ? 'Loading tickets...' : `${tickets.length} tickets`}</div>
       </div>
 
-      <TicketListCard tickets={tickets} loading={loading} />
-      <WidgetDateFilter tickets={tickets}>{filtered => <TicketVolcanoGraph tickets={filtered} />}</WidgetDateFilter>
+      <TicketListCard tickets={tickets} loading={loading}
+        onTicketClick={(t) => goToDetail('zohoTicketNo', getTicketNo(t), `Zoho Ticket ${getTicketNo(t)}`)} />
+      <WidgetDateFilter tickets={tickets}>{filtered => <TicketVolcanoGraph tickets={filtered} onBarClick={(label, min, max) => {
+        var getCr = function (t) { return t?.createdTime || t?.created_at || t?.createdAt || ''; };
+        var getCl = function (t) { return t?.closedTime || t?.closed_at || t?.closedAt || t?.closeTime || ''; };
+        var pre = tickets.filter(function (t) {
+          var ca = getCr(t); var cd = new Date(ca); if (!ca || isNaN(cd.getTime())) return false;
+          var cl = getCl(t); var closedDate = new Date(cl);
+          var closedStatuses = ['closed', 'technically closed', 'duplicate'];
+          var isClosed = closedStatuses.indexOf(String(t.status || '').trim().toLowerCase()) !== -1;
+          if (!isClosed) return false;
+          if (!cl || isNaN(closedDate.getTime())) return false;
+          var hours = (closedDate.getTime() - cd.getTime()) / (1000 * 60 * 60);
+          return hours >= min && hours < max;
+        });
+        goToDetail('zohoAll', 'all', 'Zoho Tickets - ' + label + ' Resolution', pre);
+      }} />}</WidgetDateFilter>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-        <WidgetDateFilter tickets={tickets}>{filtered => <Circlemember tickets={filtered} />}</WidgetDateFilter>
-        <WidgetDateFilter tickets={tickets}>{filtered => <Mttrcard tickets={filtered} />}</WidgetDateFilter>
-        <WidgetDateFilter tickets={tickets}>{filtered => <Topperformance tickets={filtered} />}</WidgetDateFilter>
+        <WidgetDateFilter tickets={tickets}>{filtered => <Circlemember tickets={filtered} onCircleClick={(name, dept) => {
+          goToDetail('zohoAssignee', name, 'Zoho Tickets by ' + name + ' (' + dept + ')');
+        }} />}</WidgetDateFilter>
+        <WidgetDateFilter tickets={tickets}>{filtered => <Mttrcard tickets={filtered} onCardClick={() => {
+          goToDetail('zohoAll', 'all', 'All Zoho Tickets');
+        }} />}</WidgetDateFilter>
+        <WidgetDateFilter tickets={tickets}>{filtered => <Topperformance tickets={filtered} onRowClick={(name) => {
+          goToDetail('zohoAssignee', name, 'Zoho Tickets by ' + name);
+        }} />}</WidgetDateFilter>
       </div>
 
       {/* <div className="grid gap-5 xl:grid-cols-2">
@@ -800,21 +958,63 @@ export default function Zohoone() {
       </div> */}
       <div className="grid gap-5 xl:grid-cols-5">
         <div className="xl:col-span-2">
-          <WidgetDateFilter tickets={tickets}>{filtered => <Funneldiagram tickets={filtered} loading={loading} />}</WidgetDateFilter>
+          <WidgetDateFilter tickets={tickets}>{filtered => <Funneldiagram tickets={filtered} loading={loading}
+            onSliceClick={(slice) => goToDetail('zohoStatusGroup', slice.status, 'Zoho Tickets - ' + slice.status)} />}</WidgetDateFilter>
         </div>
         <div className="xl:col-span-3">
-          <WidgetDateFilter tickets={tickets}>{filtered => <Hourbasedset tickets={filtered} />}</WidgetDateFilter>
+          <WidgetDateFilter tickets={tickets}>{filtered => <Hourbasedset tickets={filtered}
+            onCellClick={(day, hour) => {
+              const getCreatedAt = (t) => t?.createdTime || t?.created_at || t?.createdAt;
+              const dayIndex = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].indexOf(day);
+              const pre = tickets.filter(t => {
+                const ca = getCreatedAt(t);
+                const d = new Date(ca);
+                if (!ca || isNaN(d.getTime())) return false;
+                const ticketDayIdx = d.getDay() === 0 ? 6 : d.getDay() - 1;
+                return ticketDayIdx === dayIndex && d.getHours() === hour;
+              });
+              goToDetail('zohoAll', 'all', 'Zoho Tickets - ' + day + ' ' + hour + ':00', pre);
+            }} />}</WidgetDateFilter>
         </div>
       </div>
       <div className="grid gap-5">
-        <WidgetDateFilter tickets={tickets}>{filtered => <Zohoticketcount tickets={filtered} loading={loading} />}</WidgetDateFilter>
+        <WidgetDateFilter tickets={tickets} onCountClick={(filtered) => goToDetail('zohoAll', 'all', 'All Zoho Tickets', filtered)}>
+          {filtered => <Zohoticketcount tickets={filtered} loading={loading}
+            onCardClick={(card) => goToDetail('zohoStatusGroup', card.title, 'Zoho Tickets - ' + card.title)} />}
+        </WidgetDateFilter>
       </div>
 
       <div className="grid gap-5 xl:grid-cols-2">
-        <WidgetDateFilter tickets={tickets}>{filtered => <TicketTrendWidget tickets={filtered} activeDay={activeDay} setActiveDay={setActiveDay} loading={loading} />}</WidgetDateFilter>
-        <WidgetDateFilter tickets={tickets}>{filtered => <EngineerPerformanceWidget tickets={filtered} loading={loading} />}</WidgetDateFilter>
-        <WidgetDateFilter tickets={tickets}>{filtered => <ResolutionHeatmapWidget tickets={filtered} loading={loading} />}</WidgetDateFilter>
-        <WidgetDateFilter tickets={tickets}>{filtered => <MonthlyVolumeWidget tickets={filtered} loading={loading} />}</WidgetDateFilter>
+        <WidgetDateFilter tickets={tickets}>{filtered => <TicketTrendWidget tickets={filtered} activeDay={activeDay} setActiveDay={setActiveDay} loading={loading} onBarClick={(day) => goToDetail('zohoDay', day, `Zoho Tickets on ${day}`)} />}</WidgetDateFilter>
+        <WidgetDateFilter tickets={tickets}>{filtered => <EngineerPerformanceWidget tickets={filtered} loading={loading} onEngineerClick={(name) => goToDetail('zohoAssignee', name, `Zoho Tickets by ${name}`)} />}</WidgetDateFilter>
+        <WidgetDateFilter tickets={tickets}>{filtered => <ResolutionHeatmapWidget tickets={filtered} loading={loading} onCellClick={(dept, bucket) => {
+          const norm = (v) => (v != null ? String(v).trim() : '');
+          const getDept = (t) => norm(t.department?.name) || norm(t.departmentName) || 'Unknown';
+          const bucketRegex = { '<1h': [0, 3600000], '1-4h': [3600000, 14400000], '4-24h': [14400000, 86400000], '1-3d': [86400000, 259200000], '3+d': [259200000, Infinity] };
+          const closedStatuses = new Set(['closed', 'technically closed', 'duplicate']);
+          const getCreatedAt = (t) => t?.created_at || t?.createdTime || t?.createdAt;
+          const getClosedAt = (t) => t?.closed_at || t?.closedTime || t?.closedAt || t?.closeTime;
+          const pre = tickets.filter(t => {
+            if (getDept(t) !== dept) return false;
+            const ca = getCreatedAt(t); const cd = new Date(ca); if (!ca || isNaN(cd.getTime())) return false;
+            const ca2 = getClosedAt(t); const closedDate = new Date(ca2); const isClosed = closedStatuses.has(norm(t.status).toLowerCase());
+            if (!isClosed) return false; if (!ca2 || isNaN(closedDate.getTime())) return false;
+            const ms = closedDate.getTime() - cd.getTime();
+            const range = bucketRegex[bucket]; return range ? (ms >= range[0] && ms < range[1]) : false;
+          });
+          goToDetail('zohoAll', 'all', `${dept} – ${bucket} Resolution`, pre);
+        }} />}</WidgetDateFilter>
+        <WidgetDateFilter tickets={tickets}>{filtered => <MonthlyVolumeWidget tickets={filtered} loading={loading} onCellClick={(dept, monthLabel) => {
+          const norm = (v) => (v != null ? String(v).trim() : '');
+          const getDept = (t) => norm(t.department?.name) || norm(t.departmentName) || 'Unknown';
+          const getCreatedAt = (t) => t?.created_at || t?.createdTime || t?.createdAt;
+          const pre = tickets.filter(t => {
+            if (getDept(t) !== dept) return false;
+            const ca = getCreatedAt(t); const d = new Date(ca); if (!ca || isNaN(d.getTime())) return false;
+            const m = d.toLocaleString('en-US', { month: 'short' }); return m === monthLabel;
+          });
+          goToDetail('zohoAll', 'all', `${dept} – ${monthLabel}`, pre);
+        }} />}</WidgetDateFilter>
       </div>
 
       <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
@@ -839,38 +1039,67 @@ export default function Zohoone() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--card-border)]">
-                {overviewFiltered.slice(0, 100).map((t, i) => (
-                  <tr key={t.id || i} className="hover:bg-[var(--muted-bg)] transition-colors">
-                    <td className="px-4 py-3 text-xs text-[var(--muted)]">{t.ticketNumber || '—'}</td>
-                    <td className="px-4 py-3 font-medium text-[var(--foreground)] max-w-xs truncate">{t.subject || '—'}</td>
+                {overviewVisible.map((t, i) => (
+                  <tr key={t.id || i} className="hover:bg-[var(--muted-bg)] transition-colors cursor-pointer"
+                    onClick={() => goToDetail('zohoTicketNo', getTicketNo(t), 'Zoho Ticket ' + getTicketNo(t))}>
+                    <td className="px-4 py-3 text-xs text-[var(--muted)]">{getTicketNo(t)}</td>
+                    <td className="px-4 py-3 font-medium text-[var(--foreground)] max-w-xs truncate">{t.subject || '\u2014'}</td>
                     <td className="px-4 py-3">
                       <span className="px-2 py-0.5 rounded-full text-xs font-medium" style={{
-                        backgroundColor: `${STATUS_COLORS[t.status] || '#6b7280'}22`,
+                        backgroundColor: (STATUS_COLORS[t.status] || '#6b7280') + '22',
                         color: STATUS_COLORS[t.status] || '#6b7280',
-                      }}>{t.status || '—'}</span>
+                      }}>{t.status || '\u2014'}</span>
                     </td>
                     <td className="px-4 py-3">
-                      {t.priority && t.priority !== '—'
+                      {t.priority && t.priority !== '\u2014'
                         ? <span className="px-2 py-0.5 rounded-full text-xs font-medium" style={{
-                          backgroundColor: `${PRIORITY_COLORS[t.priority] || '#6b7280'}22`,
+                          backgroundColor: (PRIORITY_COLORS[t.priority] || '#6b7280') + '22',
                           color: PRIORITY_COLORS[t.priority] || '#6b7280',
                         }}>{t.priority}</span>
-                        : <span className="text-[var(--muted)]">—</span>
+                        : <span className="text-[var(--muted)]">{'\u2014'}</span>
                       }
                     </td>
                     <td className="px-4 py-3 text-[var(--muted)] text-xs max-w-[120px] truncate">{getDeptName(t)}</td>
                     <td className="px-4 py-3 text-[var(--muted)] max-w-[120px] truncate">{getContactName(t)}</td>
                     <td className="px-4 py-3 text-[var(--muted)] max-w-[120px] truncate">{getAssigneeName(t)}</td>
-                    <td className="px-4 py-3 text-[var(--muted)] text-xs whitespace-nowrap">{getCreatedAt(t) ? timeAgo(getCreatedAt(t)) : '—'}</td>
+                    <td className="px-4 py-3 text-[var(--muted)] text-xs whitespace-nowrap">{getCreatedAt(t) ? timeAgo(getCreatedAt(t)) : '\u2014'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            {overviewFiltered.length > 100 && (
-              <p className="px-4 py-3 text-xs text-center text-[var(--muted)] border-t border-[var(--card-border)]">
-                Showing 100 of {overviewFiltered.length} tickets
-              </p>
-            )}
+
+            {/* ── Pagination footer ─────────────────────────────────────────────── */}
+            <div className="flex flex-col gap-3 border-t border-[var(--card-border)] bg-[var(--card-bg)] px-4 py-3 text-sm text-[var(--muted)] sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                Showing {overviewFiltered.length ? overviewStartIndex + 1 : 0} to {overviewEndIndex} of {overviewFiltered.length} entries
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {[['First', 1], ['Prev', overviewSafePage - 1]].map(([label, target]) => (
+                  <button key={label} type="button" onClick={() => goToOverviewPage(target)} disabled={overviewSafePage === 1}
+                    className="rounded-md border border-[var(--card-border)] px-3 py-1.5 font-medium text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50">
+                    {label}
+                  </button>
+                ))}
+                {overviewPages.map((p, idx) => {
+                  const prev = overviewPages[idx - 1];
+                  return (
+                    <span key={p} className="inline-flex items-center gap-1">
+                      {prev && p - prev > 1 && <span className="px-1">...</span>}
+                      <button type="button" onClick={() => goToOverviewPage(p)}
+                        className={'h-9 min-w-9 rounded-md border border-[var(--card-border)] px-3 font-semibold ' + (overviewSafePage === p ? 'bg-indigo-600 text-white' : 'text-[var(--foreground)]')}>
+                        {p}
+                      </button>
+                    </span>
+                  );
+                })}
+                {[['Next', overviewSafePage + 1], ['Last', overviewPageCount]].map(([label, target]) => (
+                  <button key={label} type="button" onClick={() => goToOverviewPage(target)} disabled={overviewSafePage === overviewPageCount}
+                    className="rounded-md border border-[var(--card-border)] px-3 py-1.5 font-medium text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50">
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </div>
