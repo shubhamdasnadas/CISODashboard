@@ -1,6 +1,31 @@
 import React, { useEffect, useState, useRef } from 'react';
 import api from '../../api';
 
+// Returns an interpolated red -> orange -> yellow -> green color for a 0-100 value
+const getNeedleColor = (pct) => {
+    const stops = [
+        { p: 0, c: [255, 71, 87] },    // red
+        { p: 33, c: [255, 165, 2] },   // orange
+        { p: 66, c: [255, 211, 42] },  // yellow
+        { p: 100, c: [46, 213, 115] }, // green
+    ];
+    let lower = stops[0];
+    let upper = stops[stops.length - 1];
+    for (let i = 0; i < stops.length - 1; i++) {
+        if (pct >= stops[i].p && pct <= stops[i + 1].p) {
+            lower = stops[i];
+            upper = stops[i + 1];
+            break;
+        }
+    }
+    const range = upper.p - lower.p || 1;
+    const ratio = (pct - lower.p) / range;
+    const r = Math.round(lower.c[0] + ratio * (upper.c[0] - lower.c[0]));
+    const g = Math.round(lower.c[1] + ratio * (upper.c[1] - lower.c[1]));
+    const b = Math.round(lower.c[2] + ratio * (upper.c[2] - lower.c[2]));
+    return `rgb(${r}, ${g}, ${b})`;
+};
+
 const Ticketingmttr = ({ total: propTotal, closed: propClosed, tickets: propTickets }) => {
     const [total, setTotal] = useState(propTotal || 0);
     const [closed, setClosed] = useState(propClosed || 0);
@@ -42,7 +67,6 @@ const Ticketingmttr = ({ total: propTotal, closed: propClosed, tickets: propTick
 
     // Calculate the percentage
     const percentage = total > 0 ? (closed / total) * 100 : 0;
-    const openPercentage = 100 - percentage;
     const clampedPercentage = Math.min(Math.max(percentage, 0), 100);
 
     // Save to localStorage and DB after data is loaded (once per data change)
@@ -60,10 +84,13 @@ const Ticketingmttr = ({ total: propTotal, closed: propClosed, tickets: propTick
         }
     }, [loading, total, closed, clampedPercentage]);
 
-    // Calculate stroke dasharray for both portions
-    const circumference = 219.8; // Arc length for semi-circle
-    const greenDash = (clampedPercentage / 100) * circumference;
-    const redDash = (openPercentage / 100) * circumference;
+    // Needle geometry: 0% points left (180deg), 100% points right (0deg)
+    const needleLength = 55;
+    const angleDeg = 180 - (clampedPercentage / 100) * 180;
+    const angleRad = (angleDeg * Math.PI) / 180;
+    const needleX = 100 + needleLength * Math.cos(angleRad);
+    const needleY = 100 - needleLength * Math.sin(angleRad);
+    const needleColor = getNeedleColor(clampedPercentage);
 
     // Inline styles
     const containerStyle = {
@@ -87,11 +114,12 @@ const Ticketingmttr = ({ total: propTotal, closed: propClosed, tickets: propTick
     };
 
     const percentageStyle = {
-        color: '#ffffff',
+        color: needleColor,
         fontSize: '36px',
         fontWeight: '600',
         textAlign: 'center',
-        margin: '8px 0 0 0'
+        margin: '8px 0 0 0',
+        transition: 'color 0.3s ease'
     };
 
     const legendContainerStyle = {
@@ -134,6 +162,13 @@ const Ticketingmttr = ({ total: propTotal, closed: propClosed, tickets: propTick
                     viewBox="0 0 200 150"
                     style={{ filter: 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2))', display: 'block' }}
                 >
+                    <defs>
+                        <linearGradient id="ticketingMttrGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                            <stop offset="0%" stopColor="#FF4757" />
+                            <stop offset="100%" stopColor="#2ED573" />
+                        </linearGradient>
+                    </defs>
+
                     {/* Gauge background (dark gray track) */}
                     <path
                         d="M 30 100 A 70 70 0 0 1 170 100"
@@ -143,30 +178,27 @@ const Ticketingmttr = ({ total: propTotal, closed: propClosed, tickets: propTick
                         strokeLinecap="round"
                     />
 
-                    {/* Green portion (closed/mitigated) */}
+                    {/* Full gradient arc (red -> orange -> yellow -> green) */}
                     <path
                         d="M 30 100 A 70 70 0 0 1 170 100"
                         fill="none"
-                        stroke="#2ED573"
+                        stroke="url(#ticketingMttrGradient)"
                         strokeWidth="16"
                         strokeLinecap="round"
-                        strokeDasharray={`${greenDash} ${circumference}`}
-                        opacity="1"
                     />
 
-                    {/* Red portion (open/unmitigated) */}
-                    <path
-                        d="M 30 100 A 70 70 0 0 1 170 100"
-                        fill="none"
-                        stroke="#FF4757"
-                        strokeWidth="16"
+                    {/* Needle */}
+                    <line
+                        x1="100"
+                        y1="100"
+                        x2={needleX}
+                        y2={needleY}
+                        stroke="#FFFFFF"
+                        strokeWidth="3"
                         strokeLinecap="round"
-                        strokeDasharray={`${redDash} ${circumference}`}
-                        strokeDashoffset={`${-greenDash}`}
-                        opacity="0.8"
                     />
 
-                    {/* Center circle (pivot point) */}
+                    {/* Center pivot point */}
                     <circle cx="100" cy="100" r="6" fill="#FFFFFF" />
                 </svg>
 

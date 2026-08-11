@@ -1,6 +1,31 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../api';
 
+// Returns an interpolated red -> orange -> yellow -> green color for a 0-100 value
+const getNeedleColor = (pct) => {
+  const stops = [
+    { p: 0, c: [255, 71, 87] },    // red
+    { p: 33, c: [255, 165, 2] },   // orange
+    { p: 66, c: [255, 211, 42] },  // yellow
+    { p: 100, c: [46, 213, 115] }, // green
+  ];
+  let lower = stops[0];
+  let upper = stops[stops.length - 1];
+  for (let i = 0; i < stops.length - 1; i++) {
+    if (pct >= stops[i].p && pct <= stops[i + 1].p) {
+      lower = stops[i];
+      upper = stops[i + 1];
+      break;
+    }
+  }
+  const range = upper.p - lower.p || 1;
+  const ratio = (pct - lower.p) / range;
+  const r = Math.round(lower.c[0] + ratio * (upper.c[0] - lower.c[0]));
+  const g = Math.round(lower.c[1] + ratio * (upper.c[1] - lower.c[1]));
+  const b = Math.round(lower.c[2] + ratio * (upper.c[2] - lower.c[2]));
+  return `rgb(${r}, ${g}, ${b})`;
+};
+
 const AllCommonmttr = () => {
   const [loading, setLoading] = useState(true);
   const [edrPct, setEdrPct] = useState(0);
@@ -51,7 +76,6 @@ const AllCommonmttr = () => {
 
         // Also save computed values to DB for next time
         if (ePct > 0 || emPct > 0 || tPct > 0) {
-          const avg = Math.round(((ePct + emPct + tPct) / 3) * 100) / 100;
           api.patch('/compliance-health-scores/update', { field: 'edr_percentage', value: parseFloat(ePct.toFixed(2)) }).catch(() => {});
           api.patch('/compliance-health-scores/update', { field: 'email_percentage', value: parseFloat(emPct.toFixed(2)) }).catch(() => {});
           api.patch('/compliance-health-scores/update', { field: 'ticketing_percentage', value: parseFloat(tPct.toFixed(2)) }).catch(() => {});
@@ -84,10 +108,13 @@ const AllCommonmttr = () => {
   const clampedPercentage = Math.min(Math.max(averagePercentage, 0), 100);
   const unmitigatedPercentage = 100 - clampedPercentage;
 
-  // Calculate stroke dasharray for both portions
-  const circumference = 219.8; // Arc length for semi-circle
-  const greenDash = (clampedPercentage / 100) * circumference;
-  const redDash = (unmitigatedPercentage / 100) * circumference;
+  // Needle geometry: 0% points left (180deg), 100% points right (0deg)
+  const needleLength = 55;
+  const angleDeg = 180 - (clampedPercentage / 100) * 180;
+  const angleRad = (angleDeg * Math.PI) / 180;
+  const needleX = 100 + needleLength * Math.cos(angleRad);
+  const needleY = 100 - needleLength * Math.sin(angleRad);
+  const needleColor = getNeedleColor(clampedPercentage);
 
   // Inline styles
   const containerStyle = {
@@ -111,11 +138,12 @@ const AllCommonmttr = () => {
   };
 
   const percentageStyle = {
-    color: '#ffffff',
+    color: needleColor,
     fontSize: '36px',
     fontWeight: '600',
     textAlign: 'center',
-    margin: '8px 0 0 0'
+    margin: '8px 0 0 0',
+    transition: 'color 0.3s ease'
   };
 
   const statsStyle = {
@@ -154,7 +182,7 @@ const AllCommonmttr = () => {
   };
 
   // For debugging
-  console.log("AllCommonmttr values:", { 
+  console.log("AllCommonmttr values:", {
     emailPct,
     edrPct,
     ticketPct,
@@ -167,12 +195,19 @@ const AllCommonmttr = () => {
         <div style={{ color: '#94a3b8', textAlign: 'center', padding: '32px 16px' }}>Loading health score...</div>
       ) : (
       <div style={gaugeContainerStyle}>
-        <svg 
-          width="240" 
-          height="160" 
-          viewBox="0 0 200 150" 
+        <svg
+          width="240"
+          height="160"
+          viewBox="0 0 200 150"
           style={{ filter: 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2))', display: 'block' }}
         >
+          <defs>
+            <linearGradient id="allCommonMttrGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#FF4757" />
+              <stop offset="100%" stopColor="#2ED573" />
+            </linearGradient>
+          </defs>
+
           {/* Gauge background (dark gray track) */}
           <path
             d="M 30 100 A 70 70 0 0 1 170 100"
@@ -182,36 +217,33 @@ const AllCommonmttr = () => {
             strokeLinecap="round"
           />
 
-          {/* Mitigated/Closed portion (green) */}
+          {/* Full gradient arc (red -> orange -> yellow -> green) */}
           <path
             d="M 30 100 A 70 70 0 0 1 170 100"
             fill="none"
-            stroke="#2ED573"
+            stroke="url(#allCommonMttrGradient)"
             strokeWidth="16"
             strokeLinecap="round"
-            strokeDasharray={`${greenDash} ${circumference}`}
-            opacity="1"
           />
 
-          {/* Unmitigated/Open portion (red) */}
-          <path
-            d="M 30 100 A 70 70 0 0 1 170 100"
-            fill="none"
-            stroke="#FF4757"
-            strokeWidth="16"
+          {/* Needle */}
+          <line
+            x1="100"
+            y1="100"
+            x2={needleX}
+            y2={needleY}
+            stroke="#FFFFFF"
+            strokeWidth="3"
             strokeLinecap="round"
-            strokeDasharray={`${redDash} ${circumference}`}
-            strokeDashoffset={`${-greenDash}`}
-            opacity="0.8"
           />
 
-          {/* Center circle (pivot point) */}
+          {/* Center pivot point */}
           <circle cx="100" cy="100" r="6" fill="#FFFFFF" />
         </svg>
 
         {/* Percentage Display */}
         <p style={percentageStyle}>{clampedPercentage.toFixed(0)}%</p>
-        
+
         {/* Stats Display */}
         <p style={statsStyle}>
           Average MTTR across Ticketing, SentinelOne & Email Security
@@ -228,7 +260,7 @@ const AllCommonmttr = () => {
             <span style={legendTextStyle}>Avg Open ({unmitigatedPercentage.toFixed(0)}%)</span>
           </div>
         </div>
-        
+
         {/* Individual percentages for reference */}
         <div style={{ marginTop: '12px', fontSize: '10px', color: '#64748b', textAlign: 'center', width: '100%' }}>
           <div>Ticketing: {ticketPct.toFixed(0)}% | SentinelOne: {edrPct.toFixed(0)}% | Email Security: {emailPct.toFixed(0)}%</div>
