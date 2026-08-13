@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import api from '../api';
 import { useOrg } from '../context/OrgContext.jsx';
 
 export default function SelectOrganisation() {
@@ -8,44 +9,36 @@ export default function SelectOrganisation() {
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState(null);
 
+  // Load the user's organisations. refresh() is the OrgContext's own fetch and
+  // is idempotent; on a fresh machine it populates `organisations` reliably.
+  // We own the error state here so failures are visible + retryable, never stuck.
+  const load = async () => {
+    setError('');
+    try {
+      await refresh();
+    } catch (e) {
+      setError(e.response?.data?.error || 'Failed to load your organisations. Please try again.');
+    }
+  };
+
   useEffect(() => {
     if (!localStorage.getItem('ciso_token')) {
       navigate('/login', { replace: true });
       return;
     }
-    let cancelled = false;
-    (async () => {
-      try { await refresh(); }
-      catch { if (!cancelled) setError('Failed to load your organisations. Please try again.'); }
-    })();
-    return () => { cancelled = true; };
+    load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Pre-select: the previously chosen org (if still linked) else the first one.
-  // We NEVER auto-redirect — the picker is always shown so the user can choose
-  // which connected organisation to work with, then press Continue.
+  // We NEVER auto-redirect to the dashboard — the picker is always shown so the
+  // user can choose which connected organisation to work with, then Continue.
   useEffect(() => {
-    if (ctxLoading || organisations.length === 0) return;
+    if (organisations.length === 0) return;
     if (selectedId) return; // user already picked something
     const preselect = organisations.find((o) => currentOrg && o.id === currentOrg.id) || organisations[0];
     setSelectedId(preselect ? preselect.id : null);
-  }, [ctxLoading, organisations, currentOrg, selectedId]);
-
-  useEffect(() => {
-    if (ctxLoading) return;
-    if (organisations.length === 0) {
-      // SuperAdmin with no orgs should go create one
-      try {
-        const user = JSON.parse(localStorage.getItem('ciso_user') || '{}');
-        if (user.role === 'superAdmin') {
-          navigate('/admin/organizations', { replace: true });
-          return;
-        }
-      } catch {}
-      setError('No organisations are linked to your account. Please contact your administrator.');
-    }
-  }, [ctxLoading, organisations, navigate]);
+  }, [organisations, currentOrg, selectedId]);
 
   function pickOrg(org) {
     setCurrentOrg(org);
@@ -86,8 +79,14 @@ export default function SelectOrganisation() {
         </div>
 
         {error ? (
-          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 rounded-xl p-4 text-sm">
-            {error}
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 rounded-xl p-4 text-sm space-y-3">
+            <p>{error}</p>
+            <button
+              onClick={load}
+              className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors"
+            >
+              Retry
+            </button>
           </div>
         ) : (
           <>
