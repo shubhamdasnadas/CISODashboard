@@ -34,6 +34,7 @@ api.interceptors.response.use(
     const isAuthFlow =
       url.includes('/auth/login') ||
       url.includes('/auth/check-username') ||
+      url.includes('/auth/2fa/') ||
       url.includes('/organisations');
 
     if (status === 401 && !isAuthFlow && !_authRedirecting) {

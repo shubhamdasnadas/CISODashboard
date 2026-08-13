@@ -16,7 +16,9 @@
     "fast-xml-parser": "^5.9.3",
     "jsonwebtoken": "^9.0.2",
     "node-cron": "^4.5.0",
-    "pg": "^8.11.3"
+    "nodemailer": "^9.0.5",
+    "pg": "^8.11.3",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"

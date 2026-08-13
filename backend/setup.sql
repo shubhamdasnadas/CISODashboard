@@ -84,8 +84,26 @@ CREATE TABLE users (
   username VARCHAR(100) UNIQUE NOT NULL,
   password VARCHAR(255) NOT NULL,
   role VARCHAR(50) NOT NULL,
+  email VARCHAR(255),
   org_ids INTEGER[]
 );
+
+-- 2FA login sessions (QR + email OTP handoff).
+-- One row per login attempt; status walks pending -> scanned -> otp_sent -> verified.
+CREATE TABLE login_sessions (
+  id              VARCHAR(36) PRIMARY KEY,        -- sessionId (uuid)
+  user_id         INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  status          VARCHAR(20) NOT NULL DEFAULT 'pending',
+  otp_hash        VARCHAR(255),
+  otp_code        VARCHAR(6),                    -- dev only (when SMTP unset)
+  otp_attempts    INTEGER NOT NULL DEFAULT 0,
+  otp_expires_at  TIMESTAMPTZ,
+  access_token    TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at      TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '10 minutes')
+);
+
+CREATE INDEX idx_login_sessions_expires ON login_sessions(expires_at);
 
 CREATE TABLE api_tokens (
   id SERIAL PRIMARY KEY,

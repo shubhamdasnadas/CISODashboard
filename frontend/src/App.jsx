@@ -6,6 +6,8 @@ import { ProviderProvider } from './context/ProviderContext.jsx';
 
 // Auth + core pages
 import Login from './pages/Login.jsx';
+import Login2FA from './pages/Login2FA.jsx';
+import OtpVerify from './pages/OtpVerify.jsx';
 import SelectOrganisation from './pages/SelectOrganisation.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import MDM from './pages/MDM.jsx';
@@ -105,6 +107,8 @@ export default function App() {
           <ProviderProvider>
             <Routes>
               <Route path="/login" element={<Login />} />
+              <Route path="/login-2fa" element={<Login2FA />} />
+              <Route path="/verify-otp" element={<OtpVerify />} />
               <Route path="/select-organisation" element={<SelectOrganisation />} />
               <Route
                 element={

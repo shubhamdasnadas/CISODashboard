@@ -9,6 +9,7 @@ const { runMigration } = require('./migrate');
 const { runSeedData } = require('./seed-data');
 
 const authRoutes = require('./routes/auth');
+const auth2faRoutes = require('./routes/auth2fa');
 const userRoutes = require('./routes/users');
 const orgRoutes = require('./routes/organisations');
 const tokenRoutes = require('./routes/apiTokens');
@@ -57,6 +58,7 @@ app.get('/', (req, res) => {
 
 // ─── Legacy routes (unchanged) ────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
+app.use('/api/auth', auth2faRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/organisations', orgRoutes);
 app.use('/api/tokens', tokenRoutes);
@@ -191,6 +193,7 @@ async function main() {
   await ensureOrgDatabases();
   await runMigration();
   await runSeedData();
+  await ensureCentral2faSchema();
 
   // 4. Start the HTTP server.
   const PORT = process.env.PORT || 3000;
@@ -208,6 +211,44 @@ async function main() {
   });
 
   setTimeout(runBackgroundJob, 3000);
+}
+
+/**
+ * Idempotent central-schema patch for the 2FA login flow. Lets existing
+ * databases pick up the new `email` column and `login_sessions` table
+ * without re-running setup.sql (which would wipe data).
+ */
+async function ensureCentral2faSchema() {
+  try {
+    await centralPool.query(
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(255)"
+    );
+    await centralPool.query(`
+      CREATE TABLE IF NOT EXISTS login_sessions (
+        id              VARCHAR(36) PRIMARY KEY,
+        user_id         INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        status          VARCHAR(20) NOT NULL DEFAULT 'pending',
+        otp_hash        VARCHAR(255),
+        otp_code        VARCHAR(6),
+        otp_attempts    INTEGER NOT NULL DEFAULT 0,
+        otp_expires_at  TIMESTAMPTZ,
+        access_token    TEXT,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at      TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '10 minutes')
+      )
+    `);
+    await centralPool.query(
+      "CREATE INDEX IF NOT EXISTS idx_login_sessions_expires ON login_sessions(expires_at)"
+    );
+    // Seed emails for the demo users if missing so the 2FA flow is testable.
+    await centralPool.query(`
+      UPDATE users SET email = username || '@ciso.local'
+      WHERE email IS NULL
+    `);
+    console.log('✔  2FA schema ensured (email column + login_sessions table)');
+  } catch (err) {
+    console.error('❌ 2FA schema patch failed:', err.message);
+  }
 }
 
 main().catch((err) => {
