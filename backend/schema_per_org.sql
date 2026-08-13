@@ -444,3 +444,32 @@ CREATE TABLE IF NOT EXISTS compliance_health_scores (
   average_percentage   NUMERIC(5,2) NOT NULL DEFAULT 0,
   created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
+
+-- NVD (National Vulnerability Database) CVE feed.
+-- One row per CVE, with key fields extracted into columns for fast
+-- filtering plus the full raw JSON for deep inspection.
+CREATE TABLE IF NOT EXISTS nvd (
+  id                 SERIAL       PRIMARY KEY,
+  cve_id             TEXT         NOT NULL UNIQUE,
+  source_identifier TEXT,
+  published          TIMESTAMPTZ,
+  last_modified      TIMESTAMPTZ,
+  vuln_status        TEXT,
+  description_en     TEXT,
+  description_es     TEXT,
+  cvss_version       TEXT,
+  cvss_base_score    NUMERIC(4,1),
+  cvss_base_severity TEXT,
+  cvss_vector_string TEXT,
+  weaknesses         TEXT,
+  configurations     JSONB,
+  reference_list     JSONB,
+  raw                JSONB        NOT NULL,
+  source_index       INT,
+  synced_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_nvd_cve_id ON nvd(cve_id);
+CREATE INDEX IF NOT EXISTS idx_nvd_severity ON nvd(cvss_base_severity);
+CREATE INDEX IF NOT EXISTS idx_nvd_published ON nvd(published DESC);
+CREATE INDEX IF NOT EXISTS idx_nvd_vuln_status ON nvd(vuln_status);

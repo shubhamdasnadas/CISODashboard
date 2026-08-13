@@ -14,7 +14,17 @@ async function ensureHealthScoresTable(pool) {
   `);
 }
 
-// GET / — latest snapshot
+// Helper: Check if the latest row is from today (within 24 hours)
+function isSameDay(existingCreatedAt) {
+  if (!existingCreatedAt) return false;
+  const now = new Date();
+  const created = new Date(existingCreatedAt);
+  const diffMs = now - created;
+  const diffHours = diffMs / (1000 * 60 * 60);
+  return diffHours < 24;
+}
+
+// GET / — latest snapshot (always returns the most recent row)
 router.get('/', async (req, res) => {
   try {
     await ensureHealthScoresTable(req.orgPool);
@@ -42,24 +52,94 @@ router.get('/history', async (req, res) => {
   }
 });
 
-// POST / — save / upsert snapshot
+// Allowed percentage columns
+const SCORE_FIELDS = ['edr_percentage', 'email_percentage', 'ticketing_percentage'];
+
+// Core upsert used by both POST and PATCH.
+// Rules:
+//   - No existing row            -> INSERT a new row (unspecified fields default to 0)
+//   - Latest row is same day      -> UPDATE that row in place
+//   - Latest row is older than 24h -> INSERT a NEW row, carrying over the last entry's
+//                                     values for any field not explicitly provided
+// Wrapped in a transaction with a row lock so concurrent requests can't create duplicate
+// "new day" rows.
+async function upsertSnapshot(pool, providedFields) {
+  const provided = {};
+  for (const f of SCORE_FIELDS) {
+    if (providedFields[f] !== undefined && providedFields[f] !== null) {
+      provided[f] = parseFloat(providedFields[f]) || 0;
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Lock the latest row so concurrent requests serialize here.
+    const latestRes = await client.query(
+      'SELECT * FROM compliance_health_scores ORDER BY created_at DESC LIMIT 1 FOR UPDATE'
+    );
+    const cur = latestRes.rows[0] || null;
+
+    // Build the full row values, carrying over from the last entry when a field
+    // is not explicitly provided (this is what makes a "new day" row inherit
+    // the previous day's scores by default).
+    const values = {};
+    for (const f of SCORE_FIELDS) {
+      if (provided[f] !== undefined) values[f] = provided[f];
+      else if (cur) values[f] = parseFloat(cur[f]) || 0;
+      else values[f] = 0;
+    }
+    const average =
+      Math.round(((values.edr_percentage + values.email_percentage + values.ticketing_percentage) / 3) * 100) / 100;
+
+    let result;
+    if (!cur) {
+      const { rows } = await client.query(
+        `INSERT INTO compliance_health_scores (edr_percentage, email_percentage, ticketing_percentage, average_percentage, created_at)
+         VALUES ($1, $2, $3, $4, NOW()) RETURNING *`,
+        [values.edr_percentage, values.email_percentage, values.ticketing_percentage, average]
+      );
+      result = rows[0];
+      console.log('[compliance-health-scores] Created new row:', result.id, '(no prior entry)');
+    } else if (isSameDay(cur.created_at)) {
+      const { rows } = await client.query(
+        `UPDATE compliance_health_scores
+           SET edr_percentage = $1, email_percentage = $2, ticketing_percentage = $3, average_percentage = $4
+         WHERE id = $5 RETURNING *`,
+        [values.edr_percentage, values.email_percentage, values.ticketing_percentage, average, cur.id]
+      );
+      result = rows[0];
+      console.log('[compliance-health-scores] Updated existing row:', result.id, '(same day)');
+    } else {
+      const { rows } = await client.query(
+        `INSERT INTO compliance_health_scores (edr_percentage, email_percentage, ticketing_percentage, average_percentage, created_at)
+         VALUES ($1, $2, $3, $4, NOW()) RETURNING *`,
+        [values.edr_percentage, values.email_percentage, values.ticketing_percentage, average]
+      );
+      result = rows[0];
+      console.log('[compliance-health-scores] Created new row:', result.id, '(new day, copied from row', cur.id, ')');
+    }
+
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// POST / — save / upsert a full snapshot
+// Same day (within 24h): UPDATE the existing row
+// After 24h / new day: INSERT a new row carrying over the last entry's values by default
 router.post('/', async (req, res) => {
   try {
     await ensureHealthScoresTable(req.orgPool);
     const { edr_percentage, email_percentage, ticketing_percentage } = req.body;
-    const edr = parseFloat(edr_percentage) || 0;
-    const email = parseFloat(email_percentage) || 0;
-    const ticketing = parseFloat(ticketing_percentage) || 0;
-    const average = Math.round(((edr + email + ticketing) / 3) * 100) / 100;
-
-    await req.orgPool.query('DELETE FROM compliance_health_scores');
-    const { rows } = await req.orgPool.query(
-      `INSERT INTO compliance_health_scores (edr_percentage, email_percentage, ticketing_percentage, average_percentage, created_at)
-       VALUES ($1, $2, $3, $4, NOW()) RETURNING *`,
-      [edr, email, ticketing, average]
-    );
-    console.log('[compliance-health-scores] Saved:', rows[0].id);
-    res.status(201).json({ score: rows[0] });
+    const result = await upsertSnapshot(req.orgPool, { edr_percentage, email_percentage, ticketing_percentage });
+    res.status(201).json({ score: result });
   } catch (err) {
     console.error('[compliance-health-scores] POST error:', err.message);
     res.status(500).json({ message: err.message });
@@ -173,50 +253,17 @@ router.get('/ticketing', async (req, res) => {
 });
 
 // PATCH /update — update a single percentage field in the latest row
+// Same day (within 24h): UPDATE the existing row's field
+// After 24h / new day: CREATE a new row copying the last entry's values, then update the field
 router.patch('/update', async (req, res) => {
   try {
     await ensureHealthScoresTable(req.orgPool);
     const { field, value } = req.body;
-    const allowed = ['edr_percentage', 'email_percentage', 'ticketing_percentage'];
-    if (!allowed.includes(field)) {
-      return res.status(400).json({ message: `Invalid field. Must be one of: ${allowed.join(', ')}` });
+    if (!SCORE_FIELDS.includes(field)) {
+      return res.status(400).json({ message: `Invalid field. Must be one of: ${SCORE_FIELDS.join(', ')}` });
     }
-    const val = parseFloat(value) || 0;
-
-    // Check if a row already exists
-    const { rows: existing } = await req.orgPool.query(
-      'SELECT * FROM compliance_health_scores ORDER BY created_at DESC LIMIT 1'
-    );
-
-    let result;
-    if (existing.length === 0) {
-      // Create a new row with this field set, others default 0
-      const fields = { edr_percentage: 0, email_percentage: 0, ticketing_percentage: 0 };
-      fields[field] = val;
-      const avg = Math.round(((fields.edr_percentage + fields.email_percentage + fields.ticketing_percentage) / 3) * 100) / 100;
-      const { rows } = await req.orgPool.query(
-        `INSERT INTO compliance_health_scores (edr_percentage, email_percentage, ticketing_percentage, average_percentage, created_at)
-         VALUES ($1, $2, $3, $4, NOW()) RETURNING *`,
-        [fields.edr_percentage, fields.email_percentage, fields.ticketing_percentage, avg]
-      );
-      result = rows[0];
-    } else {
-      const cur = existing[0];
-      const edr = field === 'edr_percentage' ? val : parseFloat(cur.edr_percentage);
-      const email = field === 'email_percentage' ? val : parseFloat(cur.email_percentage);
-      const ticketing = field === 'ticketing_percentage' ? val : parseFloat(cur.ticketing_percentage);
-      const avg = Math.round(((edr + email + ticketing) / 3) * 100) / 100;
-
-      const { rows } = await req.orgPool.query(
-        `UPDATE compliance_health_scores
-           SET ${field} = $1, average_percentage = $2
-         WHERE id = $3 RETURNING *`,
-        [val, avg, cur.id]
-      );
-      result = rows[0];
-    }
-
-    console.log(`[compliance-health-scores] PATCH ${field} = ${val}`);
+    const result = await upsertSnapshot(req.orgPool, { [field]: value });
+    console.log(`[compliance-health-scores] PATCH ${field} = ${parseFloat(value) || 0} — row ${result.id}`);
     res.json({ score: result });
   } catch (err) {
     console.error('[compliance-health-scores] PATCH error:', err.message);

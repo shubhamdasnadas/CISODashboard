@@ -22,6 +22,16 @@ export default function SelectOrganisation() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Pre-select: the previously chosen org (if still linked) else the first one.
+  // We NEVER auto-redirect — the picker is always shown so the user can choose
+  // which connected organisation to work with, then press Continue.
+  useEffect(() => {
+    if (ctxLoading || organisations.length === 0) return;
+    if (selectedId) return; // user already picked something
+    const preselect = organisations.find((o) => currentOrg && o.id === currentOrg.id) || organisations[0];
+    setSelectedId(preselect ? preselect.id : null);
+  }, [ctxLoading, organisations, currentOrg, selectedId]);
+
   useEffect(() => {
     if (ctxLoading) return;
     if (organisations.length === 0) {
@@ -34,13 +44,8 @@ export default function SelectOrganisation() {
         }
       } catch {}
       setError('No organisations are linked to your account. Please contact your administrator.');
-      return;
     }
-    if (organisations.length === 1 && !currentOrg) {
-      setCurrentOrg(organisations[0]);
-      navigate('/dashboard', { replace: true });
-    }
-  }, [ctxLoading, organisations, currentOrg, setCurrentOrg, navigate]);
+  }, [ctxLoading, organisations, navigate]);
 
   function pickOrg(org) {
     setCurrentOrg(org);

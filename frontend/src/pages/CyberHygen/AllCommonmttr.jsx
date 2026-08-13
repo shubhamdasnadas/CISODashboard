@@ -74,11 +74,17 @@ const AllCommonmttr = () => {
         setEmailPct(emPct);
         setTicketPct(tPct);
 
-        // Also save computed values to DB for next time
+        // Also save computed values to DB for next time.
+        // Save sequentially (not concurrently) so a brand-new day creates exactly one row
+        // that then gets updated, instead of racing into multiple INSERTs.
         if (ePct > 0 || emPct > 0 || tPct > 0) {
-          api.patch('/compliance-health-scores/update', { field: 'edr_percentage', value: parseFloat(ePct.toFixed(2)) }).catch(() => {});
-          api.patch('/compliance-health-scores/update', { field: 'email_percentage', value: parseFloat(emPct.toFixed(2)) }).catch(() => {});
-          api.patch('/compliance-health-scores/update', { field: 'ticketing_percentage', value: parseFloat(tPct.toFixed(2)) }).catch(() => {});
+          try {
+            await api.patch('/compliance-health-scores/update', { field: 'edr_percentage', value: parseFloat(ePct.toFixed(2)) });
+            await api.patch('/compliance-health-scores/update', { field: 'email_percentage', value: parseFloat(emPct.toFixed(2)) });
+            await api.patch('/compliance-health-scores/update', { field: 'ticketing_percentage', value: parseFloat(tPct.toFixed(2)) });
+          } catch (err) {
+            console.error('[AllCommonmttr] Failed to persist scores:', err?.message);
+          }
         }
 
         // Also sync localStorage

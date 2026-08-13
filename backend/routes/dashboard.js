@@ -133,35 +133,85 @@ router.get('/health-scores/history', async (req, res) => {
 // POST /api/dashboard/health-scores — save / update the health score snapshot
 // Body: { edr_percentage, email_percentage, ticketing_percentage }
 // average_percentage is computed server-side.
-// Behaviour: keeps only ONE row per org (delete old → insert new).
+// Behaviour:
+//   - Same day (within 24h): UPDATE the existing row
+//   - After 24h / new day: INSERT a new row, carrying over the last entry's values by default
+//   - No row yet: INSERT a new row
 router.post('/health-scores', async (req, res) => {
   try {
     await ensureHealthScoresTable(req.orgPool);
 
     const { edr_percentage, email_percentage, ticketing_percentage } = req.body;
-
     const edr = parseFloat(edr_percentage) || 0;
     const email = parseFloat(email_percentage) || 0;
     const ticketing = parseFloat(ticketing_percentage) || 0;
     const average = Math.round(((edr + email + ticketing) / 3) * 100) / 100;
 
-    // Delete existing rows so we always keep only the latest snapshot
-    await req.orgPool.query('DELETE FROM compliance_health_scores');
+    const client = await req.orgPool.connect();
+    try {
+      await client.query('BEGIN');
+      const latestRes = await client.query(
+        'SELECT * FROM compliance_health_scores ORDER BY created_at DESC LIMIT 1 FOR UPDATE'
+      );
+      const cur = latestRes.rows[0] || null;
 
-    const { rows } = await req.orgPool.query(
-      `INSERT INTO compliance_health_scores (edr_percentage, email_percentage, ticketing_percentage, average_percentage, created_at)
-       VALUES ($1, $2, $3, $4, NOW())
-       RETURNING id, edr_percentage, email_percentage, ticketing_percentage, average_percentage, created_at`,
-      [edr, email, ticketing, average]
-    );
+      // Carry over the last entry's values for any field not explicitly provided.
+      const edrVal = edr_percentage !== undefined ? edr : (cur ? parseFloat(cur.edr_percentage) || 0 : 0);
+      const emailVal = email_percentage !== undefined ? email : (cur ? parseFloat(cur.email_percentage) || 0 : 0);
+      const ticketingVal = ticketing_percentage !== undefined ? ticketing : (cur ? parseFloat(cur.ticketing_percentage) || 0 : 0);
+      const avgVal = Math.round(((edrVal + emailVal + ticketingVal) / 3) * 100) / 100;
 
-    console.log('[health-scores] Saved:', { edr, email, ticketing, average, id: rows[0].id });
-    res.status(201).json({ score: rows[0] });
+      let result;
+      if (!cur) {
+        const { rows } = await client.query(
+          `INSERT INTO compliance_health_scores (edr_percentage, email_percentage, ticketing_percentage, average_percentage, created_at)
+           VALUES ($1, $2, $3, $4, NOW())
+           RETURNING id, edr_percentage, email_percentage, ticketing_percentage, average_percentage, created_at`,
+          [edrVal, emailVal, ticketingVal, avgVal]
+        );
+        result = rows[0];
+      } else if (isSameDay(cur.created_at)) {
+        const { rows } = await client.query(
+          `UPDATE compliance_health_scores
+             SET edr_percentage = $1, email_percentage = $2, ticketing_percentage = $3, average_percentage = $4
+           WHERE id = $5
+           RETURNING id, edr_percentage, email_percentage, ticketing_percentage, average_percentage, created_at`,
+          [edrVal, emailVal, ticketingVal, avgVal, cur.id]
+        );
+        result = rows[0];
+      } else {
+        const { rows } = await client.query(
+          `INSERT INTO compliance_health_scores (edr_percentage, email_percentage, ticketing_percentage, average_percentage, created_at)
+           VALUES ($1, $2, $3, $4, NOW())
+           RETURNING id, edr_percentage, email_percentage, ticketing_percentage, average_percentage, created_at`,
+          [edrVal, emailVal, ticketingVal, avgVal]
+        );
+        result = rows[0];
+      }
+
+      await client.query('COMMIT');
+      console.log('[health-scores] Saved:', { edr: edrVal, email: emailVal, ticketing: ticketingVal, average: avgVal, id: result.id });
+      res.status(201).json({ score: result });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   } catch (err) {
     console.error('[health-scores] POST error:', err.message);
     res.status(500).json({ message: err.message });
   }
 });
+
+// Same-day helper (within 24h) shared with the health-scores logic
+function isSameDay(existingCreatedAt) {
+  if (!existingCreatedAt) return false;
+  const now = new Date();
+  const created = new Date(existingCreatedAt);
+  const diffHours = (now - created) / (1000 * 60 * 60);
+  return diffHours < 24;
+}
 
 // GET /api/dashboard/stats
 router.get('/stats', async (req, res) => {
