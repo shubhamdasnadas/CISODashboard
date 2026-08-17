@@ -50,10 +50,16 @@ export default function Login() {
     setLoading(true);
     try {
       const { data } = await api.post('/auth/login', { username, password });
-      localStorage.setItem('ciso_token', data.token);
-      localStorage.setItem('ciso_user', JSON.stringify(data.user));
-      localStorage.removeItem('ciso_current_org_id');
-      navigate('/select-organisation');
+      if (data.otpRequested) {
+        // Password valid, now go to OTP screen
+        navigate('/verify-otp?username=' + encodeURIComponent(username));
+      } else {
+        // Legacy fallback - directly logged in
+        localStorage.setItem('ciso_token', data.token);
+        localStorage.setItem('ciso_user', JSON.stringify(data.user));
+        localStorage.removeItem('ciso_current_org_id');
+        navigate('/select-organisation');
+      }
     } catch (err) {
       setError(err.response?.data?.error || 'Login failed');
     } finally {

@@ -185,6 +185,60 @@ router.get('/2fa/session-status/:sessionId', async (req, res) => {
   }
 });
 
+// ─── STEP 4c: Resend OTP (2FA flow) ───────────────────────────────────────────
+router.post('/2fa/resend-otp', async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    if (!sessionId) {
+      return res.status(400).json({ error: 'sessionId is required' });
+    }
+
+    const session = await getLiveSession(sessionId);
+    if (!session) {
+      return res.status(400).json({ error: 'Session expired. Please log in again.' });
+    }
+    if (session.status !== 'otp_sent') {
+      return res.status(400).json({ error: 'Invalid session state.' });
+    }
+
+    // Check if we can resend (optional: add cooldown logic here)
+    // For now, just generate a new OTP and send it
+
+    const { rows: userRows } = await centralPool.query(
+      'SELECT id, username, email FROM users WHERE id = $1',
+      [session.user_id]
+    );
+    if (userRows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const user = userRows[0];
+
+    const otp = genOtp();
+    const otpHash = await bcrypt.hash(otp, 10);
+    await centralPool.query(
+      `UPDATE login_sessions
+         SET otp_hash = $1, otp_code = $2, otp_expires_at = NOW() + INTERVAL '5 minutes', otp_attempts = 0
+       WHERE id = $3`,
+      [otpHash, otp, sessionId]
+    );
+
+    const smtp = await sendEmail({
+      to: user.email,
+      subject: 'Your CISO Dashboard verification code (resent)',
+      text: `Hello ${user.username},\n\nYour new verification code is: ${otp}\n\nIt expires in 5 minutes.\n\nIf you did not request this, you can ignore this email.`,
+      html: `<p>Hello <b>${user.username}</b>,</p>
+             <p>Your new verification code is:</p>
+             <p style="font-size:28px;font-weight:bold;letter-spacing:4px;">${otp}</p>
+             <p>It expires in 5 minutes. If you did not request this, you can ignore this email.</p>`,
+    });
+
+    res.json({ message: 'OTP resent', dev: smtp.dev });
+  } catch (err) {
+    console.error('[2fa] resend-otp error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // ─── STEP 5: select organisation -> final scoped token ──────────────────────
 // Requires the short-lived access token issued at OTP verification.
 router.post('/2fa/select-org', async (req, res) => {

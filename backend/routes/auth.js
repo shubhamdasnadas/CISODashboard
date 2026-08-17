@@ -47,7 +47,7 @@ router.post('/check-username', async (req, res) => {
 /**
  * POST /api/auth/login
  * Body: { username, password }
- * Returns { token, user }
+ * Returns { token, user } or { otpRequested: true, username }
  */
 router.post('/login', async (req, res) => {
   try {
@@ -67,29 +67,12 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    const payload = {
-      userId: user.id,
-      username: user.username,
-      role: user.role,
-      org_ids: user.org_ids || [],
-    };
-
-    const token = jwt.sign(payload, process.env.JWT_SECRET, {
-      expiresIn: process.env.JWT_EXPIRES_IN || '8h',
-    });
-
-    return res.json({
-      token,
-      user: {
-        id: user.id,
-        username: user.username,
-        role: user.role,
-        org_ids: user.org_ids || [],
-      },
-    });
+    // Password valid - now trigger OTP flow
+    // We just return that OTP is required; the frontend will call /api/auth/otp/send
+    return res.json({ otpRequested: true, username });
   } catch (err) {
     console.error('login error:', err);
-    return res.status(500).json({ error: 'Server error' });
+    return res.status(500).json({ error: 'Server error', detail: err.message });
   }
 });
 

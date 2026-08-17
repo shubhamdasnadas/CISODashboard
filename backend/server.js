@@ -10,6 +10,7 @@ const { runSeedData } = require('./seed-data');
 
 const authRoutes = require('./routes/auth');
 const auth2faRoutes = require('./routes/auth2fa');
+const otpRoutes = require('./routes/otp');
 const userRoutes = require('./routes/users');
 const orgRoutes = require('./routes/organisations');
 const tokenRoutes = require('./routes/apiTokens');
@@ -59,6 +60,7 @@ app.get('/', (req, res) => {
 // ─── Legacy routes (unchanged) ────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
 app.use('/api/auth', auth2faRoutes);
+app.use('/api/auth/otp', otpRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/organisations', orgRoutes);
 app.use('/api/tokens', tokenRoutes);
@@ -239,6 +241,19 @@ async function ensureCentral2faSchema() {
     `);
     await centralPool.query(
       "CREATE INDEX IF NOT EXISTS idx_login_sessions_expires ON login_sessions(expires_at)"
+    );
+    await centralPool.query(`
+      CREATE TABLE IF NOT EXISTS user_otps (
+        id SERIAL PRIMARY KEY,
+        user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        otp_hash TEXT NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        is_used BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await centralPool.query(
+      "CREATE INDEX IF NOT EXISTS idx_user_otps_user_lookup ON user_otps(user_id, is_used, created_at DESC)"
     );
     // Seed emails for the demo users if missing so the 2FA flow is testable.
     await centralPool.query(`

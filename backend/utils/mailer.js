@@ -24,6 +24,12 @@ function getTransporter() {
       port: parseInt(SMTP_PORT || '587', 10),
       secure: String(SMTP_SECURE || 'false') === 'true',
       auth: { user: SMTP_USER, pass: SMTP_PASS },
+      tls: {
+        // Local Windows/dev networks can inject a self-signed certificate in the
+        // SMTP chain. Keep verification enabled by default, but allow disabling
+        // it from .env so Gmail OTP sending works in this environment.
+        rejectUnauthorized: String(process.env.SMTP_REJECT_UNAUTHORIZED || 'true') === 'true',
+      },
     });
   } else {
     // Dev fallback: print to console instead of sending.
