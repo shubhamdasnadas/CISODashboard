@@ -112,8 +112,88 @@ router.put('/credentials', async (req, res) => {
   }
 });
 
-// POST /api/nvd/sync — fetch startIndex=0, resultsPerPage=2000 and store.
-// startIndex and resultsPerPage are fixed (0 .. 2000) and NOT exposed to the UI.
+// Helper: fetch a single NVD page with retry/backoff on 429 / 503.
+// Returns the parsed JSON, or null if the request ultimately failed.
+async function fetchNvdPage(baseUrl, apiKey, startIndex, resultsPerPage, orgSlug) {
+  const url = new URL(baseUrl);
+  url.searchParams.set('startIndex', String(startIndex));
+  url.searchParams.set('resultsPerPage', String(resultsPerPage));
+
+  let attempt = 0;
+  while (true) {
+    const response = await fetch(url.toString(), {
+      headers: { apiKey, Accept: 'application/json' },
+    });
+
+    // Retry rate-limit / unavailable with backoff.
+    if (response.status === 429 || response.status === 503) {
+      if (attempt > 5) {
+        const body = await response.text();
+        throw new Error(`NVD API ${response.status} after retries: ${body.slice(0, 200)}`);
+      }
+      const wait =
+        (Number(response.headers.get('retry-after')) || Math.pow(2, attempt) * 2) * 1000;
+      console.warn(`[NVD sync][org=${orgSlug}] ${response.status} — waiting ${wait}ms`);
+      await sleep(wait);
+      attempt++;
+      continue;
+    }
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`NVD API ${response.status}: ${body.slice(0, 200)}`);
+    }
+
+    return response.json();
+  }
+}
+
+// Helper: upsert one CVE row. Returns 'inserted' or 'updated'.
+async function upsertVulnerability(orgPool, vuln, sourceIndex) {
+  const row = mapVulnerability(vuln, sourceIndex);
+  if (!row.cve_id) return null;
+  const r = await orgPool.query(
+    `INSERT INTO nvd (
+       cve_id, source_identifier, published, last_modified, vuln_status,
+       description_en, description_es, cvss_version, cvss_base_score,
+       cvss_base_severity, cvss_vector_string, weaknesses,
+       configurations, reference_list, raw, source_index, synced_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
+     ON CONFLICT (cve_id) DO UPDATE SET
+       source_identifier  = EXCLUDED.source_identifier,
+       published          = EXCLUDED.published,
+       last_modified      = EXCLUDED.last_modified,
+       vuln_status        = EXCLUDED.vuln_status,
+       description_en     = EXCLUDED.description_en,
+       description_es     = EXCLUDED.description_es,
+       cvss_version       = EXCLUDED.cvss_version,
+       cvss_base_score    = EXCLUDED.cvss_base_score,
+       cvss_base_severity = EXCLUDED.cvss_base_severity,
+       cvss_vector_string = EXCLUDED.cvss_vector_string,
+       weaknesses         = EXCLUDED.weaknesses,
+       configurations     = EXCLUDED.configurations,
+       reference_list      = EXCLUDED.reference_list,
+       raw                = EXCLUDED.raw,
+       source_index       = EXCLUDED.source_index,
+       synced_at          = NOW()`,
+    [
+      row.cve_id, row.source_identifier, row.published, row.last_modified,
+      row.vuln_status, row.description_en, row.description_es, row.cvss_version,
+      row.cvss_base_score, row.cvss_base_severity, row.cvss_vector_string,
+      row.weaknesses,
+      JSON.stringify(row.configurations),
+      JSON.stringify(row.reference_list),
+      JSON.stringify(row.raw),
+      row.source_index,
+    ]
+  );
+  return r.rowCount === 1 ? 'inserted' : 'updated';
+}
+
+// POST /api/nvd/sync — paginate NVD from startIndex=0 until an empty page, then stop.
+// Loop progresses 0 -> resultsPerPage -> 2*resultsPerPage ... until the API
+// returns no vulnerabilities (empty response), at which point we break.
+// startIndex / resultsPerPage are NOT exposed to the UI.
 router.post('/sync', async (req, res) => {
   try {
     const { rows: credRows } = await req.orgPool.query(
@@ -130,87 +210,83 @@ router.post('/sync', async (req, res) => {
       return res.status(400).json({ message: 'NVD apiKey missing in credentials' });
     }
 
-    const startIndex = 0;
     const resultsPerPage = 2000;
+    const maxPages = 1000; // hard safety cap so a bad API never loops forever
 
-    const url = new URL(baseUrl);
-    url.searchParams.set('startIndex', String(startIndex));
-    url.searchParams.set('resultsPerPage', String(resultsPerPage));
+    // Resume from where we left off: start at the highest source_index already
+    // stored in the DB (e.g. 278000) and continue to the end. If the DB is
+    // empty, fall back to 0. Align to the page boundary to avoid gaps/overlaps.
+    const maxIdxRes = await req.orgPool.query(
+      'SELECT MAX(source_index) AS max_idx FROM nvd'
+    );
+    const maxIdx = Number(maxIdxRes.rows[0].max_idx) || 0;
+    let startIndex = Math.floor(maxIdx / resultsPerPage) * resultsPerPage;
 
-    let attempt = 0;
-    let response;
-    // NVD is rate-limited; retry with backoff on 429 / 503.
-    while (true) {
-      response = await fetch(url.toString(), {
-        headers: { apiKey, Accept: 'application/json' },
-      });
-      if (response.status !== 429 && response.status !== 503) break;
-      const wait = (Number(response.headers.get('retry-after')) || Math.pow(2, attempt) * 2) * 1000;
-      console.warn(`[NVD sync][org=${req.orgSlug}] ${response.status} — waiting ${wait}ms`);
-      await sleep(wait);
-      if (++attempt > 5) break;
+    if (startIndex > 0) {
+      console.log(
+        `[NVD sync][org=${req.orgSlug}] resuming from startIndex=${startIndex} (last stored source_index=${maxIdx})`
+      );
     }
-
-    if (!response || !response.ok) {
-      const body = await response?.text();
-      return res.status(response?.status || 500).json({
-        message: `NVD API ${response?.status}: ${(body || '').slice(0, 200)}`,
-      });
-    }
-
-    const json = await response.json();
-    const vulnerabilities = Array.isArray(json.vulnerabilities) ? json.vulnerabilities : [];
 
     let inserted = 0;
     let updated = 0;
-    for (const vuln of vulnerabilities) {
-      const row = mapVulnerability(vuln, startIndex);
-      if (!row.cve_id) continue;
-      const r = await req.orgPool.query(
-        `INSERT INTO nvd (
-           cve_id, source_identifier, published, last_modified, vuln_status,
-           description_en, description_es, cvss_version, cvss_base_score,
-           cvss_base_severity, cvss_vector_string, weaknesses,
-           configurations, reference_list, raw, source_index, synced_at
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
-         ON CONFLICT (cve_id) DO UPDATE SET
-           source_identifier  = EXCLUDED.source_identifier,
-           published          = EXCLUDED.published,
-           last_modified      = EXCLUDED.last_modified,
-           vuln_status        = EXCLUDED.vuln_status,
-           description_en     = EXCLUDED.description_en,
-           description_es     = EXCLUDED.description_es,
-           cvss_version       = EXCLUDED.cvss_version,
-           cvss_base_score    = EXCLUDED.cvss_base_score,
-           cvss_base_severity = EXCLUDED.cvss_base_severity,
-           cvss_vector_string = EXCLUDED.cvss_vector_string,
-           weaknesses         = EXCLUDED.weaknesses,
-           configurations     = EXCLUDED.configurations,
-           reference_list      = EXCLUDED.reference_list,
-           raw                = EXCLUDED.raw,
-           source_index       = EXCLUDED.source_index,
-           synced_at          = NOW()`,
-        [
-          row.cve_id, row.source_identifier, row.published, row.last_modified,
-          row.vuln_status, row.description_en, row.description_es, row.cvss_version,
-          row.cvss_base_score, row.cvss_base_severity, row.cvss_vector_string,
-          row.weaknesses,
-          JSON.stringify(row.configurations),
-          JSON.stringify(row.reference_list),
-          JSON.stringify(row.raw),
-          row.source_index,
-        ]
+    let totalResults = 0;
+    let pages = 0;
+
+    // Paginate from startIndex upward; stop as soon as a page comes back empty.
+    while (true) {
+      if (pages >= maxPages) {
+        console.warn(`[NVD sync][org=${req.orgSlug}] reached maxPages=${maxPages} — stopping`);
+        break;
+      }
+
+      const json = await fetchNvdPage(
+        baseUrl,
+        apiKey,
+        startIndex,
+        resultsPerPage,
+        req.orgSlug
       );
-      if (r.rowCount === 1) inserted++; else updated++;
+
+      const vulnerabilities = Array.isArray(json.vulnerabilities) ? json.vulnerabilities : [];
+      if (typeof json.totalResults === 'number') totalResults = json.totalResults;
+
+      // Empty API response for this page => no more data => stop the loop.
+      if (vulnerabilities.length === 0) break;
+
+      for (const vuln of vulnerabilities) {
+        const result = await upsertVulnerability(req.orgPool, vuln, startIndex);
+        if (result === 'inserted') inserted++;
+        else if (result === 'updated') updated++;
+      }
+
+      pages++;
+      // Log the page number as its data finishes loading.
+      console.log(
+        `[NVD sync][org=${req.orgSlug}] page ${pages} loaded — startIndex=${startIndex}, ` +
+        `vulnerabilities=${vulnerabilities.length}, ` +
+        `running totals: inserted=${inserted}, updated=${updated}`
+      );
+
+      // Advance to the next page.
+      startIndex += resultsPerPage;
+
+      // If we received fewer than a full page, we've reached the end.
+      if (vulnerabilities.length < resultsPerPage) break;
+
+      // Be polite to NVD between pages.
+      await sleep(6000);
     }
 
     res.json({
       success: true,
-      message: `Stored ${inserted} new / ${updated} updated CVEs (startIndex=${startIndex}, resultsPerPage=${resultsPerPage}, total=${json.totalResults})`,
+      message: `Stored ${inserted} new / ${updated} updated CVEs across ${pages} page(s) (resultsPerPage=${resultsPerPage}, total=${totalResults})`,
       inserted,
       updated,
-      totalResults: json.totalResults,
-      startIndex,
+      pages,
+      totalResults,
+
+
       resultsPerPage,
     });
   } catch (err) {
