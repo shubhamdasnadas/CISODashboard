@@ -2,8 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import api from '../api';
 import { useOrg } from '../context/OrgContext.jsx';
 import { fetchReportData } from './report/fetchReportData.js';
-import { generatePdfFromElement } from './report/generatePdf.js';
-import ReportDocument from './report/ReportDocument.jsx';
+import { generatePdfFromElement } from './report/generatePdf.jsx';
 
 const TYPE_CONFIG = {
   sales:      { label: 'Sales',      bg: 'bg-green-100 dark:bg-green-900/30',   text: 'text-green-700 dark:text-green-400' },
@@ -53,19 +52,33 @@ export default function Reports() {
   const [form, setForm] = useState({ title: '', content: '', type: 'general', status: 'draft' });
   const [saving, setSaving]   = useState(false);
 
+  // Date filter state (YYYY-MM-DD string or '' for all)
+  const [dateFilter, setDateFilter] = useState('');
+
   // PDF generation state
   const [generating, setGenerating] = useState(false);
   const [genStep, setGenStep]       = useState('');
   const [genError, setGenError]     = useState('');
   const [reportData, setReportData] = useState(null);
-  const reportRef = useRef(null);
 
-  const handleGeneratePdf = useCallback(async () => {
+  // When true the current generation is a re-download of an old report —
+  // skip creating a new DB entry and use the original date in the filename.
+  const isRedownloadRef = useRef(false);
+  const redownloadDateRef = useRef('');
+
+  /** Generate PDF — optionally scoped to a single date (YYYY-MM-DD).
+   *  `skipSave` = true when re-downloading a previous report (no new DB row). */
+  const handleGeneratePdf = useCallback(async (forDate, skipSave = false) => {
+    isRedownloadRef.current = skipSave;
+    redownloadDateRef.current = forDate || '';
     setGenerating(true);
     setGenError('');
     setGenStep('Fetching data…');
     try {
-      const data = await fetchReportData(currentOrg?.org_name || 'Organisation');
+      const data = await fetchReportData(
+        currentOrg?.org_name || 'Organisation',
+        forDate || undefined,
+      );
       setReportData(data);
       setGenStep('Rendering report…');
     } catch (err) {
@@ -75,36 +88,63 @@ export default function Reports() {
     }
   }, [currentOrg]);
 
-  // After reportData is set, ReportDocument renders; then we capture it
+  // After reportData is set, generate the vector PDF directly
   useEffect(() => {
-    if (!reportData || !reportRef.current) return;
+    if (!reportData) return;
 
-    // Allow time for React to render + Recharts SVGs to paint
-    const timer = setTimeout(async () => {
+    const run = async () => {
       setGenStep('Generating PDF…');
+      console.log('[Reports] Starting PDF generation (vector @react-pdf/renderer)...');
+
       try {
         const orgSlug = (currentOrg?.org_name || 'report').replace(/\s+/g, '_').toLowerCase();
-        const date    = new Date().toISOString().slice(0, 10);
+        // Use the original report date for re-downloads, today for fresh generates
+        const date    = redownloadDateRef.current || new Date().toISOString().slice(0, 10);
         const filename = `${orgSlug}_security_report_${date}.pdf`;
-        await generatePdfFromElement(reportRef.current, filename);
-        await api.post('/reports', {
-          title:   `Security Report — ${currentOrg?.org_name || 'Organisation'} — ${date}`,
-          content: `Auto-generated PDF security report covering Checkpoint Harmony, SentinelOne, and Palo Alto Firewall data. File: ${filename}`,
-          type:    'security',
-          status:  'published',
-        });
-        loadReports();
+
+        console.log('[Reports] Target filename:', filename);
+
+        const result = await generatePdfFromElement(reportData, filename);
+
+        console.log('[Reports] PDF generated successfully:', result);
+
+        // Only save a new report record when this is a FRESH generate,
+        // NOT when re-downloading a previous report.
+        if (!isRedownloadRef.current) {
+          console.log('[Reports] Saving report record to database...');
+          await api.post('/reports', {
+            title:   `Security Report — ${currentOrg?.org_name || 'Organisation'} — ${date}`,
+            content: `Auto-generated PDF security report covering Checkpoint Harmony, SentinelOne, and Palo Alto Firewall data. File: ${filename}.`,
+            type:    'security',
+            status:  'published',
+          });
+          console.log('[Reports] Report record saved successfully');
+          loadReports();
+        } else {
+          console.log('[Reports] Re-download — skipped creating new report entry');
+        }
+
+        // Show success notification
+        alert(`✓ PDF Report Downloaded Successfully!\n\nFilename: ${filename}\n\nThe PDF has been saved to your downloads folder.`);
+
       } catch (err) {
-        console.error('PDF generation failed:', err);
-        setGenError('PDF generation failed. Please try again.');
+        console.error('[Reports] PDF generation failed:', err);
+        console.error('[Reports] Error details:', {
+          message: err?.message,
+          stack: err?.stack,
+          name: err?.name
+        });
+        setGenError(`PDF generation failed: ${err?.message || err}. Check console for details.`);
       } finally {
         setReportData(null);
         setGenerating(false);
         setGenStep('');
+        isRedownloadRef.current = false;
+        redownloadDateRef.current = '';
       }
-    }, 1800);
+    };
 
-    return () => clearTimeout(timer);
+    run();
   }, [reportData, currentOrg]);
 
   const loadReports = () => {
@@ -132,19 +172,24 @@ export default function Reports() {
     loadReports();
   };
 
-  const visible = filter === 'all' ? reports : reports.filter((r) => (r.status || 'draft') === filter);
+  // Apply both status filter AND date filter
+  const visible = reports.filter((r) => {
+    if (filter !== 'all' && (r.status || 'draft') !== filter) return false;
+    if (dateFilter && r.created_at) {
+      const reportDate = new Date(r.created_at).toISOString().slice(0, 10);
+      if (reportDate !== dateFilter) return false;
+    }
+    return true;
+  });
+
+  /** Download (re-generate) a PDF for a specific report date — NO new DB entry */
+  const handleDownloadForDate = (createdAt) => {
+    const reportDate = new Date(createdAt).toISOString().slice(0, 10);
+    handleGeneratePdf(reportDate, true);   // skipSave = true
+  };
 
   return (
     <div className="p-6 lg:p-8 space-y-5">
-
-      {/* Hidden report capture target — off-screen so browser fully paints SVG charts */}
-      {reportData && (
-        <div style={{ position: 'fixed', top: '-9999px', left: 0, width: '1400px', pointerEvents: 'none' }}>
-          <div ref={reportRef}>
-            <ReportDocument data={reportData} />
-          </div>
-        </div>
-      )}
 
       {/* PDF generating overlay */}
       {generating && (
@@ -167,7 +212,7 @@ export default function Reports() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={handleGeneratePdf}
+            onClick={() => handleGeneratePdf()}
             disabled={generating}
             className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors"
           >
@@ -232,24 +277,46 @@ export default function Reports() {
         </form>
       )}
 
-      {/* Filter tabs */}
-      <div className="flex items-center gap-1 flex-wrap">
-        {STATUS_TABS.map((tab) => {
-          const count = tab === 'all' ? reports.length : reports.filter((r) => (r.status || 'draft') === tab).length;
-          return (
-            <button key={tab} onClick={() => setFilter(tab)}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all capitalize ${
-                filter === tab
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
-              }`}>
-              {tab}
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${filter === tab ? 'bg-white/20 text-white' : 'bg-[var(--card-border)] text-[var(--muted)]'}`}>
-                {count}
-              </span>
+      {/* Filter tabs + Date filter */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-1 flex-wrap">
+          {STATUS_TABS.map((tab) => {
+            const count = tab === 'all' ? reports.length : reports.filter((r) => (r.status || 'draft') === tab).length;
+            return (
+              <button key={tab} onClick={() => setFilter(tab)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all capitalize ${
+                  filter === tab
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+                }`}>
+                {tab}
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${filter === tab ? 'bg-white/20 text-white' : 'bg-[var(--card-border)] text-[var(--muted)]'}`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Date filter */}
+        <div className="flex items-center gap-2">
+          <label className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider">Date:</label>
+          <input
+            type="date"
+            value={dateFilter}
+            onChange={(e) => setDateFilter(e.target.value)}
+            className="px-3 py-1.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-[var(--foreground)]"
+          />
+          {dateFilter && (
+            <button
+              onClick={() => setDateFilter('')}
+              className="p-1.5 rounded-lg text-[var(--muted)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+              title="Clear date filter"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
             </button>
-          );
-        })}
+          )}
+        </div>
       </div>
 
       {/* Table */}
@@ -257,7 +324,7 @@ export default function Reports() {
         {loading ? (
           <div className="p-12 text-center"><div className="animate-spin w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full mx-auto" /></div>
         ) : visible.length === 0 ? (
-          <div className="p-12 text-center text-[var(--muted)]">No reports{filter !== 'all' ? ` with status "${filter}"` : ''} yet.</div>
+          <div className="p-12 text-center text-[var(--muted)]">No reports{filter !== 'all' ? ` with status "${filter}"` : ''}{dateFilter ? ` on ${dateFilter}` : ''} yet.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -267,7 +334,7 @@ export default function Reports() {
                   <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--muted)] uppercase tracking-wide hidden sm:table-cell">Type</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--muted)] uppercase tracking-wide">Status</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--muted)] uppercase tracking-wide hidden sm:table-cell">Date</th>
-                  <th className="px-4 py-3" />
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-[var(--muted)] uppercase tracking-wide">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--card-border)]">
@@ -287,10 +354,24 @@ export default function Reports() {
                       {r.created_at ? new Date(r.created_at).toLocaleDateString() : '—'}
                     </td>
                     <td className="px-4 py-3.5">
-                      <button onClick={() => handleDelete(r.id)}
-                        className="p-1.5 rounded-lg text-[var(--muted)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                      </button>
+                      <div className="flex items-center justify-center gap-1">
+                        {/* Download button — re-generates PDF for this report's date */}
+                        <button
+                          onClick={() => handleDownloadForDate(r.created_at)}
+                          disabled={generating || !r.created_at}
+                          title="Download report for this date"
+                          className="p-1.5 rounded-lg text-[var(--muted)] hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                          </svg>
+                        </button>
+                        {/* Delete button */}
+                        <button onClick={() => handleDelete(r.id)}
+                          className="p-1.5 rounded-lg text-[var(--muted)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

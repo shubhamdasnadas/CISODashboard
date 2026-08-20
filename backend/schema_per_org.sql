@@ -473,3 +473,8 @@ CREATE INDEX IF NOT EXISTS idx_nvd_cve_id ON nvd(cve_id);
 CREATE INDEX IF NOT EXISTS idx_nvd_severity ON nvd(cvss_base_severity);
 CREATE INDEX IF NOT EXISTS idx_nvd_published ON nvd(published DESC);
 CREATE INDEX IF NOT EXISTS idx_nvd_vuln_status ON nvd(vuln_status);
+
+-- CPE match data fetched per CVE from NVD cpematch API.
+ALTER TABLE nvd ADD COLUMN IF NOT EXISTS cpe_match JSONB;
+ALTER TABLE nvd ADD COLUMN IF NOT EXISTS cpe_synced_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_nvd_cpe_synced ON nvd(cpe_synced_at);

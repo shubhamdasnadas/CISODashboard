@@ -152,13 +152,15 @@ export default function Login() {
           </button>
 
           {/* New 2FA flow: username+password -> QR scan -> email OTP -> org select */}
-          <Link
+          {/* <Link
             to="/login-2fa"
             className="w-full mt-3 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-[var(--input-border)] bg-[var(--background)] text-[var(--foreground)] font-semibold hover:bg-[var(--muted-bg)] transition-colors"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m0 14v1m8-9h-1M5 12H4m13.657-5.657l-.707-.707M7.05 17.95l-.707.707m11.314 0l-.707-.707M7.05 6.05l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z" /></svg>
             Sign in with QR code &amp; email verification
-          </Link>
+          </Link> */}
+
+          
         </form>
 
         <p className="mt-6 text-xs text-[var(--muted)] text-center">

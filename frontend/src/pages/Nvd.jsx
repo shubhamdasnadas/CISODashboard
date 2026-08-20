@@ -88,6 +88,11 @@ export default function Nvd() {
   const [detail, setDetail] = useState(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
 
+  // CPE sync (bulk) state
+  const [cpeSyncing, setCpeSyncing] = useState(false);
+  const [cpeStats, setCpeStats] = useState(null);
+  const [cpeMsg, setCpeMsg] = useState(null);
+
   const loadCreds = useCallback(async () => {
     setLoadingCreds(true);
     try {
@@ -120,9 +125,17 @@ export default function Nvd() {
     } catch { /* ignore */ }
   }, [page, limit, sort, severity, status, search]);
 
+  const loadCpeStats = useCallback(async () => {
+    try {
+      const r = await api.get('/nvd-cpe/stats');
+      setCpeStats(r.data);
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => { loadCreds(); }, [loadCreds]);
   useEffect(() => { loadStats(); }, [loadStats]);
   useEffect(() => { loadList(); }, [loadList]);
+  useEffect(() => { loadCpeStats(); }, [loadCpeStats]);
 
   const saveCreds = async () => {
     if (!creds.apiKey) return;
@@ -169,6 +182,28 @@ export default function Nvd() {
       setSyncMsg({ type: 'error', text: e.response?.data?.message || 'Sync failed' });
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const runCpeSync = async () => {
+    setCpeSyncing(true);
+    setCpeMsg(null);
+    try {
+      // The backend runs the bulk job in the background (can take a long
+      // time for large datasets) — watch the server console for progress.
+      const r = await api.post('/nvd-cpe/sync-cpe');
+      setCpeMsg({ type: 'success', text: r.data.message });
+      loadCpeStats();
+    } catch (e) {
+      const status = e.response?.status;
+      setCpeMsg({
+        type: 'error',
+        text: status === 409
+          ? 'CPE sync is already running — check the server console.'
+          : (e.response?.data?.message || 'Failed to start CPE sync'),
+      });
+    } finally {
+      setCpeSyncing(false);
     }
   };
 
@@ -260,11 +295,35 @@ export default function Nvd() {
           >
             {syncing ? 'Syncing…' : 'Sync (0–2000)'}
           </button>
+          <button
+            onClick={runCpeSync}
+            disabled={cpeSyncing}
+            className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {cpeSyncing ? 'CPE Sync starting…' : 'Sync CPE (all CVEs)'}
+          </button>
         </div>
 
         {syncMsg && (
           <div className={`text-xs px-3 py-2 rounded-lg ${syncMsg.type === 'success' ? 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300' : 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300'}`}>
             {syncMsg.text}
+          </div>
+        )}
+
+        {cpeStats && cpeStats.total > 0 && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] text-[var(--muted)]">
+              CPE data: <b className="text-[var(--foreground)]">{cpeStats.cpe_synced}</b> synced ·{' '}
+              <b className="text-[var(--foreground)]">{cpeStats.cpe_pending}</b> pending ·{' '}
+              {cpeStats.total} total
+            </span>
+            {cpeSyncing && <span className="text-[11px] font-semibold text-emerald-600">running in background…</span>}
+          </div>
+        )}
+
+        {cpeMsg && (
+          <div className={`text-xs px-3 py-2 rounded-lg ${cpeMsg.type === 'success' ? 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300' : 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300'}`}>
+            {cpeMsg.text}
           </div>
         )}
       </div>

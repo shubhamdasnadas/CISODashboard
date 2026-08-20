@@ -23,6 +23,7 @@ import S1ConfigWidget from './dashboard/S1ConfigWidget.jsx';
 import CheckpointWidgetPicker from './dashboard/CheckpointWidgetPicker.jsx';
 import SentinelOneWidgetPicker from './dashboard/SentinelOneWidgetPicker.jsx';
 import ZohoTicketMatrix from './zoho/ZohoTicketMatrix.jsx';
+import CacheCard from '../components/CacheCard.jsx';
 import AllCommonmttr from './CyberHygen/AllCommonmttr.jsx';
 
 // ── Small UI helpers ────────────────────────────────────────────────────────────
@@ -306,12 +307,17 @@ export default function Dashboard() {
     }, 800);
   }, []);
 
-  // ── Aggregate data fetch ───────────────────────────────────────────────────────
+  // ── Aggregate data fetch (served from Redis cache layer) ───────────────────────
+  // Reads the cached dashboard snapshot (cache:<org>:dashboard-aggregate).
+  // The cache-aside route returns { source: 'redis' | 'postgres' } so we can
+  // surface a "Live (cached)" vs "DB (fallback)" indicator.
+  const [aggSource, setAggSource] = useState(null);
   useEffect(() => {
     if (!currentOrg) return;
-    api.get('/dashboard/aggregate')
+    api.get('/cache/dashboard-aggregate')
       .then((r) => {
-        const agg = r.data;
+        setAggSource(r.data.source);
+        const agg = r.data.data;
 
         // Layout
         if (agg.layout) {
@@ -367,6 +373,35 @@ export default function Dashboard() {
         setAppCveLoading(false); setDeviceControlLoading(false); setRssLoading(false);
         setCpEventsLoading(false); setLayoutLoaded(true);
       });
+  }, [currentOrg?.id]);
+
+  // Layout is per-user, so it is fetched live (not from the org-wide cache).
+  useEffect(() => {
+    if (!currentOrg) return;
+    api.get('/dashboard/layout')
+      .then((r) => {
+        const layout = r.data?.layout;
+        if (layout) {
+          const saved = Array.isArray(layout?.pgboxes) ? layout.pgboxes : [];
+          setBoxes(normalizeSavedBoxes(saved));
+          const savedOrder = layout?.sectionOrder;
+          if (Array.isArray(savedOrder) && savedOrder.length === 3) {
+            setSectionOrder(savedOrder); sectionOrderRef.current = savedOrder;
+          }
+          if (Array.isArray(layout?.visibleS1Widgets) && layout.visibleS1Widgets.length > 0) {
+            setVisibleS1Widgets(layout.visibleS1Widgets); visibleS1Ref.current = layout.visibleS1Widgets;
+          }
+          if (layout?.s1WidgetConfigs && typeof layout.s1WidgetConfigs === 'object') {
+            setS1WidgetConfigs((prev) => ({ ...prev, ...layout.s1WidgetConfigs }));
+            s1ConfigsRef.current = { ...s1ConfigsRef.current, ...layout.s1WidgetConfigs };
+          }
+          if (Array.isArray(layout?.visibleCpWidgets)) {
+            setVisibleCpWidgets(layout.visibleCpWidgets); visibleCpRef.current = layout.visibleCpWidgets;
+          }
+        }
+        setLayoutLoaded(true);
+      })
+      .catch(() => setLayoutLoaded(true));
   }, [currentOrg?.id]);
 
   // ── Firewall report preview (for Add Widget modal) ─────────────────────────────
@@ -597,6 +632,17 @@ export default function Dashboard() {
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-[var(--foreground)]">Dashboard</h1>
           {isEditMode && <p className="text-xs text-indigo-500 mt-0.5">Edit mode — drag sections &amp; resize widgets</p>}
+          {aggSource && (
+            <span className={`ml-2 text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+              aggSource === 'redis'
+                ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300'
+                : aggSource === 'postgres'
+                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'
+            }`}>
+              {aggSource === 'redis' ? 'Live (cached)' : aggSource === 'postgres' ? 'DB (fallback)' : aggSource}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           {saving && <span className="text-xs text-[var(--muted)] flex items-center gap-1.5"><div className="animate-spin w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full" />Saving…</span>}
@@ -1400,6 +1446,36 @@ export default function Dashboard() {
       <div className="mt-8 mb-2">
         <h2 className="text-sm font-bold text-[var(--foreground)] mb-4">Zoho Ticket Dashboard</h2>
         <ZohoTicketMatrix />
+      </div>
+
+      {/* ── Cached Zoho Tickets (Redis cache-aside layer) ──────────────────────── */}
+      <div className="mt-8 mb-2">
+        <h2 className="text-sm font-bold text-[var(--foreground)] mb-4">
+          Zoho Tickets — Cached (Redis)
+        </h2>
+        <CacheCard
+          title="Zoho Tickets Cache"
+          resourceKey="zoho-tickets"
+          pollIntervalMs={0}
+          render={(data) => (
+            <div className="space-y-2">
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-bold text-[var(--foreground)]">
+                  {data?.tickets ?? (Array.isArray(data?.data) ? data.data.length : 0)}
+                </span>
+                <span className="text-xs text-[var(--muted)]">tickets</span>
+              </div>
+              <p className="text-xs text-[var(--muted)]">
+                Fetched: {data?.fetched ?? '—'} · Synced:{' '}
+                {data?.syncedAt ? new Date(data.syncedAt).toLocaleString() : '—'}
+              </p>
+              <p className="text-[10px] text-[var(--muted)]">
+                Served from Redis cache (TTL 900s). Use the refresh button to trigger an
+                immediate Zoho sync.
+              </p>
+            </div>
+          )}
+        />
       </div>
 
 

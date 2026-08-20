@@ -42,6 +42,8 @@ const memberRoutes = require('./routes/memberRoute');
 const microsoftRoutes = require('./routes/microsoft');
 const complianceHealthScoresRoutes = require('./routes/compliance_health_scores');
 const nvdRoutes = require('./routes/nvd');
+const nvdCpeRoutes = require('./routes/nvdCpe');
+const cacheRoutes = require('./routes/cache');
 
 // Sync services (for cron)
 const { syncSentinelOne } = require('./services/sentinelone');
@@ -91,6 +93,8 @@ app.use('/api/member', [authMiddleware], memberRoutes);
 app.use('/api/microsoft', withOrg, microsoftRoutes);
 app.use('/api/compliance-health-scores', withOrg, complianceHealthScoresRoutes);
 app.use('/api/nvd', withOrg, nvdRoutes);
+app.use('/api/nvd-cpe', withOrg, nvdCpeRoutes);
+app.use('/api/cache', withOrg, cacheRoutes);
 
 // Admin routes (superAdmin only — orgMiddleware not needed, uses centralPool directly)
 app.use('/api/admin', [authMiddleware], adminOrgsRoutes);
@@ -178,6 +182,48 @@ cron.schedule('*/15 * * * *', runBackgroundJob);
 
 // Every 30 minutes — integration sync (S1, Firewall, Harmony)
 cron.schedule('*/30 * * * *', runIntegrationSync);
+
+// ─── Redis cache-layer scheduler ─────────────────────────────────────────────
+// Loops through all active orgs and runs syncAndCache for each resource on its
+// own schedule. syncAndCache itself acquires a distributed Redis lock (SET NX
+// EX) so duplicate runs are prevented if the backend runs on multiple instances.
+const syncService = require('./services/syncService');
+
+// Per-resource cron expressions (independent schedules, per requirement).
+const CACHE_CRON = {
+  'sentinelone-agents': '*/5 * * * *', // every 5 min
+  'sentinelone-cves':   '*/5 * * * *', // every 5 min
+  'sentinelone-threats': '*/5 * * * *', // every 5 min
+  'harmony-events':     '*/5 * * * *', // every 5 min
+  'firewall-reports':   '*/5 * * * *', // every 5 min
+  'zoho-tickets':       '*/2 * * * *', // 15-min fallback poller (webhook is real-time)
+  'dashboard-aggregate': '*/2 * * * *', // every 2 min (covers all dashboard widgets)
+  'news':               '*/15 * * * *', // every 15 min
+};
+
+async function runCacheSyncForAllOrgs(resourceKey) {
+  try {
+    const { rows: orgs } = await centralPool.query(
+      'SELECT slug FROM organisations WHERE is_active = TRUE ORDER BY id'
+    );
+    for (const { slug: orgSlug } of orgs) {
+      if (!orgSlug) continue;
+      try {
+        await syncService.syncAndCache(orgSlug, resourceKey);
+      } catch (e) {
+        console.error(`[cache-cron][org=${orgSlug}] ${resourceKey} failed:`, e.message);
+      }
+    }
+    console.log(`[cache-cron] ${resourceKey} pass complete (${orgs.length} org(s))`);
+  } catch (err) {
+    console.error('[cache-cron] job error:', err.message);
+  }
+}
+
+// Register one cron job per resource using its schedule.
+Object.entries(CACHE_CRON).forEach(([resourceKey, expr]) => {
+  cron.schedule(expr, () => runCacheSyncForAllOrgs(resourceKey));
+});
 
 async function main() {
   try {

@@ -8,6 +8,8 @@ const nodemailer = require('nodemailer');
  * to the console. This lets the full 2FA flow run locally without real SMTP.
  *
  * Env vars:
+ *   SMTP_ENABLED (optional, default true) — master switch. Set to "false" to
+ *     force the dev-console mailer even if credentials are present.
  *   SMTP_HOST, SMTP_PORT (optional, default 587), SMTP_SECURE (optional),
  *   SMTP_USER, SMTP_PASS, SMTP_FROM
  */
@@ -16,9 +18,19 @@ let _transporter = null;
 function getTransporter() {
   if (_transporter) return _transporter;
 
-  const { SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS } = process.env;
+  const {
+    SMTP_ENABLED,
+    SMTP_HOST,
+    SMTP_PORT,
+    SMTP_SECURE,
+    SMTP_USER,
+    SMTP_PASS,
+  } = process.env;
 
-  if (SMTP_HOST && SMTP_USER && SMTP_PASS) {
+  // Master switch: only build a real transport when SMTP is explicitly enabled
+  // AND all credentials are present. Otherwise fall back to the dev mailer.
+  const enabled = String(SMTP_ENABLED || 'true') !== 'false';
+  if (enabled && SMTP_HOST && SMTP_USER && SMTP_PASS) {
     _transporter = nodemailer.createTransport({
       host: SMTP_HOST,
       port: parseInt(SMTP_PORT || '587', 10),

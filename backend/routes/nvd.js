@@ -112,17 +112,87 @@ router.put('/credentials', async (req, res) => {
   }
 });
 
-// POST /api/nvd/sync — page through ALL CVEs from NVD and store each batch.
-//
-// Loop contract:
-//   - startIndex begins at 0, resultsPerPage is fixed at 2000 (NVD max).
-//   - For every page: fetch (with retry/backoff), upsert every CVE into the
-//     org's nvd table, then advance startIndex by the number actually returned.
-//   - EMPTY page handling: if a page returns zero vulnerabilities we do NOT
-//     stop — we increment startIndex and fetch the next page, exactly as
-//     requested. We only break out of the loop when we've gone past
-//     totalResults (so we don't loop forever) or hit the hard page cap.
-//
+// Helper: fetch a single NVD page with retry/backoff on 429 / 503.
+// Returns the parsed JSON, or null if the request ultimately failed.
+async function fetchNvdPage(baseUrl, apiKey, startIndex, resultsPerPage, orgSlug) {
+  const url = new URL(baseUrl);
+  url.searchParams.set('startIndex', String(startIndex));
+  url.searchParams.set('resultsPerPage', String(resultsPerPage));
+
+  let attempt = 0;
+  while (true) {
+    const response = await fetch(url.toString(), {
+      headers: { apiKey, Accept: 'application/json' },
+    });
+
+    // Retry rate-limit / unavailable with backoff.
+    if (response.status === 429 || response.status === 503) {
+      if (attempt > 5) {
+        const body = await response.text();
+        throw new Error(`NVD API ${response.status} after retries: ${body.slice(0, 200)}`);
+      }
+      const wait =
+        (Number(response.headers.get('retry-after')) || Math.pow(2, attempt) * 2) * 1000;
+      console.warn(`[NVD sync][org=${orgSlug}] ${response.status} — waiting ${wait}ms`);
+      await sleep(wait);
+      attempt++;
+      continue;
+    }
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`NVD API ${response.status}: ${body.slice(0, 200)}`);
+    }
+
+    return response.json();
+  }
+}
+
+// Helper: upsert one CVE row. Returns 'inserted' or 'updated'.
+async function upsertVulnerability(orgPool, vuln, sourceIndex) {
+  const row = mapVulnerability(vuln, sourceIndex);
+  if (!row.cve_id) return null;
+  const r = await orgPool.query(
+    `INSERT INTO nvd (
+       cve_id, source_identifier, published, last_modified, vuln_status,
+       description_en, description_es, cvss_version, cvss_base_score,
+       cvss_base_severity, cvss_vector_string, weaknesses,
+       configurations, reference_list, raw, source_index, synced_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
+     ON CONFLICT (cve_id) DO UPDATE SET
+       source_identifier  = EXCLUDED.source_identifier,
+       published          = EXCLUDED.published,
+       last_modified      = EXCLUDED.last_modified,
+       vuln_status        = EXCLUDED.vuln_status,
+       description_en     = EXCLUDED.description_en,
+       description_es     = EXCLUDED.description_es,
+       cvss_version       = EXCLUDED.cvss_version,
+       cvss_base_score    = EXCLUDED.cvss_base_score,
+       cvss_base_severity = EXCLUDED.cvss_base_severity,
+       cvss_vector_string = EXCLUDED.cvss_vector_string,
+       weaknesses         = EXCLUDED.weaknesses,
+       configurations     = EXCLUDED.configurations,
+       reference_list      = EXCLUDED.reference_list,
+       raw                = EXCLUDED.raw,
+       source_index       = EXCLUDED.source_index,
+       synced_at          = NOW()`,
+    [
+      row.cve_id, row.source_identifier, row.published, row.last_modified,
+      row.vuln_status, row.description_en, row.description_es, row.cvss_version,
+      row.cvss_base_score, row.cvss_base_severity, row.cvss_vector_string,
+      row.weaknesses,
+      JSON.stringify(row.configurations),
+      JSON.stringify(row.reference_list),
+      JSON.stringify(row.raw),
+      row.source_index,
+    ]
+  );
+  return r.rowCount === 1 ? 'inserted' : 'updated';
+}
+
+// POST /api/nvd/sync — paginate NVD from startIndex=0 until an empty page, then stop.
+// Loop progresses 0 -> resultsPerPage -> 2*resultsPerPage ... until the API
+// returns no vulnerabilities (empty response), at which point we break.
 // startIndex / resultsPerPage are NOT exposed to the UI.
 router.post('/sync', async (req, res) => {
   try {
@@ -140,208 +210,101 @@ router.post('/sync', async (req, res) => {
       return res.status(400).json({ message: 'NVD apiKey missing in credentials' });
     }
 
-    const RESULTS_PER_PAGE = 2000;
-    const MAX_PAGES = 1000;          // safety cap so a broken NVD response can't loop forever
-    // Inter-page delay (NVD rate limits). Default 0: the per-page 429/503
-    // backoff above already handles throttling, so flat delays just waste time.
-    // Set NVD_PAGE_DELAY_MS in .env to re-enable a polite pause between pages.
-    const PAGE_DELAY_MS = parseInt(process.env.NVD_PAGE_DELAY_MS || '0', 10);
-    const EMPTY_PAGE_TOLERANCE = 3;   // consecutive empty pages before we give up
-    const MAX_ROW_BATCH = 500;        // chunk very large pages before the DB write
+    const resultsPerPage = 2000;
+    const maxPages = 1000; // hard safety cap so a bad API never loops forever
 
-    let startIndex = 0;
-    let totalResults = 0;
-    let totalPages = 0;
-    let totalInserted = 0;
-    let totalUpdated = 0;
-    let lastStartIndex = 0;
-    let consecutiveEmpty = 0;
-
-    // Fetch a single page from NVD, retrying on 429 / 503 with backoff.
-    async function fetchPage(start) {
-      const url = new URL(baseUrl);
-      url.searchParams.set('startIndex', String(start));
-      url.searchParams.set('resultsPerPage', String(RESULTS_PER_PAGE));
-
-      let attempt = 0;
-      let response;
-      while (true) {
-        response = await fetch(url.toString(), {
-          headers: { apiKey, Accept: 'application/json' },
-        });
-        if (response.status !== 429 && response.status !== 503) break;
-        const wait = (Number(response.headers.get('retry-after')) || Math.pow(2, attempt) * 2) * 1000;
-        console.warn(`[NVD sync][org=${req.orgSlug}] ${response.status} — waiting ${wait}ms`);
-        await sleep(wait);
-        if (++attempt > 5) break;
-      }
-
-      if (!response || !response.ok) {
-        const body = await response?.text();
-        throw Object.assign(new Error(`NVD API ${response?.status}: ${(body || '').slice(0, 200)}`), {
-          statusCode: response?.status || 500,
-        });
-      }
-      return response.json();
-    }
-
-    // Upsert an array of NVD vulnerability objects using ONE batched
-    // multi-row INSERT ... ON CONFLICT via UNNEST. This collapses thousands
-    // of round-trips (one per CVE) into a single query per chunk — the main
-    // speedup for large syncs. Returns { inserted, updated } using the
-    // xmax=0 trick to distinguish true inserts from updates on conflict.
-    async function storeBatch(vulnerabilities, batchStart) {
-      const rows = vulnerabilities
-        .map((v) => mapVulnerability(v, batchStart))
-        .filter((r) => r.cve_id);
-      if (rows.length === 0) return { inserted: 0, updated: 0 };
-
-      let inserted = 0;
-      let updated = 0;
-
-      for (let i = 0; i < rows.length; i += MAX_ROW_BATCH) {
-        const slice = rows.slice(i, i + MAX_ROW_BATCH);
-
-        const r = await req.orgPool.query(
-          `WITH s AS (
-             SELECT * FROM UNNEST(
-               $1::text[], $2::text[], $3::timestamptz[], $4::timestamptz[],
-               $5::text[],  $6::text[],  $7::text[],  $8::text[],
-               $9::float8[], $10::text[], $11::text[], $12::text[],
-               $13::jsonb[], $14::jsonb[], $15::jsonb[], $16::integer[]
-             ) AS t(
-               cve_id, source_identifier, published, last_modified, vuln_status,
-               description_en, description_es, cvss_version, cvss_base_score,
-               cvss_base_severity, cvss_vector_string, weaknesses,
-               configurations, reference_list, raw, source_index
-             )
-           )
-           INSERT INTO nvd (
-             cve_id, source_identifier, published, last_modified, vuln_status,
-             description_en, description_es, cvss_version, cvss_base_score,
-             cvss_base_severity, cvss_vector_string, weaknesses,
-             configurations, reference_list, raw, source_index, synced_at
-           )
-           SELECT cve_id, source_identifier, published, last_modified, vuln_status,
-                  description_en, description_es, cvss_version, cvss_base_score,
-                  cvss_base_severity, cvss_vector_string, weaknesses,
-                  configurations, reference_list, raw, source_index, NOW()
-             FROM s
-           ON CONFLICT (cve_id) DO UPDATE SET
-             source_identifier  = EXCLUDED.source_identifier,
-             published          = EXCLUDED.published,
-             last_modified      = EXCLUDED.last_modified,
-             vuln_status        = EXCLUDED.vuln_status,
-             description_en     = EXCLUDED.description_en,
-             description_es     = EXCLUDED.description_es,
-             cvss_version       = EXCLUDED.cvss_version,
-             cvss_base_score    = EXCLUDED.cvss_base_score,
-             cvss_base_severity = EXCLUDED.cvss_base_severity,
-             cvss_vector_string = EXCLUDED.cvss_vector_string,
-             weaknesses         = EXCLUDED.weaknesses,
-             configurations     = EXCLUDED.configurations,
-             reference_list      = EXCLUDED.reference_list,
-             raw                = EXCLUDED.raw,
-             source_index       = EXCLUDED.source_index,
-             synced_at          = NOW()
-           RETURNING (xmax = 0) AS was_inserted`,
-          [
-            slice.map((x) => x.cve_id),
-            slice.map((x) => x.source_identifier),
-            slice.map((x) => x.published),
-            slice.map((x) => x.last_modified),
-            slice.map((x) => x.vuln_status),
-            slice.map((x) => x.description_en),
-            slice.map((x) => x.description_es),
-            slice.map((x) => x.cvss_version),
-            slice.map((x) => x.cvss_base_score),
-            slice.map((x) => x.cvss_base_severity),
-            slice.map((x) => x.cvss_vector_string),
-            slice.map((x) => x.weaknesses),
-            slice.map((x) => JSON.stringify(x.configurations)),
-            slice.map((x) => JSON.stringify(x.reference_list)),
-            slice.map((x) => JSON.stringify(x.raw)),
-            slice.map((x) => x.source_index),
-          ]
-        );
-
-        for (const row of r.rows) {
-          if (row.was_inserted) inserted++; else updated++;
-        }
-      }
-      return { inserted, updated };
-    }
-
-    // ── Paging loop ───────────────────────────────────────────────────────
-    while (totalPages < MAX_PAGES) {
-      const json = await fetchPage(startIndex);
-      totalResults = json.totalResults != null ? json.totalResults : totalResults;
-      const vulnerabilities = Array.isArray(json.vulnerabilities) ? json.vulnerabilities : [];
-      totalPages++;
-      lastStartIndex = startIndex;
-
-      console.log(
-        `[NVD sync][org=${req.orgSlug}] page=${totalPages} startIndex=${startIndex} ` +
-        `got=${vulnerabilities.length} total=${totalResults}`
-      );
-
-      if (vulnerabilities.length === 0) {
-        // Empty response: per requirement, bump startIndex and keep looping —
-        // but stop once we're past the total (or after too many empties).
-        consecutiveEmpty++;
-        console.log(
-          `[NVD sync][org=${req.orgSlug}] page=${totalPages} startIndex=${startIndex} → ` +
-          `loaded=0 stored=0 (empty, ${consecutiveEmpty}/${EMPTY_PAGE_TOLERANCE}) ` +
-          `runningTotals: inserted=${totalInserted} updated=${totalUpdated}`
-        );
-        if (totalResults && startIndex >= totalResults) break;
-        if (consecutiveEmpty >= EMPTY_PAGE_TOLERANCE) {
-          console.warn(`[NVD sync][org=${req.orgSlug}] ${EMPTY_PAGE_TOLERANCE} consecutive empty pages — stopping.`);
-          break;
-        }
-        startIndex += RESULTS_PER_PAGE;
-        continue;
-      }
-
-      consecutiveEmpty = 0;
-      const { inserted, updated } = await storeBatch(vulnerabilities, startIndex);
-      totalInserted += inserted;
-      totalUpdated += updated;
-      const stored = inserted + updated;
-
-      console.log(
-        `[NVD sync][org=${req.orgSlug}] page=${totalPages} startIndex=${startIndex} → ` +
-        `loaded=${vulnerabilities.length} stored=${stored} (new=${inserted} updated=${updated}) ` +
-        `runningTotals: inserted=${totalInserted} updated=${totalUpdated} ` +
-        `progress=${startIndex}/${totalResults}`
-      );
-
-      // Advance by how many NVD actually returned (robust vs. trailing short pages).
-      startIndex += json.resultsPerPage || vulnerabilities.length;
-
-      if (totalResults && startIndex >= totalResults) break;
-      await sleep(PAGE_DELAY_MS);
-    }
-
-    console.log(
-      `[NVD sync][org=${req.orgSlug}] ✅ DONE — pages=${totalPages} ` +
-      `loaded=${totalInserted + totalUpdated} stored=${totalInserted + totalUpdated} ` +
-      `(new=${totalInserted} updated=${totalUpdated}) totalAvailable=${totalResults} ` +
-      `lastStartIndex=${lastStartIndex}`
+    // Resume from where we left off: start at the highest source_index already
+    // stored in the DB (e.g. 278000) and continue to the end. If the DB is
+    // empty, fall back to 0. Align to the page boundary to avoid gaps/overlaps.
+    const maxIdxRes = await req.orgPool.query(
+      'SELECT MAX(source_index) AS max_idx FROM nvd'
     );
+    const maxIdx = Number(maxIdxRes.rows[0].max_idx) || 0;
+    let startIndex = Math.floor(maxIdx / resultsPerPage) * resultsPerPage;
+
+    if (startIndex > 0) {
+      console.log(
+        `[NVD sync][org=${req.orgSlug}] resuming from startIndex=${startIndex} (last stored source_index=${maxIdx})`
+      );
+    }
+
+    let inserted = 0;
+    let updated = 0;
+    let totalResults = 0;
+    let pages = 0;
+
+    // Paginate from startIndex upward; stop as soon as a page comes back empty.
+    while (true) {
+      if (pages >= maxPages) {
+        console.warn(`[NVD sync][org=${req.orgSlug}] reached maxPages=${maxPages} — stopping`);
+        break;
+      }
+
+      const json = await fetchNvdPage(
+        baseUrl,
+        apiKey,
+        startIndex,
+        resultsPerPage,
+        req.orgSlug
+      );
+
+      const vulnerabilities = Array.isArray(json.vulnerabilities) ? json.vulnerabilities : [];
+      if (typeof json.totalResults === 'number') totalResults = json.totalResults;
+
+      // Empty API response for this page => no more data => stop the loop.
+      if (vulnerabilities.length === 0) break;
+
+      for (const vuln of vulnerabilities) {
+        const result = await upsertVulnerability(req.orgPool, vuln, startIndex);
+        if (result === 'inserted') inserted++;
+        else if (result === 'updated') updated++;
+      }
+
+      pages++;
+      // Log the page number as its data finishes loading.
+      console.log(
+        `[NVD sync][org=${req.orgSlug}] page ${pages} loaded — startIndex=${startIndex}, ` +
+        `vulnerabilities=${vulnerabilities.length}, ` +
+        `running totals: inserted=${inserted}, updated=${updated}`
+      );
+
+      // Advance to the next page.
+      startIndex += resultsPerPage;
+
+      // If we received fewer than a full page, we've reached the end.
+      if (vulnerabilities.length < resultsPerPage) break;
+
+      // Be polite to NVD between pages.
+      await sleep(6000);
+    }
+
+    // All API pages consumed and stored successfully.
+    if (pages >= maxPages) {
+      console.warn(
+        `[NVD sync][org=${req.orgSlug}] ⚠️  sync stopped at maxPages=${maxPages} ` +
+        `(not a full completion). inserted=${inserted}, updated=${updated}`
+      );
+    } else {
+      console.log(
+        `[NVD sync][org=${req.orgSlug}] ✅ All CVEs completely inserted into database ` +
+        `— total pages=${pages}, inserted=${inserted}, updated=${updated}, ` +
+        `totalResults=${totalResults}`
+      );
+    }
 
     res.json({
       success: true,
-      message: `Stored ${totalInserted} new / ${totalUpdated} updated CVEs across ${totalPages} page(s) (total=${totalResults})`,
-      inserted: totalInserted,
-      updated: totalUpdated,
+      message: `Stored ${inserted} new / ${updated} updated CVEs across ${pages} page(s) (resultsPerPage=${resultsPerPage}, total=${totalResults})`,
+      inserted,
+      updated,
+      pages,
       totalResults,
-      resultsPerPage: RESULTS_PER_PAGE,
-      pages: totalPages,
-      lastStartIndex,
+
+
+      resultsPerPage,
     });
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    res.status(500).json({ message: err.message });
   }
 });
 
