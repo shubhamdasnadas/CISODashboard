@@ -1,0 +1,18 @@
+[smoke] Rendering ReportTemplate with mock data... function
+file:///C:/Users/Shubham/Desktop/shubham/CISOProjectLatest/CISODasboard/frontend/node_modules/@react-pdf/pdfkit/lib/pdfkit.js:427
+    throw new Error(`unsupported number: ${n}`);
+          ^
+
+Error: unsupported number: Infinity
+    at number (file:///C:/Users/Shubham/Desktop/shubham/CISOProjectLatest/CISODasboard/frontend/node_modules/@react-pdf/pdfkit/lib/pdfkit.js:427:11)
+    at file:///C:/Users/Shubham/Desktop/shubham/CISOProjectLatest/CISODasboard/frontend/node_modules/@react-pdf/pdfkit/lib/pdfkit.js:3135:58
+    at Array.map (<anonymous>)
+    at PDFDocument.transform (file:///C:/Users/Shubham/Desktop/shubham/CISOProjectLatest/CISODasboard/frontend/node_modules/@react-pdf/pdfkit/lib/pdfkit.js:3135:49)
+    at PDFDocument.translate (file:///C:/Users/Shubham/Desktop/shubham/CISOProjectLatest/CISODasboard/frontend/node_modules/@react-pdf/pdfkit/lib/pdfkit.js:3139:17)
+    at resolveAspectRatio (file:///C:/Users/Shubham/Desktop/shubham/CISOProjectLatest/CISODasboard/frontend/node_modules/@react-pdf/render/lib/index.js:1137:21)
+    at renderSvg (file:///C:/Users/Shubham/Desktop/shubham/CISOProjectLatest/CISODasboard/frontend/node_modules/@react-pdf/render/lib/index.js:1173:5)
+    at renderNode (file:///C:/Users/Shubham/Desktop/shubham/CISOProjectLatest/CISODasboard/frontend/node_modules/@react-pdf/render/lib/index.js:2488:9)
+    at renderChild (file:///C:/Users/Shubham/Desktop/shubham/CISOProjectLatest/CISODasboard/frontend/node_modules/@react-pdf/render/lib/index.js:2454:36)
+    at Array.forEach (<anonymous>)
+
+Node.js v24.18.0

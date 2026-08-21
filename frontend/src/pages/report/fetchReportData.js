@@ -32,6 +32,7 @@ export async function fetchReportData(orgName, forDate) {
     appAgentRes,
     removedAgentsRes,
     zohoRes,
+    healthRes,
   ] = await Promise.all([
     safe(api.get(`/sentinelone/db/threats${dateQs}`)),
     safe(api.get(`/sentinelone/db/agents${dateQs}`)),
@@ -51,6 +52,7 @@ export async function fetchReportData(orgName, forDate) {
     safe(api.get(`/sentinelone/db/application-agent${dateQs}`)),
     safe(api.get('/sentinelone/db/agents/removed-count')),
     safe(api.get(`/zoho/tickets-db${dateQs}`)),
+    safe(api.get('/compliance-health-scores')),
   ]);
 
   // --- client-side date filtering helper ---
@@ -62,6 +64,37 @@ export async function fetchReportData(orgName, forDate) {
       if (isNaN(d.getTime())) return true;          // unparseable → keep
       return d.toISOString().slice(0, 10) === forDate;
     } catch { return true; }
+  };
+
+  // ── Compliance-health / MTTR scores ────────────────────────────────────────
+  // Pull the raw per-domain scores so the PDF gauges show the same numbers the
+  // CyberHygen widgets show (mitigated/total etc.). Prefer the stored combined
+  // score; otherwise derive from the raw endpoints.
+  const [edrRes, emailRes, ticketingRes] = await Promise.all([
+    safe(api.get('/compliance-health-scores/edr')),
+    safe(api.get('/compliance-health-scores/email-security')),
+    safe(api.get('/compliance-health-scores/ticketing')),
+  ]);
+
+  const storedScore = healthRes?.data?.score;
+  const edr      = edrRes?.data      ?? {};
+  const email    = emailRes?.data    ?? {};
+  const ticketing = ticketingRes?.data ?? {};
+
+  const num = (v) => Number(v) || 0;
+  const pct = (part, whole) => (whole > 0 ? Math.min(Math.max((part / whole) * 100, 0), 100) : 0);
+
+  const edrPct     = storedScore ? num(storedScore.edr_percentage)     : pct(num(edr.mitigated), num(edr.total));
+  const emailPct   = storedScore ? num(storedScore.email_percentage)   : pct(num(email.remediated), num(email.total));
+  const ticketPct  = storedScore ? num(storedScore.ticketing_percentage) : pct(num(ticketing.closed), num(ticketing.total));
+
+  const avgPct = (edrPct + emailPct + ticketPct) / 3;
+
+  const mttr = {
+    overall:   { pct: avgPct,      goodCount: '',        badCount: '' },
+    sentinelOne: { pct: edrPct,    goodCount: num(edr.mitigated),       badCount: num(edr.total) - num(edr.mitigated) },
+    email:     { pct: emailPct,    goodCount: num(email.remediated),    badCount: num(email.total) - num(email.remediated), total: num(email.total) },
+    ticketing: { pct: ticketPct,   goodCount: num(ticketing.closed),    badCount: num(ticketing.total) - num(ticketing.closed) },
   };
 
   let s1Threats     = threatsRes?.data?.threats  ?? [];
@@ -113,5 +146,6 @@ export async function fetchReportData(orgName, forDate) {
     s1AppAgent:         appAgentRes?.data?.data    ?? [],
     removedAgentsCount: removedAgentsRes?.data?.count ?? 0,
     zohoTickets,
+    mttr,
   };
 }

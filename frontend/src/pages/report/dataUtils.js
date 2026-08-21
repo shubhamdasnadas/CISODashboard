@@ -360,9 +360,20 @@ export function computeWeeklyStats(harmonyEvents, s1Threats, s1Agents = [], s1Cv
     lastWeek: lastWeekEvents.filter(e => sevLabel(e.severity) === sev).length,
   })).filter(d => d.thisWeek > 0 || d.lastWeek > 0);
 
+  const senderOf = (e) => {
+    if (e.sender_address && e.sender_address !== 'Unknown') return e.sender_address;
+    const ad = (typeof e.additional_data === 'string' ? JSON.parse(e.additional_data) : e.additional_data) || {};
+    const inner = ad.additional_data || ad;
+    const fromHeap = inner.sender_address || inner.senderAddress || inner.from_email || inner.fromEmail ||
+      inner.mail_from || inner.source_address || inner.mailFrom || inner.sender || inner.from || inner.from_address;
+    if (fromHeap) return fromHeap;
+    const toHeap = inner.receiver_address || inner.recipient_address || inner.receiverAddress || inner.recipientAddress || inner.to;
+    if (toHeap) return `→ ${toHeap}`;
+    return 'Unknown';
+  };
   const sThis = {}, sLast = {};
-  thisWeekEvents.forEach(e => { const s = e.sender_address || 'Unknown'; sThis[s] = (sThis[s] || 0) + 1; });
-  lastWeekEvents.forEach(e => { const s = e.sender_address || 'Unknown'; sLast[s] = (sLast[s] || 0) + 1; });
+  thisWeekEvents.forEach(e => { const s = senderOf(e); sThis[s] = (sThis[s] || 0) + 1; });
+  lastWeekEvents.forEach(e => { const s = senderOf(e); sLast[s] = (sLast[s] || 0) + 1; });
   const topSenders = Object.entries(sThis).sort((a, b) => b[1] - a[1]).slice(0, 10)
     .map(([s, tw]) => ({ sender_address: s.length > 45 ? s.slice(0, 45) + '…' : s, 'This Week': tw, 'Last Week': sLast[s] || 0, Change: tw - (sLast[s] || 0) }));
 
@@ -546,7 +557,7 @@ export function buildAgentAnalytics(agents, generatedAt) {
   const connected = list.filter(a => String(a.network_status || a.networkStatus || '').toLowerCase() === 'connected').length;
   const disconnected = list.filter(a => String(a.network_status || a.networkStatus || '').toLowerCase() === 'disconnected').length;
 
-  return { newAgents, statusData, osData, machineTypeData, connected, disconnected };
+  return { total: list.length, newAgents, statusData, osData, machineTypeData, connected, disconnected };
 }
 
 export function buildAtRisk(threats) {

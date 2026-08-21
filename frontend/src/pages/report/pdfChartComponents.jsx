@@ -9,6 +9,9 @@ const GRID_GRAY = '#f3f4f6';
 const LABEL_GRAY = '#6b7280';
 
 // ── Donut chart ───────────────────────────────────────────────────────────────
+// react-pdf has no reliable "transparent" fill — empty SVG areas render BLACK.
+// So we draw a full pie then overlay a WHITE center circle (matching the page
+// background) to carve out the hole. This guarantees a white center, never black.
 export function VDonut({ data, width = 180, height = 150, thickness = 22, colors }) {
   if (!data || data.length === 0) return null;
   const total = data.reduce((s, d) => s + (d.value || 0), 0);
@@ -16,29 +19,31 @@ export function VDonut({ data, width = 180, height = 150, thickness = 22, colors
 
   const cx = width / 2;
   const cy = height / 2;
-  const r = Math.min(width, height) / 2 - thickness - 2;
+  const r = Math.min(width, height) / 2 - 2;
   const innerR = r - thickness;
-  const centerLabel = data[0]?.value;
+  const pageWhite = '#ffffff';
 
-  // Segment path: donut arc from a0 to a1
-  const arc = (a0, a1) => {
+  // Full pie sector from the center to the outer radius.
+  const sector = (a0, a1) => {
     const large = a1 - a0 > Math.PI ? 1 : 0;
-    const x0 = cx + innerR * Math.cos(a0), y0 = cy + innerR * Math.sin(a0);
-    const x1 = cx + innerR * Math.cos(a1), y1 = cy + innerR * Math.sin(a1);
-    const x2 = cx + r * Math.cos(a1), y2 = cy + r * Math.sin(a1);
-    const x3 = cx + r * Math.cos(a0), y3 = cy + r * Math.sin(a0);
-    return `M ${x0} ${y0} A ${innerR} ${innerR} 0 ${large} 1 ${x1} ${y1} L ${x2} ${y2} A ${r} ${r} 0 ${large} 0 ${x3} ${y3} Z`;
+    const x0 = cx + r * Math.cos(a0), y0 = cy + r * Math.sin(a0);
+    const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
+    return `M ${cx} ${cy} L ${x0} ${y0} A ${r} ${r} 0 ${large} 1 ${x1} ${y1} Z`;
   };
 
   let angle = -Math.PI / 2;
   const segments = data.map((d, i) => {
     const frac = (d.value || 0) / total;
     const a1 = angle + frac * 2 * Math.PI;
+    const segFill = colors && colors[i] ? colors[i] : d.fill || '#3b82f6';
     const seg = (
       <Path
         key={i}
-        d={arc(angle, a1)}
-        fill={colors && colors[i] ? colors[i] : d.fill || '#3b82f6'}
+        d={sector(angle, a1)}
+        fill={segFill}
+        stroke={segFill}
+        strokeWidth={0.5}
+        strokeLinejoin="round"
       />
     );
     angle = a1;
@@ -48,7 +53,8 @@ export function VDonut({ data, width = 180, height = 150, thickness = 22, colors
   return (
     <Svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
       {segments}
-      <Circle cx={cx} cy={cy} r={(innerR + r) / 2} fill="transparent" />
+      {/* White center hole — never "transparent" (that renders black in react-pdf). */}
+      <Circle cx={cx} cy={cy} r={innerR} fill={pageWhite} stroke={pageWhite} strokeWidth={0} />
     </Svg>
   );
 }
@@ -165,10 +171,24 @@ export function VHBarList({ data, width = 320, barHeight = 16, color = '#4f46e5'
   );
 }
 
-// ── Legend row for donuts ─────────────────────────────────────────────────────
-export function VLegendRow({ data, colors, itemWidth }) {
+// ── Legend for donuts ─────────────────────────────────────────────────────────
+export function VLegendRow({ data, colors, stacked = true }) {
   if (!data || data.length === 0) return null;
   const total = data.reduce((s, d) => s + (d.value || 0), 0) || 1;
+  if (stacked) {
+    return (
+      <View style={{ flexDirection: 'column', marginTop: 6 }}>
+        {data.map((d, i) => (
+          <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 3 }}>
+            <View style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: (colors && colors[i]) || d.fill || '#3b82f6', marginRight: 6 }} />
+            <Text style={{ fontSize: 8, color: LABEL_GRAY }}>
+              {String(d.name).slice(0, 30)} — {d.value} ({Math.round((d.value / total) * 100)}%)
+            </Text>
+          </View>
+        ))}
+      </View>
+    );
+  }
   return (
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
       {data.map((d, i) => (
@@ -179,6 +199,84 @@ export function VLegendRow({ data, colors, itemWidth }) {
           </Text>
         </View>
       ))}
+    </View>
+  );
+}
+
+// ── Semicircle gauge (MTTR / compliance health) ───────────────────────────────
+// PDF-native analogue of the DOM CyberHygen MTTR widgets. No fetch, no hooks —
+// the percentage is passed in, so it renders synchronously inside react-pdf.
+const MTTR_STOPS = [
+  { p: 0, c: [255, 71, 87] },   // red
+  { p: 33, c: [255, 165, 2] },  // orange
+  { p: 66, c: [255, 211, 42] }, // yellow
+  { p: 100, c: [46, 213, 115] },// green
+];
+const mttrColor = (pct) => {
+  let lower = MTTR_STOPS[0], upper = MTTR_STOPS[MTTR_STOPS.length - 1];
+  for (let i = 0; i < MTTR_STOPS.length - 1; i++) {
+    if (pct >= MTTR_STOPS[i].p && pct <= MTTR_STOPS[i + 1].p) { lower = MTTR_STOPS[i]; upper = MTTR_STOPS[i + 1]; break; }
+  }
+  const range = (upper.p - lower.p) || 1;
+  const r = (pct - lower.p) / range;
+  const ch = (n) => Math.round(lower.c[n] + r * (upper.c[n] - lower.c[n]));
+  return `rgb(${ch(0)}, ${ch(1)}, ${ch(2)})`;
+};
+
+export function VGauge({ pct = 0, size = 150, title, goodLabel = 'Resolved', badLabel = 'Open', goodCount, badCount }) {
+  const p = Math.min(Math.max(pct, 0), 100);
+  const cx = size / 2;
+  const cy = size - 12;
+  const R = size / 2 - 12;
+  const L = R - 6;
+
+  // Point on the upper semicircle for a given degree (0=right, 180=left).
+  const pt = (deg) => {
+    const a = (deg * Math.PI) / 180;
+    return [cx + R * Math.cos(a), cy - R * Math.sin(a)];
+  };
+  const arcSeg = (d0, d1) => {
+    const [x0, y0] = pt(d0);
+    const [x1, y1] = pt(d1);
+    const large = Math.abs(d1 - d0) > 180 ? 1 : 0;
+    return `M ${x0} ${y0} A ${R} ${R} 0 ${large} 1 ${x1} ${y1}`;
+  };
+
+  const segs = [
+    { d0: 180, d1: 135, color: '#FF4757' },
+    { d0: 135, d1: 90, color: '#FFA502' },
+    { d0: 90, d1: 45, color: '#FFD32A' },
+    { d0: 45, d1: 0, color: '#2ED573' },
+  ];
+
+  const needleDeg = 180 - (p / 100) * 180;
+  const [nx, ny] = (() => {
+    const a = (needleDeg * Math.PI) / 180;
+    return [cx + L * Math.cos(a), cy - L * Math.sin(a)];
+  })();
+  const needleColor = mttrColor(p);
+
+  return (
+    <View style={{ alignItems: 'center' }}>
+      <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        {segs.map((s, i) => (
+          <Path key={i} d={arcSeg(s.d0, s.d1)} fill="none" stroke={s.color} strokeWidth={12} strokeLinecap="round" />
+        ))}
+        <Line x1={cx} y1={cy} x2={nx} y2={ny} stroke={needleColor} strokeWidth={3} strokeLinecap="round" />
+        <Circle cx={cx} cy={cy} r={4} fill="#111827" />
+      </Svg>
+      <Text style={{ fontSize: 15, fontWeight: 800, color: needleColor, marginTop: 2 }}>{Math.round(p)}%</Text>
+      {title ? <Text style={{ fontSize: 8, fontWeight: 700, color: '#374151', marginTop: 2, textAlign: 'center' }}>{title}</Text> : null}
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={{ width: 7, height: 7, borderRadius: 2, backgroundColor: '#2ED573', marginRight: 3 }} />
+          <Text style={{ fontSize: 7, color: '#6b7280' }}>{goodLabel}{goodCount !== undefined && goodCount !== '' ? ` (${goodCount})` : ''}</Text>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={{ width: 7, height: 7, borderRadius: 2, backgroundColor: '#FF4757', marginRight: 3 }} />
+          <Text style={{ fontSize: 7, color: '#6b7280' }}>{badLabel}{badCount !== undefined && badCount !== '' ? ` (${badCount})` : ''}</Text>
+        </View>
+      </View>
     </View>
   );
 }

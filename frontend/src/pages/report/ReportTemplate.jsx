@@ -1,12 +1,51 @@
 import React from 'react';
-import { Document, Page, View, Text, Svg, StyleSheet, Image as PdfImage } from '@react-pdf/renderer';
+import { Document, Page, View, Text, StyleSheet } from '@react-pdf/renderer';
 import {
   formatNumber, formatBytes, getSecurityScoreStatus, shortName,
   buildCveData, computeWeeklyStats, buildThreatAnalytics, buildAgentAnalytics,
   buildAtRisk, buildZohoSummary, buildFirewallSummary,
-  ZOHO_STATUS_COLORS, ZOHO_PRIORITY_COLORS, SEV_COLORS, CVE_COLORS,
+  ZOHO_STATUS_COLORS, ZOHO_PRIORITY_COLORS, SEV_COLORS, CVE_COLORS, COLORS,
 } from './dataUtils';
-import { VDonut, VLineChart, VBarChart, VHBarList } from './pdfChartComponents';
+import { VDonut, VLineChart, VBarChart, VHBarList, VLegendRow, VGauge } from './pdfChartComponents';
+
+// ── MTTR / compliance-health gauge (single card) ─────────────────────────────
+// The live CyberHygen widgets (AllCommonmttr / S1Mttr / Emailsecuritymttr /
+// Ticketingmttr) are DOM components (api.get + localStorage + <div>) that
+// @react-pdf/renderer cannot render. So we render faithful PDF-native replicas
+// from the real compliance-health data (d.mttr). Each gauge lives on its own
+// page: overall → Section 1 (Exec Summary), email → Section 2 (Checkpoint),
+// sentinelOne → Section 3 (Threats), ticketing → Section 4 (Zoho).
+const clampPct = (n) => Math.min(Math.max(n || 0, 0), 100);
+
+const MTTR_CARDS = {
+  overall: { label: 'Overall MTTR', good: 'Avg Resolved', bad: 'Avg Open' },
+  sentinelOne: { label: 'SentinelOne', good: 'Mitigated', bad: 'Unmitigated' },
+  email: { label: 'Email Security', good: 'Remediated', bad: 'Unremediated' },
+  ticketing: { label: 'Ticketing', good: 'Closed', bad: 'Open' },
+};
+
+function MttrGaugeCard({ cfgKey, mttr }) {
+  const cfg = MTTR_CARDS[cfgKey];
+  if (!cfg) return null;
+  const m = mttr?.[cfgKey] || { pct: 0, goodCount: '', badCount: '' };
+  return (
+    <View style={S.block} wrap={false}>
+      <Text style={S.cardTitle}>{cfg.label} — MTTR / Compliance Health</Text>
+      <View style={{ borderWidth: 1, borderColor: C.line, borderRadius: 8, padding: 10, backgroundColor: C.bg, alignItems: 'center' }}>
+        <VGauge
+          pct={clampPct(m.pct)}
+          goodLabel={cfg.good}
+          badLabel={cfg.bad}
+          goodCount={m.goodCount}
+          badCount={m.badCount}
+        />
+        {cfgKey === 'email' && m.total !== undefined && m.total !== '' ? (
+          <Text style={{ fontSize: 7, color: C.faint, marginTop: 2 }}>Total Events: {m.total}</Text>
+        ) : null}
+      </View>
+    </View>
+  );
+}
 
 // ── Theme tokens ──────────────────────────────────────────────────────────────
 const C = {
@@ -32,12 +71,15 @@ const S = StyleSheet.create({
   kpiValue: { fontSize: 17, fontWeight: 800, color: C.ink },
   kpiSub: { fontSize: 7.5, color: C.faint, marginTop: 1 },
   block: { marginBottom: 12 },
-  table: { width: '100%', borderCollapse: 'collapse', fontSize: 8.5 },
-  th: { backgroundColor: C.bg, borderBottomWidth: 1, borderBottomColor: C.line, padding: '4px 6px', textAlign: 'left', fontSize: 7.5, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.4 },
-  td: { padding: '3px 6px', borderBottomWidth: 1, borderBottomColor: '#f3f4f6', fontSize: 8.5, color: C.ink },
-  tdAlt: { backgroundColor: '#fafafa' },
   card: { borderWidth: 1, borderColor: C.line, borderRadius: 8, backgroundColor: '#fff', padding: 10 },
   cardTitle: { fontSize: 10.5, fontWeight: 700, color: C.ink, marginBottom: 8 },
+  // Row holding two chart cards side-by-side (each child flexes to half width).
+  row2: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 12 },
+  chartHalf: { flex: 1, minWidth: 0, borderWidth: 1, borderColor: C.line, borderRadius: 8, backgroundColor: '#fff', padding: 10 },
+  chartHalfTitle: { fontSize: 10.5, fontWeight: 700, color: C.ink, marginBottom: 8 },
+  // Full-width, vertically centered column (used for the two weekly charts that
+  // should stack one-below-the-other and sit centered on the page).
+  colCenter: { alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
   chartFrame: { alignItems: 'center', marginBottom: 4 },
   footer: { position: 'absolute', bottom: 14, left: 40, right: 40, flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: C.line, paddingTop: 6, fontSize: 7.5, color: C.faint },
   badge: { padding: '2px 6px', borderRadius: 3, fontSize: 7, fontWeight: 700, color: '#fff' },
@@ -67,55 +109,58 @@ export function KpiTile({ label, value, sub, color = C.ink }) {
   );
 }
 
-// Resolve a cell value from a row object, tolerant of many data shapes:
-// exact key → case-insensitive key → `name` for first column / `value` for the
-// rest → numeric fallback for count-like columns. So `{ name, value }` rows
-// render correctly under any column header, and raw API rows work too.
-function cellValue(row, col, isFirst) {
-  if (row == null) return '-';
-  if (row[col] !== undefined && row[col] !== null && row[col] !== '') return row[col];
-  const lower = String(col).toLowerCase();
-  const match = Object.keys(row).find((k) => String(k).toLowerCase() === lower);
-  if (match !== undefined) return row[match];
-  if (isFirst && row.name !== undefined) return row.name;
-  if (!isFirst && row.value !== undefined) return row.value;
-  if (!isFirst && row.count !== undefined) return row.count;
-  return '-';
+const EMPTY_STYLE = { fontSize: 8.5, color: C.faint, fontStyle: 'italic' };
+function EmptyNote({ text = 'No data available for this period.' }) {
+  return <Text style={EMPTY_STYLE}>{text}</Text>;
 }
 
-// True if a row set is effectively empty (zero rows, or every cell dash/blank) —
-// used to swap a hollow table for a chart.
-function isHollow(rows) {
-  if (!rows || rows.length === 0) return true;
-  return rows.every((r) => Object.values(r).every((v) => v === undefined || v === null || v === '' || v === '-'));
-}
-
-export function PdfTable({ columns, rows, widths, strip = true, maxRows = 20 }) {
-  const display = (rows || []).slice(0, maxRows);
-  if (!columns || columns.length === 0 || display.length === 0) return null;
+// A donut chart with a percentage legend beside it. Falls back to an accurate
+// "no data" note (never a phantom chart) when the dataset is empty.
+function DonutBlock({ title, data, colors, width = 130, height = 130, desc, half }) {
+  const wrap = half ? S.chartHalf : S.block;
+  const titleStyle = half ? S.chartHalfTitle : S.cardTitle;
   return (
-    <View wrap={false} style={{ marginBottom: 4 }}>
-      <View style={{ flexDirection: 'row', backgroundColor: C.bg, borderBottomWidth: 1, borderBottomColor: C.line, paddingVertical: 4 }}>
-        {columns.map((c) => (
-          <Text key={c} style={{ flex: 1, paddingHorizontal: 6, fontSize: 7.5, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>{c}</Text>
-        ))}
-      </View>
-      {display.map((r, i) => (
-        <View key={i} style={{ flexDirection: 'row', backgroundColor: strip && i % 2 === 1 ? '#fafafa' : '#fff', borderBottomWidth: 1, borderBottomColor: '#f3f4f6', paddingVertical: 3 }}>
-          {columns.map((c, ci) => (
-            <Text key={c} style={{ flex: 1, paddingHorizontal: 6, fontSize: 8, color: C.ink, fontWeight: ci === 0 ? 600 : 400 }}>{String(cellValue(r, c, ci === 0))}</Text>
-          ))}
+    <View style={wrap} wrap={false}>
+      <Text style={titleStyle}>{title}</Text>
+      {data && data.length > 0 ? (
+        <View style={{ alignItems: 'center' }}>
+          <VDonut data={data} width={width} height={height} colors={colors} />
+          {/* Legend below the chart (per request): donut content, then legend. */}
+          <View style={{ marginTop: 8, width: '100%' }}>
+            <VLegendRow data={data} colors={colors} />
+          </View>
         </View>
-      ))}
+      ) : <EmptyNote />}
+      {desc ? <Text style={{ fontSize: 7.5, color: C.faint, marginTop: 4 }}>{desc}</Text> : null}
     </View>
   );
 }
 
-export function ChartFrame({ title, children, desc }) {
+// Horizontal ranked bars. Used wherever the old template had a two-column table.
+function HBarBlock({ title, data, color = C.brand, width = 320, maxItems = 10, desc, half }) {
+  const wrap = half ? S.chartHalf : S.block;
+  const titleStyle = half ? S.chartHalfTitle : S.cardTitle;
   return (
-    <View style={S.block} wrap={false}>
-      <Text style={S.cardTitle}>{title}</Text>
-      <View style={S.chartFrame}>{children}</View>
+    <View style={wrap} wrap={false}>
+      <Text style={titleStyle}>{title}</Text>
+      {data && data.length > 0 ? (
+        <VHBarList data={data} width={width} maxItems={maxItems} color={color} />
+      ) : <EmptyNote />}
+      {desc ? <Text style={{ fontSize: 7.5, color: C.faint, marginTop: 4 }}>{desc}</Text> : null}
+    </View>
+  );
+}
+
+// Vertical bar chart block (used for aging / volume distributions).
+function BarBlock({ title, data, color = C.brand, width = 320, height = 160, desc, half }) {
+  const wrap = half ? S.chartHalf : S.block;
+  const titleStyle = half ? S.chartHalfTitle : S.cardTitle;
+  return (
+    <View style={wrap} wrap={false}>
+      <Text style={titleStyle}>{title}</Text>
+      {data && data.length > 0 ? (
+        <VBarChart data={data} width={width} height={height} color={color} />
+      ) : <EmptyNote />}
       {desc ? <Text style={{ fontSize: 7.5, color: C.faint, marginTop: 4 }}>{desc}</Text> : null}
     </View>
   );
@@ -134,24 +179,6 @@ export function BulletList({ items }) {
   );
 }
 
-// When a dashboards table comes back empty, show the chart from that metric's
-// individual dashboard page in its place (so the PDF page is never blank).
-function EmptyChart({ kind, data, color = C.brand, width = 300, height = 150, labelKey = 'name', valueKey = 'value' }) {
-  if (!data || data.length === 0) return (
-    <Text style={{ fontSize: 8.5, color: C.faint, fontStyle: 'italic' }}>No data available for this period.</Text>
-  );
-  switch (kind) {
-    case 'donut':
-      return <VDonut data={data} width={width} height={height} />;
-    case 'hbar':
-      return <VHBarList data={data} width={width} maxItems={10} color={color} labelKey={labelKey} valueKey={valueKey} />;
-    case 'line':
-      return <VLineChart data={data} width={width} height={height} labelKey={labelKey} valueKey={valueKey} />;
-    default:
-      return <VBarChart data={data} width={width} height={height} color={color} labelKey={labelKey} valueKey={valueKey} />;
-  }
-}
-
 export function PageFooter({ orgName, generatedAt }) {
   const date = new Date(generatedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   return (
@@ -161,6 +188,9 @@ export function PageFooter({ orgName, generatedAt }) {
     </View>
   );
 }
+
+// Build a colour array for datasets that don't already carry a `fill`.
+const palette = (data) => (data || []).map((_, i) => COLORS[i % COLORS.length]);
 
 // ── Cover ─────────────────────────────────────────────────────────────────────
 function CoverPage({ orgName, generatedAt }) {
@@ -241,6 +271,8 @@ function ExecutiveSummary({ d, weekly }) {
         <KpiTile label="Email Events" value={formatNumber(events.length)} color={C.violet} />
       </View>
 
+      <MttrGaugeCard cfgKey="overall" mttr={d.mttr} />
+
       <View style={S.block}>
         <Text style={S.cardTitle}>Key Findings</Text>
         <BulletList items={findings} />
@@ -260,7 +292,7 @@ function ExecutiveSummary({ d, weekly }) {
 }
 
 // ── Checkpoint Harmony ────────────────────────────────────────────────────────
-function CheckpointSection({ events, weekly }) {
+function CheckpointSection({ events, weekly, mttr }) {
   const list = Array.isArray(events) ? events : [];
   const states = {};
   list.forEach(e => { const s = e.state || 'unknown'; states[s] = (states[s] || 0) + 1; });
@@ -282,48 +314,38 @@ function CheckpointSection({ events, weekly }) {
         <KpiTile label="Pending" value={formatNumber(pending)} color={C.amber} />
         <KpiTile label="Resolved" value={formatNumber(resolved)} color={C.green} />
       </View>
-
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Event State Breakdown</Text>
-        {!isHollow(stateRows)
-          ? <PdfTable columns={['State', 'Events']} rows={stateRows} />
-          : <EmptyChart kind="donut" data={sevRows.map((d, i) => ({ ...d, fill: SEV_COLORS[i % SEV_COLORS.length] }))} width={150} height={140} />}
+      <MttrGaugeCard cfgKey="email" mttr={mttr} />
+      <View style={S.row2}>
+        <DonutBlock title="Event State Breakdown" data={stateRows} colors={palette(stateRows)} half />
+        <DonutBlock title="Severity Mix" data={sevRows} colors={sevRows.map((_, i) => SEV_COLORS[i % SEV_COLORS.length])} half />
       </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Severity Mix</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <VDonut data={sevRows.map((d, i) => ({ ...d, fill: SEV_COLORS[i % SEV_COLORS.length] }))} width={150} height={140} />
-          <View style={{ flex: 1, marginLeft: 16 }}>
-            {sevRows.map((d, i) => (
-              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                <View style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: SEV_COLORS[i % SEV_COLORS.length], marginRight: 6 }} />
-                <Text style={{ fontSize: 8.5, color: C.sub }}>{d.name} — {d.value}</Text>
-              </View>
-            ))}
+
+      {weekly && (
+        <>
+          <View style={S.colCenter}>
+            <HBarBlock
+              title="Top Senders — Week-over-Week"
+              data={weekly.topSenders.slice(0, 10).map(r => ({ name: String(r.sender_address || 'Unknown').slice(0, 28), value: r['This Week'] || 0 }))}
+              color={C.brand}
+            />
+
           </View>
-        </View>
-      </View>
-
-      {weekly && (
-        <View style={S.block}>
-          <Text style={S.cardTitle}>Top Senders — Week-over-Week</Text>
-          {!isHollow(weekly.topSenders)
-            ? <PdfTable columns={['Sender', 'This Week', 'Last Week', 'Change']} rows={weekly.topSenders.slice(0, 10)} />
-            : <EmptyChart kind="hbar" data={weekly.remComp.map(r => ({ name: r.day, value: r['This Week'] }))} color={C.brand} />}
-        </View>
-      )}
-      {weekly && (
-        <View style={S.block}>
-          <Text style={S.cardTitle}>Event Volume — This Week vs Last Week</Text>
-          <VBarChart data={weekly.remComp.map(r => ({ name: r.day, value: r['This Week'] }))} color={C.brand} width={300} height={150} />
-        </View>
-      )}
-    </View>
+          <View style={S.colCenter}>
+            <BarBlock
+              title="Event Volume — This Week vs Last Week"
+              data={weekly.remComp.map(r => ({ name: r.day, value: r['This Week'] || 0 }))}
+              color={C.brand}
+            />
+          </View>
+        </>
+      )
+      }
+    </View >
   );
 }
 
 // ── SentinelOne Threat Analytics ──────────────────────────────────────────────
-function ThreatAnalytics({ threats }) {
+function ThreatAnalytics({ threats, mttr }) {
   const t = buildThreatAnalytics(threats);
   return (
     <View>
@@ -338,32 +360,20 @@ function ThreatAnalytics({ threats }) {
         <KpiTile label="Unresolved" value={formatNumber(t.unresolved)} color={C.amber} />
         <KpiTile label="Endpoints Affected" value={formatNumber(t.affectedEndpoints)} color={C.sky} />
         <KpiTile label="Avg MTTD" value={t.avgMttd !== null ? `${Math.round(t.avgMttd)}m` : 'N/A'} color={C.violet} />
-        <KpiTile label="Avg MTTM" value={t.avgMttm !== null ? `${Math.round(t.avgMttm)}m` : 'N/A'} color={C.slate} />
       </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Mitigation Status</Text>
-        {!isHollow(t.mitigationData)
-          ? <PdfTable columns={['Status', 'Count']} rows={t.mitigationData} maxRows={8} />
-          : <EmptyChart kind="donut" data={t.confidenceData} width={150} height={140} />}
+      <View style={S.row2}>
+        <DonutBlock title="Mitigation Status" data={t.mitigationData} colors={palette(t.mitigationData)} half />
       </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Classification</Text>
-        {!isHollow(t.classData)
-          ? <PdfTable columns={['Classification', 'Count']} rows={t.classData} maxRows={8} />
-          : <EmptyChart kind="hbar" data={t.confidenceData.slice(0, 8)} color={C.violet} />}
+      <View style={S.row2}>
+        <HBarBlock title="Classification" data={t.classData} color={C.violet} half />
       </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Detection Engines</Text>
-        {!isHollow(t.engineData)
-          ? <PdfTable columns={['Engine', 'Count']} rows={t.engineData.slice(0, 8)} />
-          : <EmptyChart kind="hbar" data={t.confidenceData.slice(0, 8)} color={C.sky} />}
+      <View style={S.row2}>
+        <HBarBlock title="Detection Engines" data={t.engineData.slice(0, 8)} color={C.sky} half />
       </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>MITRE ATT&amp;CK Tactics</Text>
-        {!isHollow(t.tacticData)
-          ? <PdfTable columns={['Tactic', 'Count']} rows={t.tacticData.slice(0, 8)} />
-          : <EmptyChart kind="hbar" data={t.confidenceData.slice(0, 6)} color={C.slate} />}
+      <View style={S.row2}>
+        <HBarBlock title="MITRE ATT&CK Tactics" data={t.tacticData.slice(0, 8)} color={C.slate} half />
       </View>
+      <MttrGaugeCard cfgKey="sentinelOne" mttr={mttr} />
     </View>
   );
 }
@@ -371,12 +381,6 @@ function ThreatAnalytics({ threats }) {
 // ── SentinelOne Agent Analytics ───────────────────────────────────────────────
 function AgentAnalytics({ agents, generatedAt, removed }) {
   const a = buildAgentAnalytics(agents, generatedAt);
-  const agentRows = (Array.isArray(agents) ? agents : []).slice(0, 10).map(x => ({
-    name: x.computer_name || x.computerName || '-',
-    os: x.os_type || x.osType || x.os || '-',
-    status: x.network_status || x.networkStatus || '-',
-    version: x.agent_version || x.agentVersion || '-',
-  }));
   return (
     <View>
       <SectionDivider number="3" title="SentinelOne — Agent Analytics" color="#0ea5e9" />
@@ -390,30 +394,12 @@ function AgentAnalytics({ agents, generatedAt, removed }) {
         <KpiTile label="New (30d)" value={formatNumber(a.newAgents)} color={C.violet} />
         <KpiTile label="Removed" value={formatNumber(removed ?? 0)} color={C.slate} />
       </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Operating System Distribution</Text>
-        {!isHollow(a.osData)
-          ? <PdfTable columns={['OS', 'Agents']} rows={a.osData} />
-          : <EmptyChart kind="donut" data={(a.machineTypeData.length ? a.machineTypeData : [{ name: 'No OS data', value: 0 }]).filter(x => x.value > 0)} width={150} height={140} />}
+      <View style={S.row2}>
+        <DonutBlock title="Operating System Distribution" data={a.osData} colors={palette(a.osData)} half />
+              <DonutBlock title="Agent Connection Status" data={a.statusData} colors={palette(a.statusData)} />
       </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Machine Types</Text>
-        {!isHollow(a.machineTypeData)
-          ? <PdfTable columns={['Type', 'Agents']} rows={a.machineTypeData} />
-          : <EmptyChart kind="hbar" data={a.osData.slice(0, 8)} color={C.sky} />}
-      </View>
-      {agentRows.length > 0 && (
-        <View style={S.block}>
-          <Text style={S.cardTitle}>Recent Agents</Text>
-          <PdfTable columns={['Name', 'OS', 'Status', 'Version']} rows={agentRows} />
-        </View>
-      )}
-      {agentRows.length === 0 && (
-        <View style={S.block}>
-          <Text style={S.cardTitle}>Agent Status</Text>
-          <EmptyChart kind="donut" data={a.statusData.filter(x => x.value > 0)} width={150} height={140} />
-        </View>
-      )}
+      <HBarBlock title="Machine Types" data={a.machineTypeData} color={C.sky} half />
+
     </View>
   );
 }
@@ -438,24 +424,11 @@ function AtRiskSection({ threats }) {
           </View>
         ))}
       </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Ranked Devices</Text>
-        {!isHollow(a.devices)
-          ? <PdfTable columns={['Device', 'Threats']} rows={a.devices.slice(0, 8)} />
-          : <EmptyChart kind="hbar" data={a.users.length ? a.users.slice(0, 8) : a.groups.slice(0, 8)} color={C.red} />}
+      <View style={S.row2}>
+        <HBarBlock title="Ranked Devices" data={a.devices.slice(0, 8)} color={C.red} half />
+        <HBarBlock title="Ranked Users" data={a.users.slice(0, 8)} color={C.amber} half />
       </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Ranked Users</Text>
-        {!isHollow(a.users)
-          ? <PdfTable columns={['User', 'Threats']} rows={a.users.slice(0, 8)} />
-          : <EmptyChart kind="hbar" data={a.groups.length ? a.groups.slice(0, 8) : a.devices.slice(0, 8)} color={C.amber} />}
-      </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Ranked Groups</Text>
-        {!isHollow(a.groups)
-          ? <PdfTable columns={['Group', 'Threats']} rows={a.groups.slice(0, 8)} />
-          : <EmptyChart kind="hbar" data={a.devices.length ? a.devices.slice(0, 8) : a.users.slice(0, 8)} color={C.violet} />}
-      </View>
+      <HBarBlock title="Ranked Groups" data={a.groups.slice(0, 8)} color={C.violet} />
     </View>
   );
 }
@@ -466,6 +439,11 @@ function CveSection({ cves }) {
   if (d.totalApplications === 0) return (
     <View><SectionDivider number="3" title="SentinelOne — Application CVEs" color="#7c3aed" /><Text style={{ color: C.muted }}>No CVE data available.</Text></View>
   );
+  const cveList = Array.isArray(cves) ? cves : [];
+  const exposureData = d.severityDistribution.map(x => ({
+    name: x.name,
+    value: new Set(cveList.filter(r => String(r.severity || 'UNKNOWN').toUpperCase() === x.name).map(r => r.endpointId || r.endpointName).filter(Boolean)).size,
+  }));
   return (
     <View>
       <SectionDivider number="3" title="SentinelOne — Application CVEs" color="#7c3aed" />
@@ -477,39 +455,18 @@ function CveSection({ cves }) {
         <KpiTile label="Endpoints" value={formatNumber(d.totalEndpoints)} color={C.sky} />
         <KpiTile label="Avg Score" value={d.avgScore} color={C.slate} />
       </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Severity Distribution</Text>
-        <VDonut data={d.severityDistribution.map(x => ({ ...x, fill: CVE_COLORS[x.name] }))} width={150} height={140} />
+      <View style={S.row2}>
+        <DonutBlock title="Severity Distribution" data={d.severityDistribution} half />
+        <HBarBlock title="Top Risky Applications" data={d.topRiskyApps.slice(0, 10).map(x => ({ name: x.name, value: x.cves }))} color={C.violet} half />
       </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Top Risky Applications</Text>
-        {d.topRiskyApps.length > 0
-          ? <PdfTable columns={['Application', 'CVEs', 'Max Score']} rows={d.topRiskyApps.slice(0, 10).map(x => ({ 'Application': x.name, 'CVEs': x.cves, 'Max Score': Number(x.score).toFixed(1) }))} />
-          : <EmptyChart kind="hbar" data={d.severityDistribution.slice(0, 8)} color={C.violet} />}
+      <View style={S.row2}>
+        <BarBlock title="CVE Aging (days since detection)" data={d.cveAging.map(x => ({ name: x.name, value: x.count }))} color={C.amber} half />
+        {d.severityDistribution.length > 0 ? (
+          <HBarBlock title="CVE Exposure by Severity (endpoints affected)" data={exposureData} color={C.sky} half />
+        ) : <View style={S.chartHalf} />}
       </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>CVE Aging</Text>
-        {!isHollow(d.cveAging)
-          ? <PdfTable columns={['Age (days)', 'Count']} rows={d.cveAging.map(x => ({ 'Age (days)': x.name, 'Count': x.count }))} />
-          : <EmptyChart kind="bar" data={d.severityDistribution} color={C.amber} />}
-      </View>
-      {d.severityDistribution.length > 0 && (
-        <View style={S.block}>
-          <Text style={S.cardTitle}>CVE Exposure Funnel</Text>
-          <PdfTable columns={['Severity', 'CVEs', 'Endpoints', 'Fleet %']} rows={d.severityDistribution.map(x => ({
-            'Severity': x.name, 'CVEs': x.value,
-            'Endpoints': new Set((Array.isArray(cves) ? cves : []).filter(r => String(r.severity || 'UNKNOWN').toUpperCase() === x.name).map(r => r.endpointId || r.endpointName).filter(Boolean)).size,
-            'Fleet %': d.totalEndpoints > 0 ? Math.round(new Set((Array.isArray(cves) ? cves : []).filter(r => String(r.severity || 'UNKNOWN').toUpperCase() === x.name).map(r => r.endpointId || r.endpointName).filter(Boolean)).size / d.totalEndpoints * 100) + '%' : '0%',
-          }))} />
-        </View>
-      )}
       {d.criticalApps.length > 0 && (
-        <View style={S.block}>
-          <Text style={S.cardTitle}>Critical Applications</Text>
-          <PdfTable columns={['Application', 'CVEs', 'Score', 'Endpoints']} rows={d.criticalApps.map(x => ({
-            'Application': x.name, 'CVEs': x.cveCount, 'Score': Number(x.highestNvdBaseScore).toFixed(1), 'Endpoints': x.endpointCount,
-          }))} />
-        </View>
+        <HBarBlock title="Critical Applications by CVE count" data={d.criticalApps.map(x => ({ name: x.name, value: x.cveCount }))} color={C.red} />
       )}
     </View>
   );
@@ -539,35 +496,18 @@ function AppInsightsSection({ apps }) {
         <KpiTile label="Records" value={formatNumber(list.length)} color={C.brand} />
         <KpiTile label="Publishers" value={formatNumber(publishers.size)} color={C.violet} />
       </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>By Operating System</Text>
-        {!isHollow(osRows)
-          ? <PdfTable columns={['OS', 'Records']} rows={osRows} />
-          : <EmptyChart kind="donut" data={(sevRows.length ? sevRows : appRows.slice(0, 6)).filter(x => x.value > 0)} width={150} height={140} />}
+      <View style={S.row2}>
+        <DonutBlock title="By Operating System" data={osRows} colors={palette(osRows)} half />
+        <HBarBlock title="By Severity" data={sevRows} color={C.sky} half />
       </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>By Severity</Text>
-        {!isHollow(sevRows)
-          ? <PdfTable columns={['Severity', 'Records']} rows={sevRows} />
-          : <EmptyChart kind="hbar" data={osRows.slice(0, 8)} color={C.sky} />}
-      </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Top Installed Applications</Text>
-        {!isHollow(appRows)
-          ? <PdfTable columns={['Application', 'Installs']} rows={appRows} />
-          : <EmptyChart kind="hbar" data={osRows.slice(0, 8)} color={C.brand} />}
-      </View>
+      <HBarBlock title="Top Installed Applications" data={appRows} color={C.brand} />
     </View>
   );
 }
 
 // ── Zoho Desk ─────────────────────────────────────────────────────────────────
-function ZohoSection({ tickets }) {
+function ZohoSection({ tickets, mttr }) {
   const z = buildZohoSummary(tickets);
-  const recent = (Array.isArray(tickets) ? tickets : []).slice(0, 10).map(t => ({
-    Subject: (t.subject || '—').slice(0, 60), Status: t.status || '—', Priority: t.priority || '—',
-    Contact: t.contact_name || '—', Created: t.created_time ? new Date(t.created_time).toLocaleDateString() : '—',
-  }));
   return (
     <View>
       <SectionDivider number="4" title="Zoho Desk — Support Tickets" color="#d97706" />
@@ -581,36 +521,18 @@ function ZohoSection({ tickets }) {
         <KpiTile label="Closed" value={formatNumber(z.closed)} color={C.green} />
         <KpiTile label="Overdue" value={formatNumber(z.overdue)} color={C.amber} />
       </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>By Status</Text>
-        {!isHollow(z.statusData)
-          ? <PdfTable columns={['Status', 'Tickets']} rows={z.statusData} />
-          : <EmptyChart kind="donut" data={(z.priorityData.length ? z.priorityData : z.agingData).filter(x => x.value > 0)} width={150} height={140} />}
+      <View style={S.row2}>
+        <DonutBlock title="By Status" data={z.statusData} half />
+        <DonutBlock title="By Priority" data={z.priorityData} half />
       </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>By Priority</Text>
-        {!isHollow(z.priorityData)
-          ? <PdfTable columns={['Priority', 'Tickets']} rows={z.priorityData} />
-          : <EmptyChart kind="donut" data={(z.statusData.length ? z.statusData : z.agingData).filter(x => x.value > 0)} width={150} height={140} />}
+      <View style={S.row2}>
+        <HBarBlock title="Resolution Time Aging" data={z.agingData} color={C.amber} half />
+        {z.engineerPerformance.length > 0 ? (
+          <HBarBlock title="Engineer Performance (tickets closed)" data={z.engineerPerformance.map(e => ({ name: e.engineer, value: e.closed }))} color={C.brand} half />
+        ) : <View style={S.chartHalf} />}
       </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Resolution Time Aging</Text>
-        {!isHollow(z.agingData)
-          ? <PdfTable columns={['Age', 'Tickets']} rows={z.agingData} />
-          : <EmptyChart kind="hbar" data={z.departmentData.slice(0, 8)} color={C.amber} />}
-      </View>
-      {z.engineerPerformance.length > 0 && (
-        <View style={S.block}>
-          <Text style={S.cardTitle}>Engineer Performance</Text>
-          <PdfTable columns={['Engineer', 'Open', 'Closed']} rows={z.engineerPerformance} />
-        </View>
-      )}
-      {recent.length > 0 && (
-        <View style={S.block}>
-          <Text style={S.cardTitle}>Recent Tickets</Text>
-          <PdfTable columns={['Subject', 'Status', 'Priority', 'Contact', 'Created']} rows={recent} />
-        </View>
-      )}
+      <HBarBlock title="Tickets by Department" data={z.departmentData} color={C.violet} />
+      <MttrGaugeCard cfgKey="ticketing" mttr={mttr} />
     </View>
   );
 }
@@ -633,44 +555,25 @@ function FirewallSection({ fw }) {
         <KpiTile label="Blocked" value={formatNumber(f.blockedConnections)} color={C.amber} />
         <KpiTile label="Risky Users" value={formatNumber(f.criticalUsers)} color={C.violet} />
       </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Risk Distribution</Text>
-        {!isHollow(f.riskDistribution)
-          ? <PdfTable columns={['Risk Level', 'Events']} rows={f.riskDistribution.map(x => ({ 'Risk Level': x.name, 'Events': x.value }))} />
-          : (f.riskTrend.length > 0
-              ? <EmptyChart kind="line" data={f.riskTrend} color={C.red} labelKey="date" valueKey="sessions" />
-              : <EmptyChart kind="donut" data={f.topAttacks.slice(0, 6)} width={150} height={140} />)}
-      </View>
-      {f.riskTrend.length > 0 && (
-        <View style={S.block}>
-          <Text style={S.cardTitle}>Risk/Session Trend</Text>
-          <VLineChart data={f.riskTrend} width={300} height={130} labelKey="date" valueKey="sessions" />
+      {f.riskTrend.length > 0 ? (
+        <View style={S.block} wrap={false}>
+          <Text style={S.cardTitle}>Risk / Session Trend</Text>
+          <VLineChart data={f.riskTrend} width={320} height={140} labelKey="date" valueKey="sessions" stroke={C.red} />
         </View>
+      ) : (
+        <DonutBlock title="Risk Distribution" data={f.riskDistribution} colors={palette(f.riskDistribution)} />
       )}
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Top Attacks</Text>
-        {!isHollow(f.topAttacks)
-          ? <PdfTable columns={['Attack', 'Count']} rows={f.topAttacks} />
-          : <EmptyChart kind="hbar" data={f.topAttackers.slice(0, 8)} color={C.red} />}
+      <View style={S.row2}>
+        <HBarBlock title="Top Attacks" data={f.topAttacks} color={C.red} half />
+        <HBarBlock title="Top Attacker Sources" data={f.topAttackers} color={C.sky} half />
       </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Top Attacker Sources</Text>
-        {!isHollow(f.topAttackers)
-          ? <PdfTable columns={['Source', 'Count']} rows={f.topAttackers} />
-          : <EmptyChart kind="hbar" data={f.riskyUsers.slice(0, 8)} color={C.sky} />}
-      </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Risky Users</Text>
-        {!isHollow(f.riskyUsers)
-          ? <PdfTable columns={['User', 'Count']} rows={f.riskyUsers} />
-          : <EmptyChart kind="hbar" data={f.topDeniedSources.slice(0, 8)} color={C.violet} />}
-      </View>
+      <HBarBlock title="Risky Users" data={f.riskyUsers} color={C.violet} />
     </View>
   );
 }
 
 // ── Weekly Insights ───────────────────────────────────────────────────────────
-function WeeklyInsights({ weekly, d }) {
+function WeeklyInsights({ weekly }) {
   return (
     <View>
       <SectionDivider number="6" title="Weekly Insights — 7-Day Comparison" color="#7c3aed" />
@@ -686,23 +589,10 @@ function WeeklyInsights({ weekly, d }) {
         <KpiTile label="New CVEs" value={formatNumber(weekly.kpi.newCvesThis)} sub={`last: ${weekly.kpi.newCvesLast}`} color={C.amber} />
         <KpiTile label="Critical CVEs" value={formatNumber(weekly.kpi.critCvesThis)} color={C.red} />
       </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Threat Recurrence</Text>
-        {!isHollow(weekly.newVsRecurring)
-          ? <PdfTable columns={['Type', 'Count']} rows={weekly.newVsRecurring.map(x => ({ 'Type': x.name, 'Count': x.value }))} />
-          : <EmptyChart kind="donut" data={(weekly.topEndpoints.length ? weekly.topEndpoints.map(x => ({ name: x.endpoint, value: x['This Week'] })) : weekly.remComp.map(r => ({ name: r.day, value: r['This Week'] }))).slice(0, 8).filter(x => x.value > 0)} width={150} height={140} />}
-      </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Top Endpoints by Threats</Text>
-        {!isHollow(weekly.topEndpoints)
-          ? <PdfTable columns={['Endpoint', 'This Week', 'Last Week']} rows={weekly.topEndpoints} />
-          : <EmptyChart kind="hbar" data={(weekly.topUsers.length ? weekly.topUsers.map(x => ({ name: x.user, value: x['This Week'] })) : weekly.remComp.map(r => ({ name: r.day, value: r['This Week'] }))).slice(0, 8)} color={C.red} />}
-      </View>
-      <View style={S.block}>
-        <Text style={S.cardTitle}>Top Users by Threats</Text>
-        {!isHollow(weekly.topUsers)
-          ? <PdfTable columns={['User', 'This Week', 'Last Week']} rows={weekly.topUsers} />
-          : <EmptyChart kind="hbar" data={weekly.remComp.map(r => ({ name: r.day, value: r['This Week'] }))} color={C.amber} />}
+      <DonutBlock title="Threat Recurrence (New vs Recurring)" data={weekly.newVsRecurring} />
+      <View style={S.row2}>
+        <HBarBlock title="Top Endpoints by Threats (this week)" data={weekly.topEndpoints.map(x => ({ name: x.endpoint, value: x['This Week'] || 0 }))} color={C.red} half />
+        <HBarBlock title="Top Users by Threats (this week)" data={weekly.topUsers.map(x => ({ name: x.user, value: x['This Week'] || 0 }))} color={C.amber} half />
       </View>
     </View>
   );
@@ -733,12 +623,12 @@ export default function ReportTemplate({ data }) {
 
       <Page size="A4" style={S.page} wrap>
         <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} />
-        <CheckpointSection events={data.harmonyEvents} weekly={weekly} />
+        <CheckpointSection events={data.harmonyEvents} weekly={weekly} mttr={data.mttr} />
       </Page>
 
       <Page size="A4" style={S.page} wrap>
         <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} />
-        <ThreatAnalytics threats={data.s1Threats} />
+        <ThreatAnalytics threats={data.s1Threats} mttr={data.mttr} />
       </Page>
 
       <Page size="A4" style={S.page} wrap>
@@ -763,7 +653,7 @@ export default function ReportTemplate({ data }) {
 
       <Page size="A4" style={S.page} wrap>
         <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} />
-        <ZohoSection tickets={data.zohoTickets} />
+        <ZohoSection tickets={data.zohoTickets} mttr={data.mttr} />
       </Page>
 
       <Page size="A4" style={S.page} wrap>

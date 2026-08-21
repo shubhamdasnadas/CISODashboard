@@ -87,11 +87,19 @@ const mockData = {
   ],
   harmonyEvents: [
     { event_created: `${today}T09:00:00Z`, state: 'pending', severity: '4', type: 'phishing', sender_address: 'phish@evil.net' },
-    { event_created: `${today}T09:30:00Z`, state: 'remediated', severity: '3', type: 'malware', sender_address: 'mal@evil.net' },
-    { event_created: `${today}T10:00:00Z`, state: 'done', severity: '4', type: 'dlp', sender_address: 'leak@corp.com' },
+    // Sender NOT on the top-level column — only nested in additional_data (real DB shape).
+    { event_created: `${today}T09:30:00Z`, state: 'remediated', severity: '3', type: 'malware', additional_data: { sender_address: 'nested@evil.io', receiver_address: 'user@acme.com' } },
+    { event_created: `${today}T10:00:00Z`, state: 'done', severity: '4', type: 'dlp', additional_data: JSON.stringify({ senderAddress: 'leak2@corp.com' }) },
     { event_created: `${today}T11:00:00Z`, state: 'pending', severity: '2', type: 'suspicious_phishing', sender_address: 'phish2@evil.net' },
+    { event_created: `${today}T11:30:00Z`, state: 'blocked', severity: '1', type: 'spam' }, // no sender at all -> Unknown
   ],
   removedAgentsCount: 2,
+  mttr: {
+    overall:     { pct: 72, goodCount: '', badCount: '' },
+    sentinelOne: { pct: 88, goodCount: 7, badCount: 1 },
+    email:       { pct: 64, goodCount: 32, badCount: 18, total: 50 },
+    ticketing:   { pct: 75, goodCount: 3, badCount: 1 },
+  },
   zohoTickets: [
     { subject: 'Cannot open attachment', status: 'Open', priority: 'High', contact_name: 'Alice', created_time: `${today}T08:00:00Z`, department: { name: 'IT' }, assignee: { name: 'Bob' } },
     { subject: 'Firewall rule request', status: 'Closed', priority: 'Low', contact_name: 'Carol', created_time: `${today}T07:00:00Z`, closed_time: `${today}T09:00:00Z`, department: { name: 'NetSec' }, assignee: { name: 'Bob' } },
@@ -132,7 +140,13 @@ if (typeof ReportTemplate !== 'function') {
   process.exit(1);
 }
 const start = Date.now();
-const buffer = await renderToBuffer(React.createElement(ReportTemplate, { data: mockData }));
+let buffer;
+try {
+  buffer = await renderToBuffer(React.createElement(ReportTemplate, { data: mockData }));
+} catch (e) {
+  console.error('[smoke] ✗ render threw:', e && e.stack ? e.stack : e);
+  process.exit(2);
+}
 const ms = Date.now() - start;
 
 console.log(`[smoke] ✓ Rendered a ${buffer.length.toLocaleString()}-byte PDF in ${ms}ms`);
@@ -156,6 +170,12 @@ const emptyData = {
   harmonyEvents: [],
   zohoTickets: [],
   removedAgentsCount: 0,
+  mttr: {
+    overall:     { pct: 0, goodCount: '', badCount: '' },
+    sentinelOne: { pct: 0, goodCount: 0, badCount: 0 },
+    email:       { pct: 0, goodCount: 0, badCount: 0, total: 0 },
+    ticketing:   { pct: 0, goodCount: 0, badCount: 0 },
+  },
   fwRiskRaw: null,
   fwAttackersRaw: null,
   fwAttackerDestRaw: null,
