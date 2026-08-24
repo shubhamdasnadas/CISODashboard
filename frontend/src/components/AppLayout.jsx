@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, cloneElement } from 'react';
-import { Outlet, NavLink, useNavigate, useOutlet } from 'react-router-dom';
+import { Outlet, NavLink, Navigate, useNavigate, useLocation, useOutlet } from 'react-router-dom';
+import api from '../api';
+import { PAGES } from '../constants/navPages.js';
 import { useOrg } from '../context/OrgContext.jsx';
 import { useTheme } from '../context/ThemeContext.jsx';
 
@@ -79,7 +81,7 @@ const NAV = [
   },
 ];
 
-function Sidebar({ mobileOpen, onClose }) {
+function Sidebar({ mobileOpen, onClose, allowedPages }) {
   const navigate = useNavigate();
   const user = JSON.parse(localStorage.getItem('ciso_user') || '{}');
   const { setCurrentOrg } = useOrg();
@@ -90,7 +92,10 @@ function Sidebar({ mobileOpen, onClose }) {
 
   const visibleNav = NAV.filter(item => {
     if (item.superAdminOnly) return isSuperAdmin;
-    return true;
+    if (isSuperAdmin) return true; // superAdmin always sees everything
+    // Page access control: null/undefined allowedPages = all pages.
+    if (!Array.isArray(allowedPages)) return true;
+    return allowedPages.includes(item.key);
   });
 
   const logout = async () => {
@@ -299,6 +304,21 @@ function TopBar({ onMenuClick }) {
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { currentOrg } = useOrg();
+  const user = JSON.parse(localStorage.getItem('ciso_user') || '{}');
+
+  // ── Page access control ────────────────────────────────────────────────────
+  // null = all pages allowed. Array = only these page keys.
+  const isSuperAdmin = user.role === 'superAdmin';
+  const [allowedPages, setAllowedPages] = useState(null); // null until loaded → show all
+
+  useEffect(() => {
+    if (isSuperAdmin) return; // superAdmin bypasses access control entirely
+    let cancelled = false;
+    api.get('/member/my-access')
+      .then(({ data }) => { if (!cancelled) setAllowedPages(data.allowed_pages ?? null); })
+      .catch(() => { if (!cancelled) setAllowedPages(null); }); // fail open
+    return () => { cancelled = true; };
+  }, [isSuperAdmin, currentOrg?.id]);
 
   // Re-mount the routed page whenever the active organisation changes so that
   // every page re-fetches its data against the new X-Org-Id automatically —
@@ -308,13 +328,27 @@ export default function AppLayout() {
     ? cloneElement(outlet, { key: currentOrg?.id ?? 'none' })
     : outlet;
 
+  // Route guard: if current path's page isn't allowed, bounce to first allowed page.
+  const location = useLocation();
+  let guardedOutlet = outletKeyed;
+  if (!isSuperAdmin && Array.isArray(allowedPages) && outletKeyed) {
+    const matchedPage = PAGES.find(p => {
+      const pathPrefix = p.key === 'zoho-one' ? '/zoho' : `/${p.key}`;
+      return location.pathname === pathPrefix || location.pathname.startsWith(`${pathPrefix}/`);
+    });
+    if (matchedPage && !allowedPages.includes(matchedPage.key)) {
+      const firstAllowed = PAGES.find(p => allowedPages.includes(p.key));
+      guardedOutlet = <Navigate to={firstAllowed ? firstAllowed.path : '/dashboard'} replace />;
+    }
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--background)] transition-colors duration-200">
-      <Sidebar mobileOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar mobileOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} allowedPages={allowedPages} />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <TopBar onMenuClick={() => setSidebarOpen(true)} />
         <main className="flex-1 overflow-y-auto overflow-x-hidden">
-          {outletKeyed}
+          {guardedOutlet}
         </main>
       </div>
     </div>

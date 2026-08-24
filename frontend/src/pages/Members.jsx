@@ -1,21 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import api from '../api';
 import { useOrg } from '../context/OrgContext.jsx';
-
-const ALL_PAGES = [
-  { key: 'dashboard',     label: 'Dashboard' },
-  { key: 'security',      label: 'Security' },
-  { key: 'checkpoint',    label: 'Check Point' },
-  { key: 'members',       label: 'Members' },
-  { key: 'projects',      label: 'Projects' },
-  { key: 'reports',       label: 'Reports' },
-  { key: 'analytics',     label: 'Analytics' },
-  { key: 'billing',       label: 'Billing' },
-  { key: 'notifications', label: 'Notifications' },
-  { key: 'support',       label: 'Support' },
-  { key: 'settings',      label: 'Settings' },
-  { key: 'zohoOne',       label: 'Zoho One' },
-];
+import { PAGES as ALL_PAGES } from '../constants/navPages.js';
 
 function Modal({ title, subtitle, onClose, children }) {
   return (
@@ -65,7 +51,7 @@ export default function Members() {
 
   // ── Edit modal ─────────────────────────────────────────────────────────────
   const [editMember, setEditMember] = useState(null);
-  const [editForm, setEditForm] = useState({ name: '', role: 'org_user', department: '' });
+  const [editForm, setEditForm] = useState({ name: '', email: '', role: 'org_user', department: '' });
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState('');
 
@@ -137,13 +123,15 @@ export default function Members() {
   const toggleActive = async (m) => {
     setMembers(prev => prev.map(x => x.id === m.id ? { ...x, is_active: !m.is_active } : x));
     try {
-      await api.put(`/member/members/${m.id}`, { is_active: !m.is_active });
+      await api.put(`/member/members/${m.id}`, { is_active: !m.is_active, user_type: m.user_type });
     } catch { loadMembers(currentOrg?.id); }
   };
 
+  const isSystemUser = (m) => m.user_type === 'system_user';
+
   const openEdit = (m) => {
     setEditMember(m);
-    setEditForm({ name: m.name, role: m.role, department: m.department || '' });
+    setEditForm({ name: m.name, email: m.email || '', role: m.role, department: m.department || '' });
     setEditError('');
     setOpenMenuId(null);
   };
@@ -153,7 +141,7 @@ export default function Members() {
     if (!editMember) return;
     setEditError(''); setEditSaving(true);
     try {
-      await api.put(`/member/members/${editMember.id}`, editForm);
+      await api.put(`/member/members/${editMember.id}`, { ...editForm, user_type: editMember.user_type });
       loadMembers(currentOrg?.id);
       setEditMember(null);
     } catch (e) {
@@ -172,7 +160,10 @@ export default function Members() {
     if (!pageAccessMember) return;
     setPageSaving(true);
     try {
-      await api.put(`/member/members/${pageAccessMember.id}`, { allowed_pages: pageSelections });
+      await api.put(`/member/members/${pageAccessMember.id}`, {
+        allowed_pages: pageSelections,
+        user_type: pageAccessMember.user_type || 'org_user',
+      });
       loadMembers(currentOrg?.id);
       setPageAccessMember(null);
     } finally { setPageSaving(false); }
@@ -188,7 +179,7 @@ export default function Members() {
     if (!removeMember) return;
     setRemoving(true);
     try {
-      await api.delete(`/member/members/${removeMember.id}`);
+      await api.delete(`/member/members/${removeMember.id}?user_type=${removeMember.user_type || 'org_user'}`);
       setRemoveMember(null);
       loadMembers(currentOrg?.id);
     } finally { setRemoving(false); }
@@ -451,25 +442,34 @@ export default function Members() {
 
       {/* ── Edit Member Modal ───────────────────────────────────────────────── */}
       {editMember && (
-        <Modal title="Edit Member" subtitle={editMember.email} onClose={() => setEditMember(null)}>
+        <Modal title="Edit Member" subtitle={isSystemUser(editMember) ? 'System account' : editMember.email} onClose={() => setEditMember(null)}>
           <form onSubmit={handleEdit} className="space-y-4">
             <div>
               <label className={labelCls()}>Full Name *</label>
               <input value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))} required className={inputCls()} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className={labelCls()}>Role</label>
-                <select value={editForm.role} onChange={e => setEditForm(p => ({ ...p, role: e.target.value }))} className={inputCls()}>
-                  <option value="org_user">Member</option>
-                  <option value="org_admin">Admin</option>
-                </select>
-              </div>
-              <div>
-                <label className={labelCls()}>Department</label>
-                <input value={editForm.department} onChange={e => setEditForm(p => ({ ...p, department: e.target.value }))} placeholder="Engineering" className={inputCls()} />
-              </div>
+            <div>
+              <label className={labelCls()}>Email *</label>
+              <input type="email" value={editForm.email} onChange={e => setEditForm(p => ({ ...p, email: e.target.value }))} required placeholder="john@company.com" className={inputCls()} />
             </div>
+            {!isSystemUser(editMember) && (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className={labelCls()}>Role</label>
+                  <select value={editForm.role} onChange={e => setEditForm(p => ({ ...p, role: e.target.value }))} className={inputCls()}>
+                    <option value="org_user">Member</option>
+                    <option value="org_admin">Admin</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls()}>Department</label>
+                  <input value={editForm.department} onChange={e => setEditForm(p => ({ ...p, department: e.target.value }))} placeholder="Engineering" className={inputCls()} />
+                </div>
+              </div>
+            )}
+            {isSystemUser(editMember) && (
+              <p className="text-xs text-[var(--muted)]">System account — role and department are managed centrally.</p>
+            )}
             {editError && <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 px-4 py-3 rounded-xl text-sm">{editError}</div>}
             <div className="flex gap-3 pt-1">
               <button type="button" onClick={() => setEditMember(null)} className="flex-1 px-4 py-2.5 border border-[var(--card-border)] rounded-xl text-sm font-medium text-[var(--foreground)] hover:bg-[var(--muted-bg)] transition-colors">Cancel</button>

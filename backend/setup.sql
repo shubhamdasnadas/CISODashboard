@@ -3,7 +3,7 @@
 -- ============================================================
 -- Run from the command line (not pgAdmin):
 --
---   "C:\Program Files\PostgreSQL\16\bin\psql.exe" -U postgres -d postgres -f "C:\Shubham\Tehsec\CISO\backend\setup.sql"
+--   "C:\Program Files\PostgreSQL\16\bin\psql.exe" -U postgres -d postgres -v ON_ERROR_STOP=1 -f "C:\Shubham\Tehsec\CISO\backend\setup.sql"
 --
 -- It will ask for the postgres password. After it finishes, the
 -- central database (cisodashboard) is ready with 5 organisations
@@ -19,26 +19,35 @@
 -- ============================================================
 -- PHASE 1: Wipe every existing database, then recreate cisodashboard
 -- (runs against the `postgres` maintenance DB)
+--
+-- DROP DATABASE / CREATE DATABASE cannot run inside a transaction
+-- block, so we can't use a DO block here. Instead we generate the
+-- statements as text and run each one with \gexec — psql executes
+-- each returned row as its own standalone statement.
 -- ============================================================
-DO $$
-DECLARE
-  r RECORD;
-BEGIN
-  FOR r IN
-    SELECT datname FROM pg_database WHERE datname LIKE 'ciso_org_%'
-  LOOP
-    EXECUTE format(
-      'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = %L',
-      r.datname
-    );
-    EXECUTE format('DROP DATABASE IF EXISTS %I', r.datname);
-    RAISE NOTICE 'Dropped database: %', r.datname;
-  END LOOP;
 
-  EXECUTE 'DROP DATABASE IF EXISTS cisodashboard';
-  RAISE NOTICE 'Dropped database: cisodashboard';
-END
-$$;
+-- Kill active connections to any ciso_org_% databases, then drop them.
+SELECT format(
+  'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = %L',
+  datname)
+FROM pg_database WHERE datname LIKE 'ciso_org_%'
+\gexec
+
+SELECT format('DROP DATABASE IF EXISTS %I', datname)
+FROM pg_database WHERE datname LIKE 'ciso_org_%'
+\gexec
+
+SELECT 'DROP DATABASE IF EXISTS cisodashboard'
+WHERE EXISTS (SELECT 1 FROM pg_database WHERE datname = 'cisodashboard')
+\gexec
+
+-- CREATE DATABASE clones template1; kick any idle sessions off it first,
+-- otherwise creation fails with "source database template1 is being
+-- accessed by other users". Generates one terminate-command per session.
+SELECT format('SELECT pg_terminate_backend(%s)', pid)
+FROM pg_stat_activity
+WHERE datname = 'template1' AND pid <> pg_backend_pid()
+\gexec
 
 CREATE DATABASE cisodashboard;
 
@@ -85,7 +94,8 @@ CREATE TABLE users (
   password VARCHAR(255) NOT NULL,
   role VARCHAR(50) NOT NULL,
   email VARCHAR(255),
-  org_ids INTEGER[]
+  org_ids INTEGER[],
+  allowed_pages TEXT[]              -- NULL = all pages; array = only these page keys
 );
 
 -- 2FA login sessions (QR + email OTP handoff).
@@ -184,6 +194,13 @@ INSERT INTO api_tokens (org_id, api_name, token) VALUES
 (1, 'Firewall',    'token_fw_org1_demo_xxxxxxxxxxxx'),
 (2, 'SentinelOne', 'token_s1_org2_demo_xxxxxxxxxxxx'),
 (2, 'Checkpoint',  'token_cp_org2_demo_xxxxxxxxxxxx');
+
+-- Demo org-level members (org_users). All share password "Password@123"
+-- except where noted; bcrypt hashes copied from the users table seeds.
+INSERT INTO org_users (org_id, name, email, password, role, department) VALUES
+(1, 'Neha Sharma',  'neha.sharma@techsec.com',  '$2b$10$ij5fm1V4Je4XdszZYxe.qejgZm1dUT00QUSWiqu60dGm86T6snuIm', 'org_user',  'Security Operations'),
+(1, 'Vikram Patel', 'vikram.patel@techsec.com', '$2b$10$2tPIscmvkAyA2UDPDf7auuWMCOlbd/WRz3X5iLOjyJxV.0bsQSlBG', 'org_admin', 'IT Infrastructure'),
+(2, 'Suresh Iyer',  'suresh.iyer@pcpl.com',     '$2b$10$6kDbdUa51QkzjDGpdBNegeFdkcDl3giQVxLO5BceuROACDgfo7xc.', 'org_user',  'Compliance');
 
 -- ============================================================
 -- DONE. Login credentials:

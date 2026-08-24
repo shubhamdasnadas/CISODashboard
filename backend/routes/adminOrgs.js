@@ -114,11 +114,22 @@ router.post('/org-users', async (req, res) => {
     const hashed = password ? await bcrypt.hash(password, 10) : null;
     const { rows } = await centralPool.query(
       `INSERT INTO org_users (org_id, name, email, password, role, department, allowed_pages)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, org_id, name, email, role, department, is_active, allowed_pages, created_at`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (email, org_id) DO UPDATE SET
+         name = EXCLUDED.name,
+         role = COALESCE(EXCLUDED.role, org_users.role),
+         department = COALESCE(EXCLUDED.department, org_users.department),
+         is_active = TRUE
+       RETURNING id, org_id, name, email, role, department, is_active, allowed_pages, created_at`,
       [org_id, name, email, hashed, role || 'org_user', department || null, allowed_pages || null]
     );
-    res.status(201).json({ user: rows[0] });
+    // Mirror into the users table: create the account if missing and append
+    // this org's id to org_ids so the member can log in to it.
+    const { ensureUserAccount } = require('./memberRoute');
+    const user = await ensureUserAccount({ email, name, password, role: role || 'org_user', orgId: org_id });
+    res.status(201).json({ user: rows[0], system_user_id: user.id });
   } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ message: 'Email already exists in this org' });
     res.status(500).json({ message: err.message });
   }
 });
