@@ -54,6 +54,8 @@ import Reports from './pages/Reports.jsx';
 import Analytics from './pages/Analytics.jsx';
 import News from './pages/News.jsx';
 import Nvd from './pages/Nvd.jsx';
+import UpdatedNvd from './pages/UpdatedNvd.jsx';
+import UpdatedCpes from './pages/UpdatedCpes.jsx';
 import Support from './pages/Support.jsx';
 import Notifications from './pages/Notifications.jsx';
 import Billing from './pages/Billing.jsx';
@@ -155,6 +157,8 @@ export default function App() {
                 <Route path="/analytics" element={<Analytics />} />
                 <Route path="/news" element={<News />} />
                 <Route path="/nvd" element={<Nvd />} />
+        <Route path="/updated-nvd" element={<UpdatedNvd />} />
+        <Route path="/updated-cpes" element={<UpdatedCpes />} />
                 <Route path="/support" element={<Support />} />
                 <Route path="/notifications" element={<Notifications />} />
                 <Route path="/billing" element={<Billing />} />

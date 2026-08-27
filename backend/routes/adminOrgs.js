@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { centralPool, getOrgPool, getOrgSlug, closeOrgPool, ensureOrgDatabases } = require('../db');
+const { centralPool, getOrgSlug, generateUniqueSlug, createOrgDatabase, dropOrgDatabase } = require('../db');
 const { requireSuperAdmin } = require('../middleware/authMiddleware');
 
 // All admin org routes require superAdmin
@@ -37,13 +37,24 @@ router.post('/organizations', async (req, res) => {
     const { org_name, address, mobile_no, slug, email, industry, plan, color, description } = req.body;
     if (!org_name) return res.status(400).json({ message: 'org_name is required' });
 
+    // Derive a unique, safe slug for the per-org database name (ciso_org_<slug>).
+    const orgSlug = await generateUniqueSlug(org_name, slug);
+
     const { rows } = await centralPool.query(
       `INSERT INTO organisations (org_name, address, mobile_no, slug, email, industry, plan, color, description, is_active)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE) RETURNING *`,
-      [org_name, address || null, mobile_no || null, slug || null, email || null, industry || null, plan || 'free', color || null, description || null]
+      [org_name, address || null, mobile_no || null, orgSlug, email || null, industry || null, plan || 'free', color || null, description || null]
     );
-    // Auto-create per-org database + schema
-    await ensureOrgDatabases();
+
+    // Auto-create per-org database + schema. Roll back the registry row on failure.
+    try {
+      await createOrgDatabase(orgSlug);
+    } catch (e) {
+      await centralPool.query('DELETE FROM organisations WHERE id = $1', [rows[0].id]);
+      console.error('create admin org DB error (rolled back org row):', e);
+      return res.status(500).json({ message: 'Failed to create organisation database' });
+    }
+
     res.status(201).json({ organization: rows[0] });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -80,7 +91,13 @@ router.delete('/organizations/:id', async (req, res) => {
   try {
     const orgSlug = await getOrgSlug(parseInt(req.params.id, 10));
     await centralPool.query('DELETE FROM organisations WHERE id = $1', [req.params.id]);
-    if (orgSlug) closeOrgPool(orgSlug);
+    if (orgSlug) {
+      try {
+        await dropOrgDatabase(orgSlug);
+      } catch (e) {
+        console.error(`Warning: failed to drop ciso_org_${orgSlug}:`, e.message);
+      }
+    }
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ message: err.message });

@@ -205,6 +205,9 @@ CREATE TABLE IF NOT EXISTS reports (
   data        JSONB,
   status      TEXT        NOT NULL DEFAULT 'draft',
   created_by  TEXT,
+  file_path   TEXT,
+  org_slug    TEXT,
+  generated_at TIMESTAMPTZ,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

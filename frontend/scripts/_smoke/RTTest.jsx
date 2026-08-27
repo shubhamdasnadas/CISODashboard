@@ -5,10 +5,10 @@ import {
   buildCveData, computeWeeklyStats, buildThreatAnalytics, buildAgentAnalytics,
   buildAtRisk, buildZohoSummary, buildFirewallSummary,
   buildZohoTicketCounts, buildZohoFunnel, buildZohoHeatmap, buildZohoVolcano,
-  buildZohoTopPerformance, buildZohoMttr, buildZohoCorpMembers,
+  buildZohoTopPerformance, buildZohoCorpMembers, buildZohoMttr,
   ZOHO_STATUS_COLORS, ZOHO_PRIORITY_COLORS, SEV_COLORS, CVE_COLORS, COLORS, RISK_COLORS,
 } from './dataUtils';
-import { VDonut, VLineChart, VBarChart, VHBarList, VLegendRow, VGauge, ZohoCountCards, VHeatmap, VFunnel, VVolcano, VTopTable, VMttrCard, VCorpMember, VRadar, VStackedBar, VScoreBar } from './pdfChartComponents';
+import { VDonut, VLineChart, VBarChart, VHBarList, VLegendRow, VGauge, ZohoCountCards, VHeatmap, VFunnel, VVolcano, VTopTable, VCorpMember, VMttrCard } from './pdfChartComponents';
 
 // ── MTTR / compliance-health gauge (single card) ─────────────────────────────
 // The live CyberHygen widgets (AllCommonmttr / S1Mttr / Emailsecuritymttr /
@@ -57,25 +57,10 @@ const C = {
   green: '#16a34a', red: '#dc2626', amber: '#d97706', sky: '#0284c7', violet: '#7c3aed', slate: '#64748b',
 };
 
-// Techsec cover palette — yellow accent on white, matching the reference title page.
-const TC = {
-  yellow: '#f6c500', yellowDeep: '#e0a800',
-  ink: '#16181d', sub: '#4b5563', muted: '#6b7280',
-  line: '#e5e7eb', panel: '#fafafa',
-  red: '#b3231b', bg: '#ffffff',
-};
-
 const S = StyleSheet.create({
-  page: { fontSize: 9, color: C.ink, backgroundColor: '#ffffff', paddingTop: 26, paddingBottom: 34, paddingLeft: 40, paddingRight: 40 },
-  // Cover page uses a flush layout so the yellow accent rule sits at the very
-  // top edge; the cover renders its own internal header/footer, so no padding
-  // and no running PageFooter are applied.
-  coverPage: { fontSize: 9, color: C.ink, backgroundColor: '#ffffff', paddingTop: 0, paddingBottom: 0, paddingLeft: 0, paddingRight: 0 },
+  page: { fontSize: 9, color: C.ink, backgroundColor: '#ffffff', paddingTop: 34, paddingBottom: 34, paddingLeft: 40, paddingRight: 40 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   brandBar: { height: 4, backgroundColor: C.brand, marginBottom: 12, borderRadius: 2 },
-  // Running letterhead at the top of every content page (below the brand rule).
-  contentHeader: { marginBottom: 10 },
-  confidentialTag: { paddingVertical: 2, paddingHorizontal: 6, borderRadius: 3, backgroundColor: C.red },
   title: { fontSize: 18, fontWeight: 700, color: C.ink },
   subtitle: { fontSize: 10, color: C.muted, marginTop: 2 },
   sectionDivider: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, marginTop: 4 },
@@ -133,138 +118,68 @@ function EmptyNote({ text = 'No data available for this period.' }) {
   return <Text style={EMPTY_STYLE}>{text}</Text>;
 }
 
-// A donut chart with a percentage legend beside it. The whole card is hidden
-// when the dataset is empty (no empty placeholder is shown in the PDF).
+// A donut chart with a percentage legend beside it. Falls back to an accurate
+// "no data" note (never a phantom chart) when the dataset is empty.
 function DonutBlock({ title, data, colors, width = 130, height = 130, desc, half }) {
-  if (!data || data.length === 0) return null;
   const wrap = half ? S.chartHalf : S.block;
   const titleStyle = half ? S.chartHalfTitle : S.cardTitle;
   return (
     <View style={wrap} wrap={false}>
       <Text style={titleStyle}>{title}</Text>
-      <View style={{ alignItems: 'center' }}>
-        <VDonut data={data} width={width} height={height} colors={colors} />
-        {/* Legend below the chart (per request): donut content, then legend. */}
-        <View style={{ marginTop: 8, width: '100%' }}>
-          <VLegendRow data={data} colors={colors} />
+      {data && data.length > 0 ? (
+        <View style={{ alignItems: 'center' }}>
+          <VDonut data={data} width={width} height={height} colors={colors} />
+          {/* Legend below the chart (per request): donut content, then legend. */}
+          <View style={{ marginTop: 8, width: '100%' }}>
+            <VLegendRow data={data} colors={colors} />
+          </View>
         </View>
-      </View>
-      {desc ? <Text style={{ fontSize: 7.5, color: C.faint, marginTop: 4 }}>{desc}</Text> : null}
-    </View>
-  );
-}
-
-// Donut rendered side-by-side with its legend (donut left, legend right),
-// mirroring the live SentinelOne "ImprovedDonut" look where every slice shows
-// its name + count + percentage. Used by the Agent Overview section so the 7
-// agent donuts read clearly instead of a tiny chart with a stacked legend.
-// Hidden entirely when there is no data.
-function DonutSide({ title, data, colors, donutSize = 110, maxLegend = 7, desc, half }) {
-  if (!data || data.length === 0) return null;
-  const wrap = half ? S.chartHalf : S.block;
-  const titleStyle = half ? S.chartHalfTitle : S.cardTitle;
-  const total = data.reduce((s, d) => s + (d.value || 0), 0) || 1;
-  const items = data.slice(0, maxLegend);
-  const colorOf = (d, i) => (colors && colors[i]) || d.fill || '#3b82f6';
-  return (
-    <View style={wrap} wrap={false}>
-      <Text style={titleStyle}>{title}</Text>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-        <VDonut data={data} width={donutSize} height={donutSize} colors={colors} />
-        <View style={{ flex: 1, minWidth: 0 }}>
-          {items.map((d, i) => (
-            <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 3 }}>
-              <View style={{ width: 7, height: 7, borderRadius: 2, backgroundColor: colorOf(d, i), marginRight: 5 }} />
-              <Text style={{ fontSize: 7.5, color: '#6b7280', flex: 1, minWidth: 0 }} wrap={false}>
-                {String(d.name).slice(0, 28)}
-              </Text>
-              <Text style={{ fontSize: 7.5, color: '#374151', fontWeight: 'bold', marginLeft: 4 }} wrap={false}>
-                {d.value} ({Math.round((d.value / total) * 100)}%)
-              </Text>
-            </View>
-          ))}
-          {data.length > items.length && (
-            <Text style={{ fontSize: 7, color: '#9ca3af' }}>+{data.length - items.length} more</Text>
-          )}
-        </View>
-      </View>
+      ) : <EmptyNote />}
       {desc ? <Text style={{ fontSize: 7.5, color: C.faint, marginTop: 4 }}>{desc}</Text> : null}
     </View>
   );
 }
 
 // Horizontal ranked bars. Used wherever the old template had a two-column table.
-// Hidden entirely when there is no data.
 function HBarBlock({ title, data, color = C.brand, width = 320, maxItems = 10, desc, half }) {
-  if (!data || data.length === 0) return null;
   const wrap = half ? S.chartHalf : S.block;
   const titleStyle = half ? S.chartHalfTitle : S.cardTitle;
   return (
     <View style={wrap} wrap={false}>
       <Text style={titleStyle}>{title}</Text>
-      <VHBarList data={data} width={width} maxItems={maxItems} color={color} />
+      {data && data.length > 0 ? (
+        <VHBarList data={data} width={width} maxItems={maxItems} color={color} />
+      ) : <EmptyNote />}
       {desc ? <Text style={{ fontSize: 7.5, color: C.faint, marginTop: 4 }}>{desc}</Text> : null}
     </View>
   );
 }
 
 // Vertical bar chart block (used for aging / volume distributions).
-// Hidden entirely when there is no data.
 function BarBlock({ title, data, color = C.brand, width = 320, height = 160, desc, half }) {
-  if (!data || data.length === 0) return null;
   const wrap = half ? S.chartHalf : S.block;
   const titleStyle = half ? S.chartHalfTitle : S.cardTitle;
   return (
     <View style={wrap} wrap={false}>
       <Text style={titleStyle}>{title}</Text>
-      <VBarChart data={data} width={width} height={height} color={color} />
+      {data && data.length > 0 ? (
+        <VBarChart data={data} width={width} height={height} color={color} />
+      ) : <EmptyNote />}
       {desc ? <Text style={{ fontSize: 7.5, color: C.faint, marginTop: 4 }}>{desc}</Text> : null}
     </View>
   );
 }
 
 // Line chart block (used for the Checkpoint cumulative-events-over-time trend).
-// Hidden entirely when there is no data.
 function LineBlock({ title, data, color = C.brand, width = 320, height = 160, labelKey = 'date', valueKey = 'value', desc, half }) {
-  if (!data || data.length === 0) return null;
   const wrap = half ? S.chartHalf : S.block;
   const titleStyle = half ? S.chartHalfTitle : S.cardTitle;
   return (
     <View style={wrap} wrap={false}>
       <Text style={titleStyle}>{title}</Text>
-      <VLineChart data={data} width={width} height={height} stroke={color} labelKey={labelKey} valueKey={valueKey} />
-      {desc ? <Text style={{ fontSize: 7.5, color: C.faint, marginTop: 4 }}>{desc}</Text> : null}
-    </View>
-  );
-}
-
-// Radar / spider block (multivariate posture view).
-// Hidden entirely when fewer than 3 axes are available.
-function RadarBlock({ title, axes, color = C.brand, size = 210, desc, half }) {
-  if (!axes || axes.length < 3) return null;
-  const wrap = half ? S.chartHalf : S.block;
-  const titleStyle = half ? S.chartHalfTitle : S.cardTitle;
-  return (
-    <View style={wrap} wrap={false}>
-      <Text style={titleStyle}>{title}</Text>
-      <View style={{ alignItems: 'center' }}>
-        <VRadar axes={axes} size={size} color={color} />
-      </View>
-      {desc ? <Text style={{ fontSize: 7.5, color: C.faint, marginTop: 4 }}>{desc}</Text> : null}
-    </View>
-  );
-}
-
-// Stacked composition-bar block (part-to-whole mix of one measure).
-// Hidden entirely when there are no segments.
-function StackedBlock({ title, segments, width = 320, desc, half }) {
-  if (!segments || segments.length === 0) return null;
-  const wrap = half ? S.chartHalf : S.block;
-  const titleStyle = half ? S.chartHalfTitle : S.cardTitle;
-  return (
-    <View style={wrap} wrap={false}>
-      <Text style={titleStyle}>{title}</Text>
-      <VStackedBar segments={segments} width={width} />
+      {data && data.length > 0 ? (
+        <VLineChart data={data} width={width} height={height} stroke={color} labelKey={labelKey} valueKey={valueKey} />
+      ) : <EmptyNote />}
       {desc ? <Text style={{ fontSize: 7.5, color: C.faint, marginTop: 4 }}>{desc}</Text> : null}
     </View>
   );
@@ -302,121 +217,53 @@ export function PageFooter({ orgName, generatedAt, sectionNumber }) {
   );
 }
 
-// Slim running header on every content page: brand rule, org name, the current
-// section label, and a confidential tag. Gives the document a consistent,
-// professional letterhead instead of starting each page straight into content.
-export function ContentHeader({ orgName, sectionLabel }) {
-  return (
-    <View style={S.contentHeader} fixed wrap={false}>
-      <View style={S.brandBar} />
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Text style={{ fontSize: 9, fontWeight: 700, color: C.ink }}>{orgName}</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          {sectionLabel ? <Text style={{ fontSize: 7.5, color: C.muted, marginRight: 10 }}>{sectionLabel}</Text> : null}
-          <View style={S.confidentialTag}>
-            <Text style={{ fontSize: 6.5, fontWeight: 700, color: '#fff', letterSpacing: 0.5 }}>CONFIDENTIAL</Text>
-          </View>
-        </View>
-      </View>
-    </View>
-  );
-}
-
 // Build a colour array for datasets that don't already carry a `fill`.
 const palette = (data) => (data || []).map((_, i) => COLORS[i % COLORS.length]);
 
-// Format an ISO date string as "20 August 2026".
-const fmtDate = (iso) => {
-  const d = new Date(iso);
-  if (isNaN(d)) return String(iso || '');
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
-};
-
 // ── Cover ─────────────────────────────────────────────────────────────────────
-// Recreated from the Techsec Global reference title page (white, yellow accent):
-// a confidential classification badge, the assessor/company header, a
-// "Security Assessment Report" title, an Assessment Details table, a
-// classification caveat, and a footer. The client name is dynamic (orgName).
-function CoverPage({ orgName, generatedAt }) {
-  const date = fmtDate(generatedAt);
-  // Stable, deterministic report id derived from the generated-at timestamp so
-  // the cover is reproducible across runs for the same report date.
-  const idNum = (new Date(generatedAt).getTime() % 1000000).toString().padStart(6, '0');
-  const reportId = `TGP-IR-2026-${idNum}`;
-  const rows = [
-    ['For', orgName || 'Client Organisation'],
-    ['Assessment Type', 'Security Posture Assessment'],
-    ['Report Date', date],
-    ['Version', '1.0'],
-    ['Assessment Period', `${date} (Reporting Period)`],
+export function CoverPage({ orgName, generatedAt }) {
+  const date = new Date(generatedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const index = [
+    ['1', 'Executive Summary'],
+    ['2', 'Checkpoint Harmony — Email & Cloud Security'],
+    ['3.1', 'SentinelOne — Threat Analytics'],
+    ['3.2', 'SentinelOne — Agent Analytics'],
+    ['3.3', 'SentinelOne — Most At-Risk Entities'],
+    ['3.4', 'SentinelOne — Application CVEs'],
+    ['3.5', 'SentinelOne — Application Insights'],
+    ['4', 'Zoho Desk — Support Tickets'],
+    ['5', 'Palo Alto Firewall — Network Security'],
+    ['6', 'Weekly Insights — 7-Day Comparison'],
   ];
   return (
-    <View style={{ backgroundColor: TC.bg, flex: 1, fontSize: 9 }}>
-      {/* Top yellow accent rule */}
-      <View style={{ height: 10, backgroundColor: TC.yellow }} />
-      <View style={{ paddingTop: 18, paddingBottom: 18, paddingLeft: 40, paddingRight: 40 }}>
-        {/* Header: company name + classification badge */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <View style={{ width: 26, height: 26, borderRadius: 5, backgroundColor: TC.yellow, marginRight: 10 }} />
-            <Text style={{ fontSize: 14, fontWeight: 800, color: TC.ink }}>Techsec Global Private Limited</Text>
-          </View>
-          <View style={[S.badge, { backgroundColor: TC.red, color: '#fff', fontSize: 7.5, fontWeight: 700, paddingVertical: 3, paddingHorizontal: 8, letterSpacing: 0.5 }]}>
-            <Text>CONFIDENTIAL</Text>
-          </View>
+    <View style={{ backgroundColor: '#1e1b4b', padding: 40, flex: 1, justifyContent: 'space-between' }}>
+      <View style={{ height: 4, backgroundColor: C.brand, width: 48 }} />
+      <View>
+        <Text style={{ fontSize: 12, color: '#a5b4fc', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 10 }}>CISO Dashboard</Text>
+        <Text style={{ fontSize: 30, fontWeight: 800, color: '#ffffff' }}>Security Report</Text>
+        <Text style={{ fontSize: 14, color: '#c7d2fe', marginTop: 6 }}>{orgName}</Text>
+        <Text style={{ fontSize: 11, color: '#818cf8', marginTop: 14 }}>{date}</Text>
+        <View style={{ backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 6, padding: '8px 12px', marginTop: 14, alignSelf: 'flex-start' }}>
+          <Text style={{ fontSize: 9, color: '#c7d2fe' }}>Confidential — For Management Use</Text>
         </View>
-        <View style={{ height: 2, backgroundColor: TC.line, marginTop: 14 }} />
       </View>
-
-      {/* Title block */}
-      <View style={{ paddingLeft: 40, paddingRight: 40, paddingTop: 8, paddingBottom: 8 }}>
-        <Text style={{ fontSize: 11, color: TC.muted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 6 }}>Techsec Global Private Limited</Text>
-        <Text style={{ fontSize: 26, fontWeight: 800, color: TC.ink }}>Security Assessment Report</Text>
-        <View style={{ height: 4, backgroundColor: TC.yellow, width: 64, marginTop: 12 }} />
-      </View>
-
-      {/* Assessment details table */}
-      <View style={{ paddingLeft: 40, paddingRight: 40, marginTop: 14 }}>
-        <View style={{ borderWidth: 1, borderColor: TC.line, borderRadius: 8, overflow: 'hidden' }}>
-          {rows.map(([k, v], i) => (
-            <View key={k} style={{ flexDirection: 'row', borderTopWidth: i === 0 ? 0 : 1, borderTopColor: TC.line, backgroundColor: i % 2 ? '#ffffff' : TC.panel }}>
-              <View style={{ width: 160, paddingVertical: 7, paddingHorizontal: 12, borderRightWidth: 1, borderRightColor: TC.line }}>
-                <Text style={{ fontSize: 8.5, fontWeight: 700, color: TC.sub, textTransform: 'uppercase', letterSpacing: 0.4 }}>{k}</Text>
-              </View>
-              <View style={{ flex: 1, paddingVertical: 7, paddingHorizontal: 12, justifyContent: 'center' }}>
-                <Text style={{ fontSize: 9.5, color: TC.ink }}>{v}</Text>
-              </View>
+      <View style={{ backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 10, padding: 20 }}>
+        <Text style={{ fontSize: 10, color: '#818cf8', fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Report Index</Text>
+        {index.map(([num, title]) => (
+          <View key={num} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+            <View style={{ width: 22, height: 22, borderRadius: 5, backgroundColor: C.brand, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+              <Text style={{ color: '#fff', fontSize: 10, fontWeight: 700 }}>{num}</Text>
             </View>
-          ))}
-        </View>
-      </View>
-
-      {/* Classification caveat */}
-      <View style={{ paddingLeft: 40, paddingRight: 40, marginTop: 16 }}>
-        <Text style={{ fontSize: 8.5, color: TC.muted, lineHeight: 1.5 }}>
-          This report is classified as <Text style={{ fontWeight: 700, color: TC.ink }}>CONFIDENTIAL</Text> and is intended solely for the
-          named client and authorised recipients. It contains security-sensitive information and must not be
-          distributed without the written permission of Techsec Global Private Limited.
-        </Text>
-      </View>
-
-      <View style={{ flex: 1 }} />
-
-      {/* Footer */}
-      <View style={{ paddingLeft: 40, paddingRight: 40, paddingBottom: 14 }}>
-        <View style={{ height: 1, backgroundColor: TC.line, marginBottom: 8 }} />
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text style={{ fontSize: 7.5, color: TC.muted }}>Techsec Global Private Limited</Text>
-          <Text style={{ fontSize: 7.5, color: TC.muted }}>{reportId}</Text>
-          <Text style={{ fontSize: 7.5, color: TC.muted }}>Page 1 of 1</Text>
-        </View>
+            <Text style={{ color: '#e0e7ff', fontSize: 10 }}>{title}</Text>
+          </View>
+        ))}
       </View>
     </View>
   );
 }
 
 // ── Executive Summary ─────────────────────────────────────────────────────────
-function ExecutiveSummary({ d, weekly }) {
+export function ExecutiveSummary({ d, weekly }) {
   const risk = buildFirewallSummary(d);
   const scoreStatus = getSecurityScoreStatus(risk.securityScore);
   const threats = Array.isArray(d.s1Threats) ? d.s1Threats : [];
@@ -458,47 +305,19 @@ function ExecutiveSummary({ d, weekly }) {
 
       <MttrGaugeCard cfgKey="overall" mttr={d.mttr} />
 
-      {/* Posture radar (multivariate overview) + score meters (severity mix). */}
-      <View style={S.row2}>
-        <RadarBlock
-          title="Security Posture Radar"
-          color={C.brand}
-          size={210}
-          half
-          axes={[
-            { label: 'Threats', value: Math.min(threats.length * 4, 100) },
-            { label: 'Mitigation', value: threats.length ? Math.round(mitigated / threats.length * 100) : 0 },
-            { label: 'CVEs', value: Math.min(cve.totalCves * 3, 100) },
-            { label: 'Tickets', value: Math.min(tickets.length * 3, 100) },
-            { label: 'Email', value: Math.min(events.length * 5, 100) },
-            { label: 'Firewall', value: Math.min((risk.highRiskEvents + risk.blockedConnections) * 2, 100) },
-          ]}
-        />
-        <View style={S.chartHalf} wrap={false}>
-          <Text style={S.chartHalfTitle}>Risk & Exposure Meters</Text>
-          <View style={{ marginTop: 4 }}>
-            <VScoreBar label="Mitigation Coverage" value={threats.length ? Math.round(mitigated / threats.length * 100) : 0} color={C.green} width={300} />
-            <VScoreBar label="Critical CVE Share" value={cve.totalCves ? Math.round((cve.severityMap.CRITICAL / cve.totalCves) * 100) : 0} color={C.red} width={300} sub={`${cve.severityMap.CRITICAL} of ${cve.totalCves} rated CRITICAL`} />
-            <VScoreBar label="Open Ticket Ratio" value={tickets.length ? Math.round((tickets.filter(t => t.status === 'Open').length / tickets.length) * 100) : 0} color={C.sky} width={300} />
-            <VScoreBar label="Firewall High-Risk Load" value={Math.min((risk.highRiskEvents + risk.blockedConnections) * 2, 100)} color={C.amber} width={300} />
-          </View>
-        </View>
+      <View style={S.block}>
+        <Text style={S.cardTitle}>Key Findings</Text>
+        <BulletList items={findings} />
       </View>
 
-      <View style={S.row2}>
-        <View style={S.chartHalf} wrap={false}>
-          <Text style={S.chartHalfTitle}>Key Findings</Text>
-          <BulletList items={findings} />
-        </View>
-        <View style={S.chartHalf} wrap={false}>
-          <Text style={S.chartHalfTitle}>Recommended Focus</Text>
-          <BulletList items={[
-            `Remediate the ${cve.severityMap.CRITICAL} critical-rated application vulnerabilities without delay.`,
-            `Investigate the ${unresolved} unresolved threats and complete pending mitigation actions.`,
-            tickets.filter(t => t.status === 'Open').length > 0 ? `Clear the currently open helpdesk backlog (${tickets.filter(t => t.status === 'Open').length} tickets).` : 'Maintain the current ticket state — no open backlog at period end.',
-            `Review firewall high-risk events and suspicious sources to confirm nothing was missed.`,
-          ]} />
-        </View>
+      <View style={S.block}>
+        <Text style={S.cardTitle}>Recommended Focus</Text>
+        <BulletList items={[
+          `Remediate the ${cve.severityMap.CRITICAL} critical-rated application vulnerabilities without delay.`,
+          `Investigate the ${unresolved} unresolved threats and complete pending mitigation actions.`,
+          tickets.filter(t => t.status === 'Open').length > 0 ? `Clear the currently open helpdesk backlog (${tickets.filter(t => t.status === 'Open').length} tickets).` : 'Maintain the current ticket state — no open backlog at period end.',
+          `Review firewall high-risk events and suspicious sources to confirm nothing was missed.`,
+        ]} />
       </View>
     </View>
   );
@@ -536,7 +355,7 @@ function formatDuration(minutes) {
   return h > 0 ? `${d}d ${h}h` : `${d}d`;
 }
 
-function CheckpointSection({ events, weekly, mttr }) {
+export function CheckpointSection({ events, weekly, mttr }) {
   const list = Array.isArray(events) ? events : [];
   const states = {};
   list.forEach(e => { const s = e.state || 'unknown'; states[s] = (states[s] || 0) + 1; });
@@ -657,7 +476,7 @@ function CheckpointSection({ events, weekly, mttr }) {
 }
 
 // ── SentinelOne Threat Analytics ──────────────────────────────────────────────
-function ThreatAnalytics({ threats, mttr }) {
+export function ThreatAnalytics({ threats, mttr }) {
   const t = buildThreatAnalytics(threats);
   return (
     <View>
@@ -678,7 +497,7 @@ function ThreatAnalytics({ threats, mttr }) {
       <View style={S.row4}>
         <HBarBlock title="Classification" data={t.classData} color={C.violet} width={220} half />
         <HBarBlock title="Detection Engines" data={t.engineData.slice(0, 8)} color={C.sky} width={220} half />
-          <HBarBlock title="MITRE ATTACK Tactics" data={t.tacticData.slice(0, 12)} color={C.slate} width={220} half />
+        <HBarBlock title="MITRE ATTACK Tactics" data={t.tacticData.slice(0, 8)} color={C.slate} width={220} half />
       </View>
       <View style={S.row4}>
         <DonutBlock title="Mitigation Status" data={t.mitigationData} colors={palette(t.mitigationData)} half />
@@ -693,7 +512,6 @@ function ThreatAnalytics({ threats, mttr }) {
       </View>
 
       {/* Threats by Site + by Group */}
-
       <View style={S.row2}>
         <HBarBlock title="Threats by Site" data={t.siteData} color="#10b981" half desc="Threats per site" />
         <HBarBlock title="Threats by Group" data={t.groupData} color="#ec4899" half desc="Threats per group" />
@@ -705,20 +523,12 @@ function ThreatAnalytics({ threats, mttr }) {
         <DonutBlock title="Fileless vs File-based" data={t.filelessData} colors={t.filelessData.map(d => d.fill || C.slate)} half />
         <DonutBlock title="Mitigation Outcomes" data={t.mitigationData} colors={palette(t.mitigationData)} half />
       </View>
-
-      {/* Classification mix as a single part-to-whole composition bar. */}
-      <StackedBlock
-        title="Threat Classification Mix"
-        width={680}
-        segments={(t.classData || []).map((d, i) => ({ label: d.name, value: d.value, fill: COLORS[i % COLORS.length] }))}
-        desc="Share of each threat classification across the full endpoint fleet"
-      />
     </View>
   );
 }
 
 // ── SentinelOne Agent Analytics ───────────────────────────────────────────────
-function AgentAnalytics({ agents, generatedAt, removed }) {
+export function AgentAnalytics({ agents, generatedAt, removed }) {
   const a = buildAgentAnalytics(agents, generatedAt);
   return (
     <View>
@@ -735,47 +545,20 @@ function AgentAnalytics({ agents, generatedAt, removed }) {
         <KpiTile label="Health Score" value={`${a.kpis.health}%`} color="#06b6d4" sub="active/total" />
       </View>
       <View style={S.row2}>
-        <DonutSide title="Operating System Distribution" data={a.osDistribution} colors={a.osDistribution.map(d => d.fill)} donutSize={110} half />
-        <DonutSide title="Active Status" data={a.activeStatusDistribution} colors={a.activeStatusDistribution.map(d => d.fill)} donutSize={110} half />
-        <DonutSide title="Firewall Status" data={a.firewallStatusDistribution} colors={a.firewallStatusDistribution.map(d => d.fill)} donutSize={110} half />
+        <DonutBlock title="Operating System Distribution" data={a.osDistribution} colors={a.osDistribution.map(d => d.fill)} half />
+        <DonutBlock title="Active Status" data={a.activeStatusDistribution} colors={a.activeStatusDistribution.map(d => d.fill)} half />
+        <DonutBlock title="Firewall Status" data={a.firewallStatusDistribution} colors={a.firewallStatusDistribution.map(d => d.fill)} half />
       </View>
 
       <View style={S.row4}>
-        <DonutSide title="Agent Version" data={a.agentVersionStatus} colors={a.agentVersionStatus.map(d => d.fill)} donutSize={92} half />
-        <DonutSide title="Site Distribution" data={a.siteDistribution} colors={a.siteDistribution.map(d => d.fill)} donutSize={92} half />
-        <DonutSide title="Network Status" data={a.networkStatusDistribution} colors={a.networkStatusDistribution.map(d => d.fill)} donutSize={92} half />
-        <DonutSide title="Scan Status" data={a.scanStatusDistribution} colors={a.scanStatusDistribution.map(d => d.fill)} donutSize={92} half />
+        <DonutBlock title="Agent Version" data={a.agentVersionStatus} colors={a.agentVersionStatus.map(d => d.fill)} half />
+        <DonutBlock title="Site Distribution" data={a.siteDistribution} colors={a.siteDistribution.map(d => d.fill)} half />
+        <DonutBlock title="Network Status" data={a.networkStatusDistribution} colors={a.networkStatusDistribution.map(d => d.fill)} half />
+        <DonutBlock title="Scan Status" data={a.scanStatusDistribution} colors={a.scanStatusDistribution.map(d => d.fill)} half />
       </View>
 
       <View style={S.row2}>
         <HBarBlock title="Machine Types" data={a.machineTypeData} color={C.sky} half />
-        <RadarBlock
-          title="Agent Health Radar"
-          color="#0ea5e9"
-          size={200}
-          half
-          axes={[
-            { label: 'Health', value: a.kpis.health || 0 },
-            { label: 'Connectivity', value: a.total ? Math.round(a.connected / a.total * 100) : 0 },
-            { label: 'Threat-Free', value: a.kpis.total ? Math.round((a.kpis.total - a.kpis.threats) / a.kpis.total * 100) : 0 },
-            { label: 'Up-to-date', value: a.kpis.total ? Math.round((a.kpis.total - a.kpis.outdated) / a.kpis.total * 100) : 0 },
-            { label: 'Active', value: a.kpis.total ? Math.round(a.kpis.active / a.kpis.total * 100) : 0 },
-            { label: 'New (30d)', value: Math.min(a.newAgents * 5, 100) },
-          ]}
-        />
-      </View>
-
-      <View style={S.block}>
-        <StackedBlock
-          title="Agent Status Composition"
-          width={680}
-          segments={[
-            { label: 'Active', value: a.kpis.active, fill: '#10b981' },
-            { label: 'Inactive', value: a.kpis.inactive, fill: '#ef4444' },
-            { label: 'Threats', value: a.kpis.threats, fill: '#f59e0b' },
-            { label: 'Outdated', value: a.kpis.outdated, fill: '#8b5cf6' },
-          ]}
-        />
       </View>
 
     </View>
@@ -783,7 +566,7 @@ function AgentAnalytics({ agents, generatedAt, removed }) {
 }
 
 // ── SentinelOne Most At-Risk ─────────────────────────────────────────────────
-function AtRiskSection({ threats }) {
+export function AtRiskSection({ threats }) {
   const a = buildAtRisk(threats);
   const cards = [
     ['Most At-Risk Device', a.topDevice, '#dc2626'],
@@ -814,7 +597,7 @@ function AtRiskSection({ threats }) {
 }
 
 // ── SentinelOne Application CVEs ──────────────────────────────────────────────
-function CveSection({ cves }) {
+export function CveSection({ cves }) {
   const d = buildCveData(Array.isArray(cves) ? cves : []);
   if (d.totalApplications === 0) return (
     <View><SectionDivider number="3.4" title="SentinelOne — Application CVEs" color="#7c3aed" /><Text style={{ color: C.muted }}>No CVE data available.</Text></View>
@@ -830,7 +613,7 @@ function CveSection({ cves }) {
       <View style={S.kpiRow} wrap={false}>
         <KpiTile label="Applications" value={formatNumber(d.totalApplications)} color={C.violet} />
         <KpiTile label="Total CVEs" value={formatNumber(d.totalCves)} color={C.brand} />
-        {/* <KpiTile label="Critical" value={formatNumber(d.severityMap.CRITICAL)} color={C.red} /> */}
+        <KpiTile label="Critical" value={formatNumber(d.severityMap.CRITICAL)} color={C.red} />
         <KpiTile label="High" value={formatNumber(d.severityMap.HIGH)} color={C.amber} />
         <KpiTile label="Endpoints" value={formatNumber(d.totalEndpoints)} color={C.sky} />
         <KpiTile label="Avg Score" value={d.avgScore} color={C.slate} />
@@ -851,14 +634,12 @@ function CveSection({ cves }) {
         )}
       </View>
 
-
     </View>
-
   );
 }
 
 // ── SentinelOne Application Insights ──────────────────────────────────────────
-function AppInsightsSection({ apps }) {
+export function AppInsightsSection({ apps }) {
   const list = Array.isArray(apps) ? apps : [];
   if (list.length === 0) return <Text style={{ color: C.muted }}>No application inventory data available.</Text>;
   const names = new Set(list.map(a => a.applicationName || a.name || a.appName || 'Unknown'));
@@ -891,15 +672,15 @@ function AppInsightsSection({ apps }) {
 }
 
 // ── Zoho Desk ─────────────────────────────────────────────────────────────────
-function ZohoSection({ tickets, mttr }) {
+export function ZohoSection({ tickets, mttr }) {
   const z = buildZohoSummary(tickets);
   const counts = buildZohoTicketCounts(tickets);
   const funnel = buildZohoFunnel(tickets);
   const heatmap = buildZohoHeatmap(tickets);
   const volcano = buildZohoVolcano(tickets);
   const topPerf = buildZohoTopPerformance(tickets);
-  const mttrCard = buildZohoMttr(tickets);
   const corp = buildZohoCorpMembers(tickets);
+  const mttrCard = buildZohoMttr(tickets);
   const isIncrease = counts.closedDifference > 0;
   const isDecrease = counts.closedDifference < 0;
 
@@ -933,37 +714,22 @@ function ZohoSection({ tickets, mttr }) {
         <DonutBlock title="By Priority" data={z.priorityData} half />
       </View>
 
-      {/* Ticket Status Funnel — hidden entirely when there are no tickets. */}
-      {tickets.length > 0 ? (
-        <View style={S.block}>
-          <Text style={S.chartHalfTitle}>Ticket Status Funnel</Text>
-          <VFunnel stages={funnel.stages} counts={funnel.counts} max={funnel.max} colors={funnel.colors} />
-        </View>
-      ) : null}
-
-      {/* Corporation Assignee Distribution (circle pack) */}
-      {/* <View style={S.block}>
-        <Text style={S.chartHalfTitle}>Corporation Assignee Distribution</Text>
-        <VCorpMember corps={corp.corps} size={220} />
-      </View> */}
+      {/* Ticket Status Funnel */}
+     
 
       {/* Ticket Creation Heatmap + Hour-bucket resolution graph */}
       <View style={S.row2}>
-        {tickets.length > 0 ? (
-          <View style={S.chartHalf}>
-            <Text style={S.chartHalfTitle}>Ticket Creation Heatmap</Text>
-            <VHeatmap matrix={heatmap.matrix} max={heatmap.max} dayNames={heatmap.DAY_NAMES} />
+        <View style={S.chartHalf}>
+          <Text style={S.chartHalfTitle}>Ticket Creation Heatmap</Text>
+          <VHeatmap matrix={heatmap.matrix} max={heatmap.max} dayNames={heatmap.DAY_NAMES} />
+        </View>
+        <View style={S.chartHalf}>
+          <Text style={S.chartHalfTitle}>Ticket Hour Bucket Graph</Text>
+          <View style={{ alignItems: 'center', marginTop: 6 }}>
+            <VVolcano buckets={volcano.buckets} max={volcano.max} height={160} width={300} />
+            <Text style={{ fontSize: 7.5, color: C.faint, marginTop: 2 }}>{volcano.total} tickets resolved</Text>
           </View>
-        ) : null}
-        {volcano.total > 0 ? (
-          <View style={S.chartHalf}>
-            <Text style={S.chartHalfTitle}>Ticket Hour Bucket Graph</Text>
-            <View style={{ alignItems: 'center', marginTop: 6 }}>
-              <VVolcano buckets={volcano.buckets} max={volcano.max} height={160} width={300} />
-              <Text style={{ fontSize: 7.5, color: C.faint, marginTop: 2 }}>{volcano.total} tickets resolved</Text>
-            </View>
-          </View>
-        ) : null}
+        </View>
       </View>
 
       <View style={S.row2}>
@@ -975,20 +741,24 @@ function ZohoSection({ tickets, mttr }) {
 
       <View style={S.row2}>
         <HBarBlock title="Tickets by Department" data={z.departmentData} color={C.violet} half />
-        {/* Top Lowest 5 Performance — hidden when no engineer performance data. */}
-        {topPerf.rows.length > 0 ? (
-          <View style={S.chartHalf}>
-            <Text style={S.chartHalfTitle}>Top Lowest 5 Performance</Text>
-            <Text style={{ fontSize: 7, color: C.faint, marginBottom: 4 }}>Engineer-wise total time from created to closed</Text>
-            <VTopTable rows={topPerf.rows} headers={['Engineer Name', 'Closed', 'Score', 'Hours']} />
-          </View>
-        ) : null}
+        {/* Top Lowest 5 Performance */}
+        <View style={S.chartHalf}>
+          <Text style={S.chartHalfTitle}>Top Lowest 5 Performance</Text>
+          <Text style={{ fontSize: 7, color: C.faint, marginBottom: 4 }}>Engineer-wise total time from created to closed</Text>
+          <VTopTable rows={topPerf.rows} headers={['Engineer Name', 'Closed', 'Score', 'Hours']} />
+        </View>
       </View>
 
       <View style={S.row2}>
+        {/* <View style={S.chartHalf}>
+          <Text style={S.chartHalfTitle}>Corporation Assignee Distribution</Text>
+          <View style={{ alignItems: 'center', marginTop: 6 }}>
+            <VCorpMember data={corp.data} size={240} />
+          </View>
+        </View> */}
         <View style={S.chartHalf}>
-          <MttrGaugeCard cfgKey="ticketing" mttr={mttr} />
-        </View>
+        <MttrGaugeCard cfgKey="ticketing" mttr={mttr} />
+      </View>
         <View style={S.chartHalf}>
           <Text style={S.chartHalfTitle}>MTTR Score</Text>
           <View style={{ alignItems: 'center', marginTop: 6 }}>
@@ -997,49 +767,18 @@ function ZohoSection({ tickets, mttr }) {
         </View>
       </View>
 
-
+      
     </View>
   );
 }
 
 // ── Palo Alto Firewall ────────────────────────────────────────────────────────
-// Local re-derivation of "Top Denied Destinations".
-//
-// buildFirewallSummary() (in dataUtils.js) calls makeTopChartData() with a
-// value-column list that is missing `nbytes`/`bytes`. The firewall's
-// top-denied-destinations report stores its per-destination volume in those
-// columns, so the summary came back EMPTY even though the live dashboard (which
-// uses the fuller column list) shows the data. We recompute here from the raw
-// `deniedDestTable.rows` that buildFirewallSummary already exposes, using the
-// SAME value columns the dashboard's makeTopChartData uses, and only fall back
-// to the (possibly empty) summary value when this produces nothing.
-function buildDeniedDest(rows) {
-  if (!Array.isArray(rows) || rows.length === 0) return [];
-  const valCols = ['count', 'nrepeat', 'nsess', 'sessions', 'threats', 'nbytes', 'bytes'];
-  const map = new Map();
-  rows.forEach((row) => {
-    const name = String(row?.dst ?? row?.destination ?? row?.destination_ip ?? row?.name ?? '').trim();
-    if (!name || name === '-') return;
-    const raw = valCols.map((c) => row?.[c]).find((v) => v !== undefined && v !== null && v !== '');
-    const n = raw !== undefined ? (Number(String(raw).replace(/[^\d.-]/g, '')) || 1) : 1;
-    map.set(name, (map.get(name) || 0) + (n > 0 ? n : 1));
-  });
-  return Array.from(map.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 8)
-    .map(([name, value]) => ({ name: name.length > 30 ? name.slice(0, 30) + '…' : name, value }));
-}
-
-function FirewallSection({ fw }) {
+export function FirewallSection({ fw }) {
   const f = fw;
   const scoreStatus = getSecurityScoreStatus(f.securityScore);
   // Risk Distribution donut uses the same severity palette as the dashboard
   // (RISK_COLORS keyed by risk level 5→1, plus '-' for unknown).
   const riskDist = (f.riskDistribution || []).map(d => ({ ...d, fill: RISK_COLORS[String(d.risk)] || '#94a3b8' }));
-  // Prefer the freshly-derived chart; fall back to the summary value.
-  const deniedDest = (f.topDeniedDestinations && f.topDeniedDestinations.length > 0)
-    ? f.topDeniedDestinations
-    : buildDeniedDest(f.deniedDestTable?.rows);
   return (
     <View>
       <SectionDivider number="5" title="Palo Alto Firewall — Network Security" color="#ea580c" />
@@ -1059,12 +798,12 @@ function FirewallSection({ fw }) {
 
       <View style={S.row2}>
         <DonutBlock title="Risk Distribution" data={riskDist} half />
-        {f.riskTrend.length > 0 ? (
-          <View style={S.chartHalf} wrap={false}>
-            <Text style={S.chartHalfTitle}>Risk / Session Trend</Text>
+        <View style={S.chartHalf} wrap={false}>
+          <Text style={S.chartHalfTitle}>Risk / Session Trend</Text>
+          {f.riskTrend.length > 0 ? (
             <VLineChart data={f.riskTrend} width={320} height={150} labelKey="date" valueKey="sessions" stroke={C.red} />
-          </View>
-        ) : null}
+          ) : <EmptyNote />}
+        </View>
       </View>
 
       <View style={S.row2}>
@@ -1073,7 +812,7 @@ function FirewallSection({ fw }) {
       </View>
 
       <View style={S.row2}>
-        <HBarBlock title="Top Denied Destinations" data={deniedDest} color="#ef4444" half />
+        <HBarBlock title="Top Denied Destinations" data={f.topDeniedDestinations} color="#ef4444" half />
         <HBarBlock title="Top Connections" data={f.topConnections} color="#10b981" half />
       </View>
     </View>
@@ -1081,7 +820,7 @@ function FirewallSection({ fw }) {
 }
 
 // ── Weekly Insights ───────────────────────────────────────────────────────────
-function WeeklyInsights({ weekly }) {
+export function WeeklyInsights({ weekly }) {
   return (
     <View>
       <SectionDivider number="6" title="Weekly Insights — 7-Day Comparison" color="#7c3aed" />
@@ -1120,68 +859,59 @@ export default function
       creator="CISO Dashboard"
       producer="CISO Dashboard"
     >
-      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+      <Page size="A3" orientation="landscape" style={S.page} wrap>
+        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} />
         <CoverPage orgName={data.orgName} generatedAt={data.generatedAt} />
       </Page>
 
       <Page size="A3" orientation="landscape" style={S.page} wrap>
         <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="1" />
-        <ContentHeader orgName={data.orgName} sectionLabel="1 · Executive Summary" />
         <ExecutiveSummary d={data} weekly={weekly} />
       </Page>
 
       <Page size="A3" orientation="landscape" style={S.page} wrap>
         {/* <CoverPage orgName={data.orgName} generatedAt={data.generatedAt} /> */}
         <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="2" />
-        <ContentHeader orgName={data.orgName} sectionLabel="2 · Checkpoint Harmony" />
         <CheckpointSection events={data.harmonyEvents} weekly={weekly} mttr={data.mttr} />
       </Page>
 
       <Page size="A3" orientation="landscape" style={S.page} wrap>
-        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3.1" />
-        <ContentHeader orgName={data.orgName} sectionLabel="3.1 · SentinelOne Threats" />
+        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3" />
         <ThreatAnalytics threats={data.s1Threats} mttr={data.mttr} />
       </Page>
 
       <Page size="A3" orientation="landscape" style={S.page} wrap>
-        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3.2" />
-        <ContentHeader orgName={data.orgName} sectionLabel="3.2 · SentinelOne Agents" />
+        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="4" />
         <AgentAnalytics agents={data.s1Agents} generatedAt={data.generatedAt} removed={data.removedAgentsCount} />
       </Page>
 
       <Page size="A3" orientation="landscape" style={S.page} wrap>
-        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3.3" />
-        <ContentHeader orgName={data.orgName} sectionLabel="3.3 · Most At-Risk" />
+        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="5" />
         <AtRiskSection threats={data.s1Threats} />
       </Page>
 
       <Page size="A3" orientation="landscape" style={S.page} wrap>
-        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3.4" />
-        <ContentHeader orgName={data.orgName} sectionLabel="3.4 · Application CVEs" />
+        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="6" />
         <CveSection cves={data.s1Cves} />
       </Page>
 
       <Page size="A3" orientation="landscape" style={S.page} wrap>
-        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3.5" />
-        <ContentHeader orgName={data.orgName} sectionLabel="3.5 · Application Insights" />
+        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="7" />
         <AppInsightsSection apps={data.s1AppAgent} />
       </Page>
 
       <Page size="A3" orientation="landscape" style={S.page} wrap>
-        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="4" />
-        <ContentHeader orgName={data.orgName} sectionLabel="4 · Zoho Desk" />
+        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="8" />
         <ZohoSection tickets={data.zohoTickets} mttr={data.mttr} />
       </Page>
 
       <Page size="A3" orientation="landscape" style={S.page} wrap>
-        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="5" />
-        <ContentHeader orgName={data.orgName} sectionLabel="5 · Palo Alto Firewall" />
+        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="9" />
         <FirewallSection fw={fw} />
       </Page>
 
       <Page size="A3" orientation="landscape" style={S.page} wrap>
-        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="6" />
-        <ContentHeader orgName={data.orgName} sectionLabel="6 · Weekly Insights" />
+        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="10" />
         <WeeklyInsights weekly={weekly} d={data} />
       </Page>
     </Document>

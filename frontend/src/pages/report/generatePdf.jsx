@@ -48,3 +48,40 @@ export async function generatePdfFromElement(data, filename) {
 export async function generatePdfFromData(data, filename) {
   return generatePdfFromElement(data, filename);
 }
+
+/**
+ * Server-side PDF generation.
+ *
+ * POSTs the report `data` to the backend (POST /api/reports/generate), which
+ * renders the PDF on the server, stores it in:
+ *    backend/reportList/<orgSlug>/<username>_<orgSlug>_YYYY-MM-DD_HH-MM-SS.pdf
+ * AND records a row in the per-org `reports` table, then streams the PDF back
+ * as a blob. The browser then downloads it under the server-chosen filename.
+ */
+export async function generatePdfOnServer(data, orgName) {
+  const api = (await import('../../api')).default;
+  const res = await api.post(
+    '/reports/generate',
+    { data, orgName },
+    { responseType: 'blob' }
+  );
+
+  // Filename comes from the Content-Disposition header the server sets.
+  const cd = res.headers['content-disposition'] || '';
+  let fileName = `security_report_${Date.now()}.pdf`;
+  const m = cd.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
+  if (m) fileName = decodeURIComponent(m[1] || m[2] || fileName).trim();
+
+  const blob = new Blob([res.data], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+
+  console.log(`[PDF] ✓ Generated & saved server-side as ${fileName} (${blob.size} bytes)`);
+  return { success: true, fileName, size: blob.size };
+}

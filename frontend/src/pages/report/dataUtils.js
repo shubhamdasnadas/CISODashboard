@@ -483,13 +483,41 @@ export function buildThreatAnalytics(threats) {
     .slice(0, 10)
     .map(d => ({ ...d, name: d.name.includes('|') ? d.name.split('|')[0] : d.name }));
 
-  const tacticData = byCount(x => (x.indicators || []).map(i => (i.tactics || []).map(tc => tc.name).join('|')).join('|'))
+  // Per-tactic counts. Each threat contributes once to each DISTINCT tactic it
+  // exhibits (a tactic can appear under multiple indicators, so dedupe first).
+  const tacticCounts = {};
+  t.forEach(x => {
+    const seen = new Set();
+    (x.indicators || []).forEach(ind => {
+      (ind.tactics || []).forEach(tc => {
+        const name = tc.name || tc.id || 'Unknown';
+        if (!seen.has(name)) { seen.add(name); tacticCounts[name] = (tacticCounts[name] || 0) + 1; }
+      });
+    });
+  });
+  const tacticData = Object.entries(tacticCounts)
+    .sort((a, b) => b[1] - a[1])
     .slice(0, 12)
-    .map(d => ({ ...d, name: d.name.includes('|') ? d.name.split('|')[0] : d.name }));
+    .map(([name, value]) => ({ name: name.length > 28 ? name.slice(0, 28) + '…' : name, value }));
 
-  const siteData = byCount(x => x.agentRealtimeInfo?.siteName || 'Unknown')
+  const siteData = byCount(x => x.agentRealtimeInfo?.siteName || x.siteName || x.agentDetectionInfo?.siteName || 'Unknown')
     .slice(0, 10)
     .map(d => ({ ...d, name: d.name.length > 22 ? d.name.slice(0, 22) + '…' : d.name }));
+
+  // Per-process-user threat counts (top users). Mirrors the dashboard's
+  // topUsersData — falls back across the field names SentinelOne uses in
+  // different payload shapes so real data always resolves.
+  const topUsersData = byCount(x =>
+    x.threatInfo?.initiatingUsername ||
+    x.threatInfo?.processUser ||
+    x.agentDetectionInfo?.agentLastLoggedInUserName ||
+    'Unknown'
+  ).slice(0, 10).map(d => ({ ...d, name: d.name.length > 24 ? d.name.slice(0, 24) + '…' : d.name }));
+
+  // Per-group threat counts. Mirrors the dashboard's byGroupData.
+  const groupData = byCount(x =>
+    x.agentRealtimeInfo?.groupName || x.group_name || x.agentDetectionInfo?.groupName || 'Unknown'
+  ).slice(0, 10).map(d => ({ ...d, name: d.name.length > 24 ? d.name.slice(0, 24) + '…' : d.name }));
 
   const mitigated = t.filter(x => x.threatInfo?.mitigationStatus === 'mitigated').length;
   const mitigatedAll = t.filter(x => ['mitigated', 'mitigated_preemptively'].includes(x.threatInfo?.mitigationStatus)).length;
@@ -525,6 +553,7 @@ export function buildThreatAnalytics(threats) {
 
   return {
     mitigationData, classData, incidentStatusData, confidenceData, engineData, tacticData, siteData,
+    topUsersData, groupData,
     mitigated, mitigatedAll, unresolved, notMitigatedCount, benignCount, affectedEndpoints,
     filelessData, avgMttd, avgMttm,
     mitPct: t.length > 0 ? Math.round(mitigated / t.length * 100) : 0,
@@ -534,7 +563,7 @@ export function buildThreatAnalytics(threats) {
 export function buildAgentAnalytics(agents, generatedAt) {
   const list = Array.isArray(agents) ? agents : [];
   const cutoff = (() => {
-    const c = new Date(generatedAt);
+    const c = new Date(generatedAt || Date.now());
     c.setDate(c.getDate() - 30);
     return c;
   })();
@@ -543,21 +572,70 @@ export function buildAgentAnalytics(agents, generatedAt) {
     return d && new Date(d) >= cutoff;
   }).length;
 
-  const byCount = (fn) => {
+  const byCount = (fn, withFill = false) => {
     const counts = {};
     list.forEach(a => { const k = fn(a); counts[k] = (counts[k] || 0) + 1; });
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value }));
+    const arr = Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, value]) => ({ name, value }));
+    if (withFill) arr.forEach((d, i) => { d.fill = COLORS[i % COLORS.length]; });
+    return arr;
   };
+
+  const healthy = list.filter(a => /healthy/i.test(String(a.health_status || a.healthStatus || ''))).length;
+  const active = list.filter(a => /active|connected/i.test(String(a.network_status || a.networkStatus || ''))).length;
+  const inactive = list.length - active;
+  const outdated = list.filter(a => !/up.?to.?date|current|latest/i.test(String(a.agent_version_status || a.agentVersionStatus || ''))).length;
+
+  // threats count is not in agent records; keep 0 unless provided.
+  const threats = 0;
 
   const statusData = byCount(a => String(a.network_status || a.networkStatus || 'unknown'));
   const osData = byCount(a => a.os_type || a.osType || a.os || 'Unknown');
-  const machineTypeData = byCount(a => a.machineType || a.machine_type || 'Unknown')
-    .map((d, i) => ({ ...d, fill: COLORS[i % COLORS.length] }));
+  const machineTypeData = byCount(a => a.machineType || a.machine_type || 'Unknown', true);
 
   const connected = list.filter(a => String(a.network_status || a.networkStatus || '').toLowerCase() === 'connected').length;
   const disconnected = list.filter(a => String(a.network_status || a.networkStatus || '').toLowerCase() === 'disconnected').length;
 
-  return { total: list.length, newAgents, statusData, osData, machineTypeData, connected, disconnected };
+  const healthPct = list.length ? Math.round((healthy / list.length) * 100) : 0;
+
+  const activeStatusDistribution = byCount(a => String(a.network_status || a.networkStatus || 'active').toLowerCase() === 'connected' ? 'Active' : 'Inactive', true);
+  // ensure both slices exist for the donut
+  if (activeStatusDistribution.length === 0) {
+    activeStatusDistribution.push({ name: 'Active', value: active, fill: '#10b981' });
+    activeStatusDistribution.push({ name: 'Inactive', value: inactive, fill: '#ef4444' });
+  } else {
+    activeStatusDistribution.forEach(d => { d.fill = d.name === 'Active' ? '#10b981' : '#ef4444'; });
+  }
+
+  const firewallStatusDistribution = byCount(a => String(a.firewall_status || a.firewallStatus || 'unknown'), true);
+  const agentVersionStatus = byCount(a => String(a.agent_version_status || a.agentVersionStatus || 'unknown'), true);
+  const siteDistribution = byCount(a => a.site_name || a.siteName || a.site || 'Unknown', true);
+  const networkStatusDistribution = byCount(a => String(a.network_status || a.networkStatus || 'unknown'), true);
+  const scanStatusDistribution = byCount(a => String(a.scan_status || a.scanStatus || 'unknown'), true);
+
+  return {
+    total: list.length,
+    newAgents,
+    connected,
+    disconnected,
+    osDistribution: osData.map((d, i) => ({ ...d, fill: COLORS[i % COLORS.length] })),
+    activeStatusDistribution,
+    firewallStatusDistribution,
+    agentVersionStatus,
+    siteDistribution,
+    networkStatusDistribution,
+    scanStatusDistribution,
+    machineTypeData,
+    kpis: {
+      total: list.length,
+      active,
+      inactive,
+      health: healthPct,
+      threats,
+      outdated,
+    },
+  };
 }
 
 export function buildAtRisk(threats) {
@@ -618,6 +696,161 @@ export function buildZohoSummary(tickets) {
   })();
 
   return { total: list.length, open, closed, highPri, overdue, statusData, priorityData, departmentData, agingData, engineerPerformance };
+}
+
+// Status-count summary cards shown above the Zoho section.
+// Returns { cards, currentMonthClosed, closedDifference, closedPercentage }.
+export function buildZohoTicketCounts(tickets) {
+  const list = Array.isArray(tickets) ? tickets : [];
+  const counts = {};
+  list.forEach(t => { const s = (t.status || 'Unknown'); counts[s] = (counts[s] || 0) + 1; });
+
+  const cards = [
+    { label: 'Open', value: counts.Open || 0, color: ZOHO_STATUS_COLORS.Open || '#3b82f6' },
+    { label: 'In Progress', value: counts['In Progress'] || 0, color: ZOHO_STATUS_COLORS['In Progress'] || '#8b5cf6' },
+    { label: 'On Hold', value: counts['On Hold'] || 0, color: ZOHO_STATUS_COLORS['On Hold'] || '#f59e0b' },
+    { label: 'Escalated', value: counts.Escalated || 0, color: ZOHO_STATUS_COLORS.Escalated || '#ef4444' },
+    { label: 'Closed', value: list.filter(t => isClosedTicket(t)).length, color: ZOHO_STATUS_COLORS.Closed || '#22c55e' },
+  ];
+
+  const now = new Date();
+  const inMonth = (t) => {
+    const ts = parseTs(t?.created_at || t?.createdTime || t?.createdAt || t?.closed_time || t?.closedTime || t?.closedAt);
+    if (!ts) return false;
+    return ts.getFullYear() === now.getFullYear() && ts.getMonth() === now.getMonth();
+  };
+  const currentMonthClosed = list.filter(t => isClosedTicket(t) && inMonth(t)).length;
+  const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const prevEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+  const lastMonthClosed = list.filter(t => {
+    const ts = parseTs(t?.created_at || t?.createdTime || t?.createdAt || t?.closed_time || t?.closedTime || t?.closedAt);
+    return ts && isClosedTicket(t) && ts >= prevStart && ts <= prevEnd;
+  }).length;
+
+  const closedDifference = currentMonthClosed - lastMonthClosed;
+  const closedPercentage = lastMonthClosed > 0 ? (closedDifference / lastMonthClosed) * 100 : (currentMonthClosed > 0 ? 100 : 0);
+
+  return { cards, currentMonthClosed, closedDifference, closedPercentage };
+}
+
+// Ticket status funnel (Open → In Progress → On Hold → Escalated → Closed).
+export function buildZohoFunnel(tickets) {
+  const list = Array.isArray(tickets) ? tickets : [];
+  // Match the dashboard FunnelDiagram status order/colours.
+  const stages = [
+    'Open', 'Re-Open', 'Acknowledge', 'WIP', 'On Hold', 'On Hold by Customer',
+    'Revert Awaited - Customer', 'Revert Awaited - OEM', 'Revert Awaited - Vendor',
+    'Escalated', 'Technically Closed', 'Duplicate', 'Closed',
+  ];
+  const colors = [
+    '#F6D365', '#F4A460', '#C8A2C8', '#B0C4DE', '#9B7FC7', '#8470A8',
+    '#6B8E6B', '#4CAF50', '#3E9C42', '#2E7D32', '#E57373', '#880E4F', '#D32F2F',
+  ];
+  const counts = {};
+  stages.forEach(s => counts[s] = 0);
+  list.forEach(t => {
+    const raw = String(t?.status || '').trim().toLowerCase();
+    const matched = stages.find(s => s.toLowerCase() === raw);
+    if (matched) counts[matched]++;
+  });
+  const max = Math.max(1, ...stages.map(s => counts[s]));
+  return { stages, counts, colors, max };
+}
+
+// 7-day x 24-hour creation heatmap.
+export function buildZohoHeatmap(tickets) {
+  const list = Array.isArray(tickets) ? tickets : [];
+  const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const matrix = DAY_NAMES.map(() => new Array(24).fill(0));
+  let max = 1;
+  list.forEach(t => {
+    const ts = parseTs(t?.created_at || t?.createdTime || t?.createdAt);
+    if (!ts) return;
+    const d = ts.getDay();
+    const h = ts.getHours();
+    matrix[d][h] += 1;
+    if (matrix[d][h] > max) max = matrix[d][h];
+  });
+  return { matrix, max, DAY_NAMES };
+}
+
+// "Volcano" hour-bucket resolution graph (tickets resolved per hour bucket).
+export function buildZohoVolcano(tickets) {
+  const list = Array.isArray(tickets) ? tickets : [];
+  const buckets = Array.from({ length: 24 }, (_, h) => ({ hour: h, value: 0 }));
+  let max = 1;
+  let total = 0;
+  list.forEach(t => {
+    if (!isClosedTicket(t)) return;
+    const ts = parseTs(t?.resolved_time || t?.resolvedTime || t?.closed_time || t?.closedTime || t?.closedAt);
+    if (!ts) return;
+    const h = ts.getHours();
+    buckets[h].value += 1;
+    total += 1;
+    if (buckets[h].value > max) max = buckets[h].value;
+  });
+  return { buckets, max, total };
+}
+
+// Top 5 engineers by total time-from-created-to-closed (lowest 5 performance).
+export function buildZohoTopPerformance(tickets) {
+  const list = Array.isArray(tickets) ? tickets : [];
+  const grouped = {};
+  list.forEach(t => {
+    const eng = getAssigneeName(t);
+    if (eng === 'Unassigned') return;
+    const created = parseTs(t?.created_at || t?.createdTime || t?.createdAt);
+    const closed = parseTs(t?.resolved_time || t?.resolvedTime || t?.closed_time || t?.closedTime || t?.closedAt);
+    if (!created || !closed) return;
+    const hours = Math.max(0, (closed - created) / (1000 * 60 * 60));
+    if (!grouped[eng]) grouped[eng] = { engineer: eng, closed: 0, totalHours: 0 };
+    grouped[eng].closed += 1;
+    grouped[eng].totalHours += hours;
+  });
+  const rows = Object.values(grouped).map(g => ({
+    engineer: g.engineer,
+    closed: g.closed,
+    score: g.closed > 0 ? Math.max(0, 100 - Math.round(g.totalHours / Math.max(1, g.closed))) : 0,
+    hours: Math.round(g.totalHours * 10) / 10,
+  })).sort((a, b) => b.hours - a.hours).slice(0, 5);
+  return { rows };
+}
+
+// Single MTTR card { avg, score, scoreColor }.
+export function buildZohoMttr(tickets) {
+  const list = Array.isArray(tickets) ? tickets : [];
+  const durations = [];
+  list.forEach(t => {
+    const created = parseTs(t?.created_at || t?.createdTime || t?.createdAt);
+    const closed = parseTs(t?.resolved_time || t?.resolvedTime || t?.closed_time || t?.closedTime || t?.closedAt);
+    if (created && closed) durations.push(Math.max(0, (closed - created) / (1000 * 60 * 60)));
+  });
+  const avg = durations.length > 0 ? durations.reduce((a, b) => a + b, 0) / durations.length : 0;
+  const score = avg <= 4 ? 100 : avg <= 12 ? 75 : avg <= 24 ? 50 : avg <= 48 ? 25 : 0;
+  const scoreColor = score >= 75 ? '#22c55e' : score >= 50 ? '#f59e0b' : '#ef4444';
+  return { avg: Math.round(avg * 10) / 10, score, scoreColor };
+}
+
+// Corporation → assignee ticket-count distribution (for the circle pack).
+export function buildZohoCorpMembers(tickets) {
+  const list = Array.isArray(tickets) ? tickets : [];
+  const grouped = {};
+  list.forEach(t => {
+    const corp = getDeptName(t) || 'Unknown Department';
+    const name = (() => {
+      const a = t?.assignee || {};
+      const full = `${a.firstName || ''} ${a.lastName || ''}`.trim() || getAssigneeName(t);
+      return full || 'Unassigned';
+    })();
+    if (!grouped[corp]) grouped[corp] = {};
+    grouped[corp][name] = (grouped[corp][name] || 0) + 1;
+  });
+  const corps = Object.entries(grouped).map(([corporation, assignees]) => ({
+    corporation,
+    total: Object.values(assignees).reduce((a, b) => a + b, 0),
+    assignees: Object.entries(assignees).map(([name, count]) => ({ name, count })),
+  }));
+  return { corps };
 }
 
 export function buildFirewallSummary({

@@ -175,7 +175,8 @@ async function upsertVulnerability(orgPool, vuln, sourceIndex) {
        reference_list      = EXCLUDED.reference_list,
        raw                = EXCLUDED.raw,
        source_index       = EXCLUDED.source_index,
-       synced_at          = NOW()`,
+       synced_at          = NOW()
+     RETURNING (xmax = 0) AS did_insert`,
     [
       row.cve_id, row.source_identifier, row.published, row.last_modified,
       row.vuln_status, row.description_en, row.description_es, row.cvss_version,
@@ -187,7 +188,11 @@ async function upsertVulnerability(orgPool, vuln, sourceIndex) {
       row.source_index,
     ]
   );
-  return r.rowCount === 1 ? 'inserted' : 'updated';
+  // xmax = 0 means a fresh INSERT; xmax != 0 means the row already existed and
+  // was UPDATED by the ON CONFLICT branch. This lets the sync report accurate
+  // inserted/updated counts.
+  const didInsert = r.rows[0] && r.rows[0].did_insert;
+  return didInsert ? 'inserted' : 'updated';
 }
 
 // POST /api/nvd/sync — paginate NVD from startIndex=0 until an empty page, then stop.
@@ -406,3 +411,16 @@ router.get('/stats', async (req, res) => {
 });
 
 module.exports = router;
+
+// ── Shared helpers (re-used by routes/updatedNvd.js) ──────────────────────────
+// Exporting these avoids duplicating the NVD fetch + CVE-mapping logic in the
+// date-windowed sync route.
+module.exports.mapVulnerability = mapVulnerability;
+module.exports.fetchNvdPage = fetchNvdPage;
+module.exports.upsertVulnerability = upsertVulnerability;
+module.exports.extractDescriptions = extractDescriptions;
+module.exports.extractCvss = extractCvss;
+module.exports.extractWeakness = extractWeakness;
+module.exports.parseDate = parseDate;
+module.exports.NVD_URL = NVD_URL;
+module.exports.sleep = sleep;

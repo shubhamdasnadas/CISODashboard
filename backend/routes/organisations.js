@@ -1,46 +1,8 @@
 const express = require('express');
-const { centralPool, getOrgPool, getOrgSlug, closeOrgPool } = require('../db');
+const { centralPool, getOrgSlug, generateUniqueSlug, createOrgDatabase, dropOrgDatabase } = require('../db');
 const { authMiddleware, requireSuperAdmin } = require('../middleware/authMiddleware');
-const { Client } = require('pg');
 
 const router = express.Router();
-
-const DB_HOST = process.env.DB_HOST || 'localhost';
-const DB_PORT = parseInt(process.env.DB_PORT || '5432', 10);
-const DB_USER = process.env.DB_USER || 'postgres';
-const DB_PASSWORD = process.env.DB_PASSWORD || 'root';
-
-async function dropOrgDatabase(orgId) {
-  const orgSlug = await getOrgSlug(orgId);
-  const dbName = orgSlug ? `ciso_org_${orgSlug}` : `ciso_org_${orgId}`;
-  // Postgres requires connecting to a different DB before dropping one,
-  // and no other sessions can be using it — so close the cached pool first.
-  if (orgSlug) closeOrgPool(orgSlug);
-
-  const client = new Client({
-    host: DB_HOST,
-    port: DB_PORT,
-    database: 'postgres',
-    user: DB_USER,
-    password: DB_PASSWORD,
-  });
-  await client.connect();
-  try {
-    // Terminate any leftover sessions on this DB, then drop it.
-    await client.query(
-      `SELECT pg_terminate_backend(pid)
-         FROM pg_stat_activity
-        WHERE datname = $1 AND pid <> pg_backend_pid()`,
-      [dbName]
-    );
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(dbName)) {
-      throw new Error(`Refusing to DROP DATABASE with unsafe name: ${dbName}`);
-    }
-    await client.query(`DROP DATABASE IF EXISTS "${dbName}"`);
-  } finally {
-    await client.end();
-  }
-}
 
 /**
  * GET /api/organisations
@@ -77,19 +39,28 @@ router.get('/', authMiddleware, async (req, res) => {
  */
 router.post('/', authMiddleware, requireSuperAdmin, async (req, res) => {
   try {
-    const { org_name, address, mobile_no } = req.body;
+    const { org_name, address, mobile_no, slug } = req.body;
     if (!org_name) return res.status(400).json({ error: 'org_name is required' });
 
+    // Derive a unique, safe slug for the per-org database name (ciso_org_<slug>).
+    const orgSlug = await generateUniqueSlug(org_name, slug);
+
     const result = await centralPool.query(
-      `INSERT INTO organisations (org_name, address, mobile_no)
-       VALUES ($1, $2, $3) RETURNING *`,
-      [org_name, address || null, mobile_no || null]
+      `INSERT INTO organisations (org_name, address, mobile_no, slug)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [org_name, address || null, mobile_no || null, orgSlug]
     );
     const newOrg = result.rows[0];
 
-    // Create the per-org DB and apply the schema.
-    const { ensureOrgDatabases } = require('../db');
-    await ensureOrgDatabases();
+    // Create the per-org DB and apply the schema. If it fails, roll back the
+    // registry row so we never leave an org with no database.
+    try {
+      await createOrgDatabase(orgSlug);
+    } catch (e) {
+      await centralPool.query('DELETE FROM organisations WHERE id = $1', [newOrg.id]);
+      console.error('create org DB error (rolled back org row):', e);
+      return res.status(500).json({ error: 'Failed to create organisation database' });
+    }
 
     return res.status(201).json({ organisation: newOrg });
   } catch (err) {
@@ -105,11 +76,14 @@ router.post('/', authMiddleware, requireSuperAdmin, async (req, res) => {
 router.delete('/:id', authMiddleware, requireSuperAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
+    const orgSlug = await getOrgSlug(id);
     await centralPool.query('DELETE FROM organisations WHERE id = $1', [id]);
-    try {
-      await dropOrgDatabase(id);
-    } catch (e) {
-      console.error(`Warning: failed to drop ciso_org_${id}:`, e.message);
+    if (orgSlug) {
+      try {
+        await dropOrgDatabase(orgSlug);
+      } catch (e) {
+        console.error(`Warning: failed to drop ciso_org_${orgSlug}:`, e.message);
+      }
     }
     return res.json({ success: true });
   } catch (err) {

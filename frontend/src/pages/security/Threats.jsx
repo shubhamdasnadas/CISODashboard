@@ -316,7 +316,10 @@ export default function Threats() {
 
   const topEndpoints = useMemo(() => {
     const c = {};
-    endpointFilter.filtered.forEach((t) => { const k = t.agentRealtimeInfo?.agentComputerName; if (k) c[k] = (c[k] || 0) + 1; });
+    endpointFilter.filtered.forEach((t) => {
+      const k = t.agentRealtimeInfo?.agentComputerName || t.agentDetectionInfo?.agentComputerName || t.agentComputerName || '';
+      if (k) c[k] = (c[k] || 0) + 1;
+    });
     return topN(c, 10).map((x) => ({ ...x, fullName: x.name, name: truncateLabel(x.name) }));
   }, [endpointFilter.filtered]);
 
@@ -409,7 +412,10 @@ export default function Threats() {
 
   const topUsersData = useMemo(() => {
     const c = {};
-    usersFilter.filtered.forEach((t) => { const k = t.threatInfo?.processUser; if (k) c[k] = (c[k] || 0) + 1; });
+    usersFilter.filtered.forEach((t) => {
+      const k = t.threatInfo?.initiatingUsername || t.threatInfo?.processUser || t.agentDetectionInfo?.agentLastLoggedInUserName || '';
+      if (k) c[k] = (c[k] || 0) + 1;
+    });
     return topN(c, 10).map((x) => ({ ...x, name: truncateLabel(x.name) }));
   }, [usersFilter.filtered]);
 
@@ -456,13 +462,19 @@ export default function Threats() {
 
   const bySiteData = useMemo(() => {
     const c = {};
-    siteFilter.filtered.forEach((t) => { const k = t.agentRealtimeInfo?.siteName || 'Unknown'; c[k] = (c[k] || 0) + 1; });
+    siteFilter.filtered.forEach((t) => {
+      const k = t.agentRealtimeInfo?.siteName || t.siteName || t.agentDetectionInfo?.siteName || 'Unknown';
+      c[k] = (c[k] || 0) + 1;
+    });
     return topN(c, 10).map((x) => ({ ...x, name: truncateLabel(x.name) }));
   }, [siteFilter.filtered]);
 
   const byGroupData = useMemo(() => {
     const c = {};
-    groupFilter.filtered.forEach((t) => { const k = t.agentRealtimeInfo?.groupName || 'Unknown'; c[k] = (c[k] || 0) + 1; });
+    groupFilter.filtered.forEach((t) => {
+      const k = t.agentRealtimeInfo?.groupName || t.group_name || t.agentDetectionInfo?.groupName || 'Unknown';
+      c[k] = (c[k] || 0) + 1;
+    });
     return topN(c, 10).map((x) => ({ ...x, name: truncateLabel(x.name) }));
   }, [groupFilter.filtered]);
 

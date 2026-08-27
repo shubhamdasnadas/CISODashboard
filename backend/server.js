@@ -43,6 +43,8 @@ const microsoftRoutes = require('./routes/microsoft');
 const complianceHealthScoresRoutes = require('./routes/compliance_health_scores');
 const nvdRoutes = require('./routes/nvd');
 const nvdCpeRoutes = require('./routes/nvdCpe');
+const updatedNvdRoutes = require('./routes/updatedNvd');
+const updatedCpesRoutes = require('./routes/updatedCpes');
 const cacheRoutes = require('./routes/cache');
 
 // Sync services (for cron)
@@ -53,7 +55,11 @@ const { syncHarmony } = require('./services/harmony');
 const app = express();
 
 app.use(cors());
-app.use(express.json());
+// Large JSON bodies: the report `data` object (Zoho/SentinelOne/Checkpoint/Palo
+// Alto aggregates, especially raw Zoho ticket payloads) can be many MB, far past
+// Express's 100KB default — so raise the cap well above any realistic report.
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
 app.get('/', (req, res) => {
   res.json({ name: 'CISO Dashboard API', status: 'running' });
@@ -94,6 +100,8 @@ app.use('/api/microsoft', withOrg, microsoftRoutes);
 app.use('/api/compliance-health-scores', withOrg, complianceHealthScoresRoutes);
 app.use('/api/nvd', withOrg, nvdRoutes);
 app.use('/api/nvd-cpe', withOrg, nvdCpeRoutes);
+app.use('/api/updated-nvd', withOrg, updatedNvdRoutes);
+app.use('/api/updated-cpes', withOrg, updatedCpesRoutes);
 app.use('/api/cache', withOrg, cacheRoutes);
 
 // Admin routes (superAdmin only — orgMiddleware not needed, uses centralPool directly)
@@ -224,6 +232,76 @@ async function runCacheSyncForAllOrgs(resourceKey) {
 Object.entries(CACHE_CRON).forEach(([resourceKey, expr]) => {
   cron.schedule(expr, () => runCacheSyncForAllOrgs(resourceKey));
 });
+
+// ─── Updated NVD (date-windowed) cron ──────────────────────────────────────────
+// Hits the NVD "modified" API for the last 24h (yesterday -> today, dynamic) and
+// upserts into the per-org `nvd` table. The apiKey + base URL come from the stored
+// `nvd_modified` credentials (set via the Updated NVD page) when present; otherwise
+// from the legacy `nvd` credentials; otherwise from env / defaults.
+const NVD_CRON_API_KEY = process.env.NVD_API_KEY || '68bfccb2-c5a2-4d4d-9cf7-29a5fa8b0af8';
+const NVD_CRON_API_URL = process.env.NVD_API_URL || 'https://services.nvd.nist.gov/rest/json/cves/2.0';
+
+function nvdCronIso(dateStr, endOfDay = false) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr + (endOfDay ? 'T23:59:59.000Z' : 'T00:00:00.000Z'));
+  return isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+async function runUpdatedNvdCron() {
+  try {
+    const { rows: orgs } = await centralPool.query(
+      'SELECT slug FROM organisations WHERE is_active = TRUE ORDER BY id'
+    );
+    for (const { slug: orgSlug } of orgs) {
+      if (!orgSlug) continue;
+      try {
+        const pool = getOrgPool(orgSlug);
+
+        // Per-org aware: only sync orgs that actually have NVD configured.
+        // Resolve apiKey + apiUrl from the org's stored credentials:
+        //   nvd_modified (date-windowed) -> nvd (legacy) -> env/constants default.
+        // If an org has NO NVD credentials stored at all, skip it — we must NOT
+        // push the global default key into orgs that don't use NVD (e.g. pcpl,
+        // acme, northwind, blueshield), which would create empty `nvd` rows for
+        // tenants that never set it up.
+        let apiKey = null;
+        let apiUrl = NVD_CRON_API_URL;
+        for (const integration of ['nvd_modified', 'nvd']) {
+          const { rows } = await pool.query(
+            'SELECT credentials FROM integration_credentials WHERE integration = $1 LIMIT 1',
+            [integration]
+          );
+          const c = rows[0]?.credentials;
+          if (c?.apiKey) { apiKey = c.apiKey; apiUrl = c.apiUrl || apiUrl; break; }
+        }
+        if (!apiKey) {
+          console.log(`[updated-nvd-cron][org=${orgSlug}] skipped — no NVD credentials configured`);
+          continue;
+        }
+
+        // Dynamic window: yesterday 00:00Z -> today 23:59:59Z (updates each run).
+        const now = new Date();
+        const start = new Date(now); start.setDate(start.getDate() - 1);
+        const end = new Date(now); end.setDate(end.getDate());
+        const lastModStartDate = nvdCronIso(start.toISOString().slice(0, 10));
+        const lastModEndDate = nvdCronIso(end.toISOString().slice(0, 10), true);
+
+        const result = await updatedNvdRoutes.runUpdatedNvdSync({
+          apiKey, apiUrl, lastModStartDate, lastModEndDate, pool, orgSlug,
+        });
+        console.log(`[updated-nvd-cron][org=${orgSlug}] ${result.message}`);
+      } catch (e) {
+        console.error(`[updated-nvd-cron][org=${orgSlug}] failed:`, e.message);
+      }
+    }
+    console.log('[updated-nvd-cron] pass complete');
+  } catch (err) {
+    console.error('[updated-nvd-cron] job error:', err.message);
+  }
+}
+
+// Every 2 minutes — pull the last 24h of modified CVEs.
+cron.schedule('*/2 * * * *', runUpdatedNvdCron);
 
 async function main() {
   try {
