@@ -62,6 +62,106 @@ function Info({ label, value }) {
   );
 }
 
+// Legend item component (side-by-side legend for improved donuts)
+function LegendItem({ color, name, value, onClick }) {
+  return (
+    <div
+      onClick={onClick}
+      className="flex items-center gap-2 px-1.5 py-1.5 rounded-md hover:bg-[var(--muted-bg)]/40 transition-colors cursor-pointer group"
+    >
+      <span
+        className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 shadow-sm"
+        style={{ backgroundColor: color }}
+      />
+      <span className="text-[11px] font-semibold text-[var(--foreground)] group-hover:text-indigo-400 transition-colors">
+        {name}
+      </span>
+      <span className="text-[10px] text-[var(--muted)] group-hover:text-[var(--foreground)] transition-colors">
+        ({value})
+      </span>
+    </div>
+  );
+}
+
+// Improved Donut chart with side-by-side legends (left + right)
+function ImprovedDonut({ data, onSliceClick }) {
+  if (data.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-sm text-[var(--muted)]">No data available</p>
+      </div>
+    );
+  }
+
+  const midpoint = Math.ceil(data.length / 2);
+  const leftItems = data.slice(0, midpoint);
+  const rightItems = data.slice(midpoint);
+
+  return (
+    <div className="flex items-center h-72 px-2 gap-3">
+      {/* Left Legend */}
+      <div className="flex flex-col gap-3 justify-center shrink-0">
+        {leftItems.map((item) => (
+          <LegendItem
+            key={item.name}
+            color={item.fill}
+            name={item.name}
+            value={item.value}
+            onClick={() => onSliceClick && onSliceClick(item)}
+          />
+        ))}
+      </div>
+
+      {/* Center Chart */}
+      <div className="flex-1 min-w-0 h-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={data}
+              dataKey="value"
+              innerRadius="50%"
+              outerRadius="80%"
+              cornerRadius={10}
+              paddingAngle={2}
+              cursor="pointer"
+              onClick={onSliceClick}
+              animationBegin={0}
+              animationDuration={400}
+            >
+              {data.map((entry, i) => (
+                <Cell key={`cell-${i}`} fill={entry.fill} stroke="var(--card-bg)" strokeWidth={2} />
+              ))}
+            </Pie>
+            <Tooltip
+              contentStyle={tooltipStyle}
+              formatter={(value) => {
+                const n = Number(value);
+                const total = data.reduce((s, d) => s + d.value, 0);
+                return [`${n} (${Math.round((n / total) * 100)}%)`, ''];
+              }}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Right Legend */}
+      {rightItems.length > 0 && (
+        <div className="flex flex-col gap-3 justify-center shrink-0">
+          {rightItems.map((item) => (
+            <LegendItem
+              key={item.name}
+              color={item.fill}
+              name={item.name}
+              value={item.value}
+              onClick={() => onSliceClick && onSliceClick(item)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SeverityBadge({ severity }) {
   if (!severity) return <span className="text-[var(--muted)] text-xs">—</span>;
   const color = SEVERITY_COLORS[severity.toUpperCase()] || '#64748b';
@@ -463,21 +563,10 @@ export default function Nvd() {
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             <ChartCard title="CVEs by Severity">
-              <div style={{ height: 260 }}>
-                {severityChartData.length === 0
-                  ? <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No severity data</p></div>
-                  : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie data={severityChartData} dataKey="value" innerRadius="55%" outerRadius="85%" paddingAngle={3} cornerRadius={8}>
-                          {severityChartData.map((e, i) => <Cell key={i} fill={e.fill} />)}
-                        </Pie>
-                        <Tooltip contentStyle={tooltipStyle} />
-                        <Legend wrapperStyle={{ fontSize: 11 }} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  )}
-              </div>
+              {severityChartData.length === 0
+                ? <div className="flex items-center justify-center h-64"><p className="text-sm text-[var(--muted)]">No severity data</p></div>
+                : <ImprovedDonut data={severityChartData} />
+              }
             </ChartCard>
 
             <ChartCard title="CVEs by Status">

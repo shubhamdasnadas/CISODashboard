@@ -247,7 +247,7 @@ function TopSenders({ events, goToDetail }) {
         <BarChart data={data} layout="vertical" margin={{ top:4, right:48, left:8, bottom:4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" horizontal={false} />
           <XAxis type="number" tick={{ fontSize:10, fill:'var(--muted)' }} tickLine={false} axisLine={false} allowDecimals={false} />
-          <YAxis type="category" dataKey="name" tick={{ fontSize:10, fill:'var(--foreground)' }} tickLine={false} axisLine={false} width={140} />
+          <YAxis type="category" dataKey="name" tick={{ fontSize:10, fill:'var(--foreground)' }} tickLine={false} axisLine={false} width={180} />
           <Tooltip contentStyle={TOOLTIP_STYLE} />
           <Bar dataKey="count" name="Events" fill="#f97316" radius={[0,4,4,0]} cursor="pointer"
             onClick={(d) => goToDetail('sender', d.name, `Events from ${d.name}`)}>
@@ -301,7 +301,7 @@ function TopTargetedMailboxes({ events, goToDetail }) {
         <BarChart data={data} layout="vertical" margin={{ top:4, right:48, left:8, bottom:4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" horizontal={false} />
           <XAxis type="number" tick={{ fontSize:10, fill:'var(--muted)' }} tickLine={false} axisLine={false} allowDecimals={false} />
-          <YAxis type="category" dataKey="name" tick={{ fontSize:10, fill:'var(--foreground)' }} tickLine={false} axisLine={false} width={140} />
+          <YAxis type="category" dataKey="name" tick={{ fontSize:12, fill:'var(--foreground)' }} tickLine={false} axisLine={false} width={210} interval={0} />
           <Tooltip contentStyle={TOOLTIP_STYLE} />
           <Bar dataKey="count" name="Events" fill="#8b5cf6" radius={[0,4,4,0]} cursor="pointer"
             onClick={(d) => goToDetail('targetedMailbox', d.name, `Events targeting ${d.name}`)}>
@@ -562,13 +562,13 @@ export default function CheckpointDashboard({ events }) {
       {/* Target + cumulative */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <TopTargetedMailboxes events={filteredEvents} goToDetail={goToDetail} />
-        <CumulativeTimeline events={filteredEvents} />
+        {/* <CumulativeTimeline events={filteredEvents} /> */}
       </div>
 
       {/* Platform + remediation */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <SaasPlatformChart events={filteredEvents} />
-        <RemediationRateChart events={filteredEvents} />
+        {/* <RemediationRateChart events={filteredEvents} /> */}
       </div>
     </section>
   );

@@ -1449,7 +1449,7 @@ export default function Dashboard() {
       </div>
 
       {/* ── Cached Zoho Tickets (Redis cache-aside layer) ──────────────────────── */}
-      <div className="mt-8 mb-2">
+      {/* <div className="mt-8 mb-2">
         <h2 className="text-sm font-bold text-[var(--foreground)] mb-4">
           Zoho Tickets — Cached (Redis)
         </h2>
@@ -1476,7 +1476,7 @@ export default function Dashboard() {
             </div>
           )}
         />
-      </div>
+      </div> */}
 
 
       {/* ── News Sections ───────────────────────────────────────────────────── */}

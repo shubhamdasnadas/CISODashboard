@@ -133,14 +133,6 @@ function ThreatCard({ label, summary, expanded, onToggle, activeTypes, onTypeCha
                 <p className={`text-3xl font-bold leading-none ${summary.detectedPct > 0 ? 'text-orange-500' : 'text-[var(--muted)]'}`}>{summary.detectedPct}%</p>
                 <p className="text-xs text-[var(--muted)] mt-1.5 font-medium">Detected</p>
               </div>
-              <div>
-                <p className={`text-3xl font-bold leading-none ${summary.pending > 0 ? 'text-red-500' : 'text-[var(--muted)]'}`}>
-                  {summary.pending > 0 ? `${Math.round((summary.pending/summary.total)*100)}%` : '0%'}
-                </p>
-                <p className={`text-xs mt-1.5 font-medium ${summary.pending > 0 ? 'text-red-500' : 'text-[var(--muted)]'}`}>
-                  Pending{summary.pending > 0 && <span className="ml-1 text-red-400">({summary.pending})</span>}
-                </p>
-              </div>
             </div>
           </>
         )}
