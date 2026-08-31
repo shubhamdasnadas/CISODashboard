@@ -489,14 +489,14 @@ export default function CheckpointDashboard({ events }) {
   const [dateTo, setDateTo]     = useState('');
   const hasDateFilter = !!(dateFrom || dateTo);
 
-  const goToDetail = (filterId, value, title, overrideDateFrom, overrideDateTo) => navigate('/security/detail', {
-    state: { 
-      dataset: 'checkpoint', 
-      filterId, 
-      value, 
-      title, 
-      dateFrom: overrideDateFrom ?? dateFrom, 
-      dateTo: overrideDateTo ?? dateTo 
+  const goToDetail = (filterId, value, title, overrideDateFrom, overrideDateTo) => navigate('/checkpoint/detail', {
+    state: {
+      dataset: 'checkpoint',
+      filterId,
+      value,
+      title,
+      dateFrom: overrideDateFrom ?? dateFrom,
+      dateTo: overrideDateTo ?? dateTo
     },
   });
 

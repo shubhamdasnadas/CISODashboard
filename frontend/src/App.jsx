@@ -123,6 +123,7 @@ export default function App() {
               >
                 {/* Core */}
                 <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/dashboard/detail" element={<DetailView />} />
                 <Route path="/mdm" element={<MDM />} />
                 <Route path="/mdm/detail" element={<MDMDetailView />} />
                 <Route path="/microsoft365" element={<Microsoft365 />} />
@@ -144,9 +145,12 @@ export default function App() {
 
                 {/* Integrations */}
                 <Route path="/paloalto" element={<PaloAltoPage />} />
+                <Route path="/paloalto/detail" element={<DetailView />} />
                 <Route path="/checkpoint" element={<CheckpointPage />} />
+                <Route path="/checkpoint/detail" element={<DetailView />} />
                 <Route path="/zoho" element={<Zohoone />} />
                 <Route path="/zoho/one" element={<Zohoone />} />
+                <Route path="/zoho/detail" element={<DetailView />} />
 
                 {/* Members */}
                 <Route path="/members" element={<Members />} />

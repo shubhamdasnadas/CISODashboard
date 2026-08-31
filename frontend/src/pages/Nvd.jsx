@@ -4,6 +4,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
 import api from '../api.js';
+import AnalyticsLaunchButton from '../components/AnalyticsLaunchButton.jsx';
 
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
 
@@ -445,6 +446,7 @@ export default function Nvd() {
             {stats?.lastSynced && ` · Last synced ${new Date(stats.lastSynced).toLocaleString()}`}
           </p>
         </div>
+        <AnalyticsLaunchButton moduleKey="nvd" />
       </div>
 
       {/* Config + Sync */}

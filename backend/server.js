@@ -191,6 +191,37 @@ cron.schedule('*/15 * * * *', runBackgroundJob);
 // Every 30 minutes — integration sync (S1, Firewall, Harmony)
 cron.schedule('*/30 * * * *', runIntegrationSync);
 
+// ─── Custom alerts cron (S1 cloud detection alerts) ─────────────────────────
+// Runs the write-through Redis sync (syncService.syncAndCache) for
+// 'sentinelone-custom-alerts'. That single pass calls the S1 API once, writes
+// the s1_custome_alert table, and mirrors the result into Redis, so the
+// dedicated cron also feeds both the DB and the cache layer.
+async function runCustomAlertsCron() {
+  try {
+    const { rows: orgs } = await centralPool.query(
+      'SELECT slug FROM organisations WHERE is_active = TRUE ORDER BY id'
+    );
+    for (const { slug: orgSlug } of orgs) {
+      if (!orgSlug) continue;
+      try {
+        // syncService is required later in this module; resolved at call time.
+        const syncService = require('./services/syncService');
+        await syncService.syncAndCache(orgSlug, 'sentinelone-custom-alerts').catch(e =>
+          console.error(`[custom-alerts-cron][org=${orgSlug}] error:`, e.message)
+        );
+      } catch (e) {
+        console.error(`[custom-alerts-cron] org ${orgSlug} failed:`, e.message);
+      }
+    }
+    console.log('[custom-alerts-cron] pass complete');
+  } catch (err) {
+    console.error('[custom-alerts-cron] job error:', err.message);
+  }
+}
+
+// Every 5 minutes — custom-alerts sync (DB + Redis via write-through)
+cron.schedule('*/5 * * * *', runCustomAlertsCron);
+
 // ─── Redis cache-layer scheduler ─────────────────────────────────────────────
 // Loops through all active orgs and runs syncAndCache for each resource on its
 // own schedule. syncAndCache itself acquires a distributed Redis lock (SET NX

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { syncSentinelOne } = require('../services/sentinelone');
+const { syncSentinelOne, syncCustomAlerts } = require('../services/sentinelone');
 
 // GET /api/sentinelone/credentials
 router.get('/credentials', async (req, res) => {
@@ -53,6 +53,21 @@ router.post('/sync', async (req, res) => {
       warnings: warnings.length ? warnings : undefined,
       ...result,
     });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// POST /api/sentinelone/sync-custom-alerts
+router.post('/sync-custom-alerts', async (req, res) => {
+  try {
+    const { rows } = await req.orgPool.query(
+      "SELECT credentials FROM integration_credentials WHERE integration = 'sentinelone' LIMIT 1"
+    );
+    if (!rows[0]) return res.status(400).json({ message: 'SentinelOne not configured' });
+
+    const result = await syncCustomAlerts(req.orgSlug, rows[0].credentials);
+    res.json({ success: true, message: `Synced ${result.alerts} custom alerts`, ...result });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -141,6 +156,85 @@ router.get('/db/rss', async (req, res) => {
   try {
     const { rows } = await req.orgPool.query('SELECT data FROM s1_rss ORDER BY synced_at DESC');
     res.json({ data: rows.map(r => r.data) });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET /api/sentinelone/db/custom-alert
+// Returns EVERY stored cloud-detection alert (no LIMIT — full table).
+router.get('/db/custom-alert', async (req, res) => {
+  try {
+    const { rows } = await req.orgPool.query('SELECT data FROM s1_custome_alert ORDER BY synced_at DESC');
+    res.json({ data: rows.map(r => r.data) });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET /api/sentinelone/recent
+// Combined feed: ALL threats + ALL custom alerts merged into one time-sorted
+// list, newest first. No LIMIT — returns the full contents of both tables.
+// Optional `from` / `to` ISO date params filter by event time.
+router.get('/recent', async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const [threatsRes, alertsRes] = await Promise.all([
+      req.orgPool.query('SELECT data FROM s1_threats'),
+      req.orgPool.query('SELECT data FROM s1_custome_alert'),
+    ]);
+
+    // Map a cloud-detection alert's status to mitigated / not_mitigated.
+    // Status lives in alertInfo.incidentStatus ("Unresolved" / "Resolved").
+    // NOTE: "unresolved" must be checked BEFORE "resolved" (it also contains it).
+    const alertMitigation = (s) => {
+      const str = String(s || '').toLowerCase().replace(/[_\s-]/g, '');
+      if (str.includes('unresolved') || str.includes('inprogress') || str.includes('open')
+        || str.includes('active') || str.includes('notapplicable') || str.includes('unmitigated')
+        || str.includes('undefined')) return 'not_mitigated';
+      if (str.includes('resolved') || str.includes('mitigated') || str.includes('fixed')) return 'mitigated';
+      return 'unknown';
+    };
+
+    // Uses the real cloud-detection payload shape (ruleInfo.* / alertInfo.*).
+    const normAlert = (a) => ({
+      source: 'custom-alert',
+      data: a,
+      name: a.ruleInfo?.name || a.alertInfo?.indicatorName || a.ruleName
+        || a.alertName || a.name || a.title || a.displayName || 'Custom Alert',
+      createdAt: a.alertInfo?.createdAt || a.alertInfo?.reportedAt
+        || a.alertInfo?.updatedAt || a.detectedAt || a.createdAt || a.timestamp
+        || a.detectionInfo?.detectedAt || null,
+      severity: a.ruleInfo?.severity || a.alertInfo?.severity || a.severity || '—',
+      status: alertMitigation(a.alertInfo?.incidentStatus || a.alertInfo?.analystVerdict
+        || a.status || a.alertStatus || ''),
+      subtitle: a.agentDetectionInfo?.name || a.agentComputerName
+        || a.computerName || a.sourceProcessInfo?.name || a.endpointName || '—',
+    });
+
+    const combined = [
+      ...threatsRes.rows.map(({ data: t }) => ({
+        source: 'threat',
+        data: t,
+        name: t.threatInfo?.threatName || 'Unknown',
+        createdAt: t.threatInfo?.createdAt || null,
+        severity: t.threatInfo?.confidenceLevel || t.threatInfo?.severity || '—',
+        status: t.threatInfo?.mitigationStatus || 'unknown',
+        subtitle: t.agentRealtimeInfo?.agentComputerName || '—',
+      })),
+      ...alertsRes.rows.map(({ data: a }) => normAlert(a)),
+    ]
+      .filter((x) => {
+        if (!x.createdAt) return !from && !to;
+        const t = new Date(x.createdAt).getTime();
+        if (Number.isNaN(t)) return !from && !to;
+        if (from && t < new Date(from).getTime()) return false;
+        if (to && t > new Date(to).getTime()) return false;
+        return true;
+      })
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+    res.json({ data: combined, counts: { threats: threatsRes.rows.length, customAlerts: alertsRes.rows.length } });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

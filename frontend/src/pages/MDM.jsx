@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
+import AnalyticsLaunchButton from '../components/AnalyticsLaunchButton.jsx';
 
 const tooltipStyle = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12 };
 
@@ -256,6 +257,7 @@ export default function MDM() {
         >
           {syncing ? <><div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />Syncing…</> : 'Sync'}
         </button>
+        <AnalyticsLaunchButton moduleKey="mdm" />
       </div>
 
       {syncMsg && (

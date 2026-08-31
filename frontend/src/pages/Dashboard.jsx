@@ -192,6 +192,8 @@ export default function Dashboard() {
   const [deviceControlLoading, setDeviceControlLoading] = useState(true);
   const [rssData, setRssData] = useState([]);
   const [rssLoading, setRssLoading] = useState(true);
+  const [customAlertData, setCustomAlertData] = useState([]);
+  const [customAlertLoading, setCustomAlertLoading] = useState(true);
   const [mitigationChart, setMitigationChart] = useState('donut');
 
   // ── Checkpoint ──────────────────────────────────────────────────────────────
@@ -350,6 +352,7 @@ export default function Dashboard() {
         if (Array.isArray(agg.sentinelone?.applicationCve)) setAppCveData(agg.sentinelone.applicationCve);
         if (Array.isArray(agg.sentinelone?.deviceControl)) setDeviceControlData(agg.sentinelone.deviceControl);
         if (Array.isArray(agg.sentinelone?.rss)) setRssData(agg.sentinelone.rss);
+        if (Array.isArray(agg.sentinelone?.customAlerts)) setCustomAlertData(agg.sentinelone.customAlerts);
 
         // Harmony
         if (Array.isArray(agg.harmony?.events)) setCpEvents(agg.harmony.events.map(mapCpEvent));
@@ -366,11 +369,13 @@ export default function Dashboard() {
         // Clear loading
         setS1Loading(false); setAgentLoading(false); setAppAgentLoading(false);
         setAppCveLoading(false); setDeviceControlLoading(false); setRssLoading(false);
+        setCustomAlertLoading(false);
         setCpEventsLoading(false);
       })
       .catch(() => {
         setS1Loading(false); setAgentLoading(false); setAppAgentLoading(false);
         setAppCveLoading(false); setDeviceControlLoading(false); setRssLoading(false);
+        setCustomAlertLoading(false);
         setCpEventsLoading(false); setLayoutLoaded(true);
       });
   }, [currentOrg?.id]);
@@ -500,6 +505,8 @@ export default function Dashboard() {
         api.get('/sentinelone/threats').then((x) => { setS1Data(x.data?.data || []); }).finally(() => setS1Loading(false));
         setAgentLoading(true);
         api.get('/sentinelone/sentinalone_agentinfo').then((x) => { setAgentData(Array.isArray(x.data?.data) ? x.data.data : []); }).finally(() => setAgentLoading(false));
+        setCustomAlertLoading(true);
+        api.get('/sentinelone/db/custom-alert').then((x) => { setCustomAlertData(Array.isArray(x.data?.data) ? x.data.data : []); }).finally(() => setCustomAlertLoading(false));
       }
     } catch (e) {
       setS1SyncMsg({ text: e.response?.data?.message || 'Sync failed', ok: false });
@@ -574,10 +581,60 @@ export default function Dashboard() {
   const severityData = Object.entries(severityCounts).map(([name, value], i) => ({ name, value, fill: COLORS[i % COLORS.length] }));
 
   const threatsRange = getRange('s1-threats');
-  const recentThreats = [...s1Data]
-    .filter((t) => inDateRange(t.threatInfo?.createdAt, threatsRange.from, threatsRange.to))
-    .sort((a, b) => new Date(b.threatInfo?.createdAt || 0) - new Date(a.threatInfo?.createdAt || 0))
-    .slice(0, 15);
+
+  // Map a SentinelOne cloud-detection alert's status to "mitigated / not".
+  // Typical S1 alert statuses live in alertInfo.incidentStatus:
+  //   "Resolved" -> mitigated, "Unresolved" / "In Progress" -> not mitigated.
+  // NOTE: "unresolved" must be checked BEFORE "resolved" (it also contains it).
+  const alertMitigation = (s) => {
+    const str = String(s || '').toLowerCase().replace(/[_\s-]/g, '');
+    if (str.includes('unresolved') || str.includes('inprogress') || str.includes('open')
+      || str.includes('active') || str.includes('notapplicable') || str.includes('unmitigated')
+      || str.includes('undefined')) return 'not_mitigated';
+    if (str.includes('resolved') || str.includes('mitigated') || str.includes('fixed')) return 'mitigated';
+    return 'unknown';
+  };
+
+  // Normalise a custom (cloud detection) alert so it renders in the same
+  // Recent Threats rows as regular threats. Uses the actual payload shape
+  // (ruleInfo.* / alertInfo.*) so name, severity, time and status map correctly.
+  const mapCustomAlert = (a) => {
+    const name = a.ruleInfo?.name || a.alertInfo?.indicatorName || a.ruleName
+      || a.alertName || a.name || a.title || a.displayName || 'Custom Alert';
+    // createdAt lives at alertInfo.createdAt — must be picked up so the same
+    // date filter used for threats also filters custom alerts.
+    const createdAt = a.alertInfo?.createdAt || a.alertInfo?.reportedAt
+      || a.alertInfo?.updatedAt || a.detectedAt || a.createdAt || a.timestamp
+      || a.detectionInfo?.detectedAt || guessDateValue(a);
+    const severity = a.ruleInfo?.severity || a.alertInfo?.severity || a.severity || '—';
+    const rawStatus = a.alertInfo?.incidentStatus || a.alertInfo?.analystVerdict
+      || a.status || a.alertStatus || '';
+    const status = alertMitigation(rawStatus);
+    const subtitle = a.agentDetectionInfo?.name || a.agentComputerName
+      || a.computerName || a.sourceProcessInfo?.name || a.endpointName || '—';
+    return { source: 'custom-alert', raw: a, name, createdAt, status, severity, subtitle };
+  };
+
+  // "Both mix" — threats and custom alerts combined, newest first.
+  // No slice/limit: the full mixed feed is shown (backend returns everything).
+  const recentThreats = [
+    ...s1Data.map((t) => ({
+      source: 'threat',
+      raw: t,
+      name: t.threatInfo?.threatName || 'Unknown',
+      createdAt: t.threatInfo?.createdAt || guessDateValue(t),
+      status: t.threatInfo?.mitigationStatus || 'unknown',
+      severity: t.threatInfo?.confidenceLevel || t.threatInfo?.severity || '—',
+      subtitle: t.agentRealtimeInfo?.agentComputerName || '—',
+    })),
+    ...customAlertData.map(mapCustomAlert),
+  ]
+    .filter((t) => inDateRange(t.createdAt, threatsRange.from, threatsRange.to))
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+  // Separate counts for the card header (respect the active date filter).
+  const recentThreatCount = recentThreats.filter((x) => x.source === 'threat').length;
+  const recentAlertCount = recentThreats.filter((x) => x.source === 'custom-alert').length;
 
   const agentsRange = getRange('s1-agents');
   const filteredAgentData = agentData.filter((a) => inDateRange(guessDateValue(a), agentsRange.from, agentsRange.to));
@@ -1078,13 +1135,13 @@ export default function Dashboard() {
                                 <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} angle={-20} textAnchor="end" />
                                 <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
                                 <Tooltip contentStyle={tooltipStyle} />
-                                <Bar dataKey="value" radius={[4, 4, 0, 0]} cursor="pointer" onClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mitigationStatus', value: data.name, title: `Threats with ${data.name} mitigation status` } })}>{mitigationData.map((d, i) => <Cell key={i} fill={d.fill} />)}</Bar>
+                                <Bar dataKey="value" radius={[4, 4, 0, 0]} cursor="pointer" onClick={(data) => navigate('/dashboard/detail', { state: { dataset: 'threats', filterId: 'mitigationStatus', value: data.name, title: `Threats with ${data.name} mitigation status` } })}>{mitigationData.map((d, i) => <Cell key={i} fill={d.fill} />)}</Bar>
                               </BarChart>
                             </ResponsiveContainer>
                           ) : mitigationChart === 'probability' ? (
                             <div className="h-full overflow-auto space-y-3 pt-2 px-1">
                               {mitigationData.map((d) => (
-                                <div key={d.name} className="cursor-pointer" onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mitigationStatus', value: d.name, title: `Threats with ${d.name} mitigation status` } })}>
+                                <div key={d.name} className="cursor-pointer" onClick={() => navigate('/dashboard/detail', { state: { dataset: 'threats', filterId: 'mitigationStatus', value: d.name, title: `Threats with ${d.name} mitigation status` } })}>
                                   <div className="flex justify-between text-xs text-[var(--muted)] mb-1"><span className="font-medium capitalize">{d.name}</span><span>{mitigationTotal > 0 ? ((d.value / mitigationTotal) * 100).toFixed(1) : 0}%</span></div>
                                   <div className="w-full bg-[var(--muted-bg)] rounded-full h-2.5"><div className="h-2.5 rounded-full" style={{ width: mitigationTotal > 0 ? `${(d.value / mitigationTotal) * 100}%` : '0%', backgroundColor: d.fill }} /></div>
                                 </div>
@@ -1094,7 +1151,7 @@ export default function Dashboard() {
                             <div className="relative h-full flex items-center justify-center">
                               <ResponsiveContainer width="100%" height="100%">
                                 <PieChart>
-                                  <Pie data={mitigationData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="50%" outerRadius="70%" paddingAngle={2} cursor="pointer" onClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mitigationStatus', value: data.name, title: `Threats with ${data.name} mitigation status` } })}>{mitigationData.map((d, i) => <Cell key={i} fill={d.fill} />)}</Pie>
+                                  <Pie data={mitigationData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="50%" outerRadius="70%" paddingAngle={2} cursor="pointer" onClick={(data) => navigate('/dashboard/detail', { state: { dataset: 'threats', filterId: 'mitigationStatus', value: data.name, title: `Threats with ${data.name} mitigation status` } })}>{mitigationData.map((d, i) => <Cell key={i} fill={d.fill} />)}</Pie>
                                   <Tooltip contentStyle={tooltipStyle} />
                                   <Legend iconSize={9} wrapperStyle={{ fontSize: 11, color: 'var(--muted)' }} />
                                 </PieChart>
@@ -1129,7 +1186,7 @@ export default function Dashboard() {
                               <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
                               <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={65} />
                               <Tooltip contentStyle={tooltipStyle} />
-                              <Bar dataKey="value" radius={[0, 4, 4, 0]} cursor="pointer" onClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'confidenceLevel', value: data.name, title: `Threats with ${data.name} confidence` } })}>{severityData.map((d, i) => <Cell key={i} fill={d.fill} />)}</Bar>
+                              <Bar dataKey="value" radius={[0, 4, 4, 0]} cursor="pointer" onClick={(data) => navigate('/dashboard/detail', { state: { dataset: 'threats', filterId: 'confidenceLevel', value: data.name, title: `Threats with ${data.name} confidence` } })}>{severityData.map((d, i) => <Cell key={i} fill={d.fill} />)}</Bar>
                             </BarChart>
                           </ResponsiveContainer>
                         )}
@@ -1139,7 +1196,14 @@ export default function Dashboard() {
                     {/* Recent Threats */}
                     <div key="s1-threats" className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] shadow-sm flex flex-col overflow-hidden" style={visibleS1Widgets.includes('s1-threats') ? {} : { visibility: 'hidden', pointerEvents: 'none' }}>
                       <div className="drag-handle cursor-grab active:cursor-grabbing bg-[var(--muted-bg)] border-b border-[var(--card-border)] px-4 py-3 flex items-center justify-between flex-shrink-0 select-none">
-                        <div><p className="text-xs text-[var(--muted)] font-medium">SentinelOne</p><p className="text-sm font-bold text-[var(--foreground)]">Recent Threats</p></div>
+                        <div className="min-w-0">
+                          <p className="text-xs text-[var(--muted)] font-medium">SentinelOne</p>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="text-sm font-bold text-[var(--foreground)]">Recent Threats</p>
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">Threats {recentThreatCount}</span>
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">Alerts {recentAlertCount}</span>
+                          </div>
+                        </div>
                         <button onClick={(e) => { e.stopPropagation(); removeS1Widget('s1-threats'); }} className={`w-5 h-5 flex items-center justify-center rounded text-[var(--muted)] hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400 transition-colors ml-1 flex-shrink-0 ${isEditMode ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                         </button>
@@ -1149,29 +1213,47 @@ export default function Dashboard() {
                         <DateRangeMini from={threatsRange.from} to={threatsRange.to} onChange={(v) => setRange('s1-threats', v)} />
                       </div>
                       <div className="flex-1 min-h-0 overflow-auto">
-                        {s1Loading ? <Spin /> : s1Error ? <Err msg={s1Error} /> : recentThreats.length === 0 ? <Empty msg="No threats found" /> : (
+                        {s1Loading || customAlertLoading ? <Spin /> : s1Error ? <Err msg={s1Error} /> : recentThreats.length === 0 ? <Empty msg="No threats or alerts found" /> : (
                           <table className="w-full text-xs">
                             <thead className="sticky top-0 z-10 bg-[var(--muted-bg)]">
                               <tr>
                                 <th className="text-left px-3 py-2 font-semibold text-[var(--muted)] border-b border-[var(--card-border)]">Threat</th>
+                                <th className="text-left px-3 py-2 font-semibold text-[var(--muted)] border-b border-[var(--card-border)]">Severity</th>
                                 <th className="text-left px-3 py-2 font-semibold text-[var(--muted)] border-b border-[var(--card-border)]">Status</th>
                               </tr>
                             </thead>
                             <tbody>
                               {recentThreats.map((t, i) => {
-                                const status = t.threatInfo?.mitigationStatus || 'unknown';
+                                const status = t.status || 'unknown';
+                                const isAlert = t.source === 'custom-alert';
+                                const severity = String(t.severity || '—').toUpperCase();
+                                const sevCls = severity === 'CRITICAL' ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+                                  : severity === 'HIGH' ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300'
+                                    : severity === 'MEDIUM' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300'
+                                      : severity === 'LOW' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
+                                        : 'bg-[var(--muted-bg)] text-[var(--muted)]';
+                                const statusLabel = status === 'mitigated' ? 'mitigated'
+                                  : status === 'not_mitigated' ? 'not mit' : (status || 'unknown').replace(/_/g, ' ');
                                 const cls = status === 'mitigated' ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
-                                  : status === 'active' ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
-                                    : status === 'not_mitigated' ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300'
+                                  : status === 'not_mitigated' ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300'
+                                    : status === 'active' ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
                                       : 'bg-[var(--muted-bg)] text-[var(--muted)]';
                                 return (
                                   <tr key={i} className={i % 2 === 0 ? 'bg-[var(--card-bg)]' : 'bg-[var(--muted-bg)]'}>
                                     <td className="px-3 py-2 border-b border-[var(--card-border)]">
-                                      <p className="font-medium text-[var(--foreground)] truncate max-w-[110px]">{t.threatInfo?.threatName || 'Unknown'}</p>
-                                      <p className="text-[var(--muted)] truncate max-w-[110px]">{t.agentRealtimeInfo?.agentComputerName || '—'}</p>
+                                      <div className="flex items-center gap-1.5 min-w-0">
+                                        {isAlert && (
+                                          <span className="flex-shrink-0 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">alert</span>
+                                        )}
+                                        <p className="font-medium text-[var(--foreground)] truncate max-w-[110px]">{t.name}</p>
+                                      </div>
+                                      <p className="text-[var(--muted)] truncate max-w-[110px]">{t.subtitle}</p>
                                     </td>
                                     <td className="px-3 py-2 border-b border-[var(--card-border)]">
-                                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium capitalize ${cls}`}>{status.replace(/_/g, ' ')}</span>
+                                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium capitalize ${sevCls}`}>{severity === '—' ? '—' : severity}</span>
+                                    </td>
+                                    <td className="px-3 py-2 border-b border-[var(--card-border)]">
+                                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium capitalize ${cls}`}>{statusLabel}</span>
                                     </td>
                                   </tr>
                                 );

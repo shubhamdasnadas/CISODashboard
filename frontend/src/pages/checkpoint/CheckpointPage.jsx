@@ -5,6 +5,7 @@ import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, R
 import CheckpointDashboard from './CheckpointDashboard';
 import { useProviders } from '../../context/ProviderContext.jsx';
 import Emailsecuritymttr from '../CyberHygen/Emailsecuritymttr.jsx';
+import AnalyticsLaunchButton from '../../components/AnalyticsLaunchButton.jsx';
 
 const ALL_EVENT_TYPES = ['phishing','malware','suspicious_malware','suspicious_phishing','dlp'];
 
@@ -297,11 +298,11 @@ export default function CheckpointPage() {
     const count = data[name];
     if (!count || count === 0) return;
     
-    navigate('/security/detail', {
-      state: { 
-        dataset: 'checkpoint', 
-        filterId: 'checkpointDate', 
-        value: date, 
+    navigate('/checkpoint/detail', {
+      state: {
+        dataset: 'checkpoint',
+        filterId: 'checkpointDate',
+        value: date,
         title: `${type} events on ${date}`,
         dateFrom: chartStart,
         dateTo: chartEnd,
@@ -383,6 +384,7 @@ export default function CheckpointPage() {
         >
           {syncing ? <><div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />Syncing…</> : 'Sync'}
         </button>
+        <AnalyticsLaunchButton moduleKey="checkpoint" />
       </div>
 
       {syncMsg && (

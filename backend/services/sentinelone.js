@@ -41,6 +41,38 @@ async function fetchAllPages(baseUrl, apiToken, endpoint, extraParams = {}) {
   return all;
 }
 
+async function syncCustomAlerts(orgSlug, creds) {
+  const baseUrl = (creds.baseUrl || process.env.S1_BASE_URL)?.replace(/\/$/, '');
+  const apiToken = creds.tokenKey;
+
+  if (!baseUrl || !apiToken) {
+    throw new Error('SentinelOne not configured — provide tokenKey/baseUrl');
+  }
+
+  const pool = getOrgPool(orgSlug);
+
+  console.log(`[S1 custom-alerts][org=${orgSlug}] Fetching cloud detection alerts...`);
+  const extraParams = {};
+  if (creds.accountId) extraParams.accountIds = creds.accountId;
+  const alerts = await fetchAllPages(baseUrl, apiToken, '/web/api/v2.1/cloud-detection/alerts', extraParams);
+  console.log(`[S1 custom-alerts][org=${orgSlug}] Got ${alerts.length} alerts`);
+
+  if (alerts.length > 0) {
+    await pool.query('TRUNCATE TABLE s1_custome_alert');
+    for (const a of alerts) {
+      const id = a.id || a.alertId || null;
+      await pool.query(
+        `INSERT INTO s1_custome_alert (alert_id, data) VALUES ($1, $2::jsonb)
+         ON CONFLICT (alert_id) DO UPDATE SET data = EXCLUDED.data, synced_at = NOW()`,
+        [id, JSON.stringify(a)]
+      );
+    }
+  }
+
+  console.log(`[S1 custom-alerts][org=${orgSlug}] Done.`);
+  return { alerts: alerts.length, syncedAt: new Date().toISOString() };
+}
+
 async function syncSentinelOne(orgSlug, creds) {
   const baseUrl = (creds.baseUrl || process.env.S1_BASE_URL)?.replace(/\/$/, '');
   const apiToken = creds.tokenKey;
@@ -145,4 +177,4 @@ async function syncSentinelOne(orgSlug, creds) {
   };
 }
 
-module.exports = { syncSentinelOne };
+module.exports = { syncSentinelOne, syncCustomAlerts };

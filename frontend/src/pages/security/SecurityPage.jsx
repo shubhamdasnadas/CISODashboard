@@ -3,6 +3,7 @@ import Threats from './Threats.jsx';
 import S1Cve from './S1Cve.jsx';
 import S1Agent from './S1Agent.jsx';
 import { useProviders } from '../../context/ProviderContext.jsx';
+import AnalyticsLaunchButton from '../../components/AnalyticsLaunchButton.jsx';
 
 const TABS = [
   {
@@ -41,9 +42,12 @@ export default function SecurityPage() {
     <div className="flex flex-col min-h-full">
 
       {/* Page header */}
-      <div className="px-6 pt-6 pb-0">
-        <h1 className="text-2xl font-bold text-[var(--foreground)]">{activeTool}</h1>
-        <p className="text-sm text-[var(--muted)] mt-1">{activeTool} endpoint protection — threats, CVEs, agents</p>
+      <div className="px-6 pt-6 pb-0 flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-[var(--foreground)]">{activeTool}</h1>
+          <p className="text-sm text-[var(--muted)] mt-1">{activeTool} endpoint protection — threats, CVEs, agents</p>
+        </div>
+        <AnalyticsLaunchButton moduleKey="security" />
       </div>
 
       {/* Tab bar */}
