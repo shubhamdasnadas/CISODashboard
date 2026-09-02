@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, cloneElement } from 'react';
 import { Outlet, NavLink, Navigate, useNavigate, useLocation, useOutlet } from 'react-router-dom';
 import api from '../api';
+import * as session from '../utils/session.js';
 import { PAGES } from '../constants/navPages.js';
 import { useOrg } from '../context/OrgContext.jsx';
 import { useTheme } from '../context/ThemeContext.jsx';
@@ -83,7 +84,7 @@ const NAV = [
 
 function Sidebar({ mobileOpen, onClose, allowedPages }) {
   const navigate = useNavigate();
-  const user = JSON.parse(localStorage.getItem('ciso_user') || '{}');
+  const user = session.getUser();
   const { setCurrentOrg } = useOrg();
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -100,9 +101,7 @@ function Sidebar({ mobileOpen, onClose, allowedPages }) {
 
   const logout = async () => {
     setLoggingOut(true);
-    localStorage.removeItem('ciso_token');
-    localStorage.removeItem('ciso_user');
-    localStorage.removeItem('ciso_current_org_id');
+    session.clearSession();
     setCurrentOrg(null);
     navigate('/login');
   };
@@ -196,7 +195,7 @@ function Sidebar({ mobileOpen, onClose, allowedPages }) {
 function TopBar({ onMenuClick }) {
   const { organisations, currentOrg, switchOrg } = useOrg();
   const { theme, toggleTheme } = useTheme();
-  const user = JSON.parse(localStorage.getItem('ciso_user') || '{}');
+  const user = session.getUser();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -304,7 +303,7 @@ function TopBar({ onMenuClick }) {
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { currentOrg } = useOrg();
-  const user = JSON.parse(localStorage.getItem('ciso_user') || '{}');
+  const user = session.getUser();
 
   // ── Page access control ────────────────────────────────────────────────────
   // null = all pages allowed. Array = only these page keys.

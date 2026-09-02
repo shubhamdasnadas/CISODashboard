@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import api from '../api';
+import * as session from '../utils/session.js';
 
 const OrgContext = createContext({
   organisations: [],
@@ -9,8 +10,6 @@ const OrgContext = createContext({
   switchOrg: () => {},
   refresh: () => {},
 });
-
-const STORAGE_KEY = 'ciso_current_org_id';
 
 export function OrgProvider({ children }) {
   const [organisations, setOrganisations] = useState([]);
@@ -26,13 +25,14 @@ export function OrgProvider({ children }) {
 
       // Restore previous selection ONLY if it still belongs to this user.
       // Otherwise leave currentOrg null so the user is forced to the picker.
-      const savedId = parseInt(localStorage.getItem(STORAGE_KEY) || '0', 10);
+      const savedId = session.getOrgId();
       const found = list.find((o) => o.id === savedId);
       if (found) {
         setCurrentOrgState(found);
+        api.defaults.headers.common['X-Org-Id'] = String(found.id);
       } else {
         setCurrentOrgState(null);
-        localStorage.removeItem(STORAGE_KEY);
+        session.setOrgId(null);
         delete api.defaults.headers.common['X-Org-Id'];
       }
     } finally {
@@ -41,25 +41,26 @@ export function OrgProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    if (localStorage.getItem('ciso_token')) {
+    if (session.getToken()) {
       refresh();
     } else {
       setLoading(false);
     }
-  }, [refresh]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Single source of truth: writes BOTH context state AND localStorage.
+  // Single source of truth: writes BOTH context state AND the tab's session.
   // Pass the full org object (not just an id) so we don't depend on the
   // organisations list being loaded yet.
   const setCurrentOrg = useCallback((org) => {
     if (org) {
       setCurrentOrgState(org);
-      localStorage.setItem(STORAGE_KEY, String(org.id));
+      session.setOrgId(org.id);
       // Keep the axios default header in sync so all API calls send the right org
       api.defaults.headers.common['X-Org-Id'] = String(org.id);
     } else {
       setCurrentOrgState(null);
-      localStorage.removeItem(STORAGE_KEY);
+      session.setOrgId(null);
       delete api.defaults.headers.common['X-Org-Id'];
     }
   }, []);

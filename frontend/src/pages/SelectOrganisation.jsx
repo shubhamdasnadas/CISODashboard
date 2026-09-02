@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
+import * as session from '../utils/session.js';
 import { useOrg } from '../context/OrgContext.jsx';
 
 export default function SelectOrganisation() {
@@ -22,7 +23,7 @@ export default function SelectOrganisation() {
   };
 
   useEffect(() => {
-    if (!localStorage.getItem('ciso_token')) {
+    if (!session.getToken()) {
       navigate('/login', { replace: true });
       return;
     }
@@ -46,9 +47,7 @@ export default function SelectOrganisation() {
   }
 
   function logout() {
-    localStorage.removeItem('ciso_token');
-    localStorage.removeItem('ciso_user');
-    localStorage.removeItem('ciso_current_org_id');
+    session.clearSession();
     setCurrentOrg(null);
     navigate('/login', { replace: true });
   }

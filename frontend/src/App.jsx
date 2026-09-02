@@ -65,12 +65,14 @@ import Members from './pages/Members.jsx';
 import AdminOrganizations from './pages/admin/AdminOrganizations.jsx';
 import AdminOrgUsers from './pages/admin/AdminOrgUsers.jsx';
 
+import * as session from './utils/session.js';
+
 function ProtectedRoute({ children, requireSuperAdmin = false }) {
-  const token = localStorage.getItem('ciso_token');
+  const token = session.getToken();
   if (!token) return <Navigate to="/login" replace />;
   if (requireSuperAdmin) {
     try {
-      const user = JSON.parse(localStorage.getItem('ciso_user') || '{}');
+      const user = session.getUser();
       if (user.role !== 'superAdmin') return <Navigate to="/dashboard" replace />;
     } catch {
       return <Navigate to="/login" replace />;
@@ -89,10 +91,8 @@ function OrgGate({ children }) {
     );
   }
   // SuperAdmin can access all routes even without a selected org
-  try {
-    const user = JSON.parse(localStorage.getItem('ciso_user') || '{}');
-    if (user.role === 'superAdmin') return children;
-  } catch {}
+  const user = session.getUser();
+  if (user.role === 'superAdmin') return children;
   if (!currentOrg) {
     return <Navigate to="/select-organisation" replace />;
   }

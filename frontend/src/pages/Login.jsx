@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import api from '../api';
+import * as session from '../utils/session.js';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -13,9 +14,11 @@ export default function Login() {
   const debounceRef = useRef(null);
 
   useEffect(() => {
-    const token = localStorage.getItem('ciso_token');
-    if (token) navigate('/select-organisation');
-  }, [navigate]);
+    // A fresh visit to /login starts a NEW session for this tab — otherwise
+    // the tab would silently resume whatever user last logged in here.
+    if (session.getToken()) navigate('/select-organisation');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!username) {
@@ -54,10 +57,10 @@ export default function Login() {
         // Password valid, now go to OTP screen
         navigate('/verify-otp?username=' + encodeURIComponent(username));
       } else {
-        // Legacy fallback - directly logged in
-        localStorage.setItem('ciso_token', data.token);
-        localStorage.setItem('ciso_user', JSON.stringify(data.user));
-        localStorage.removeItem('ciso_current_org_id');
+        // Legacy fallback - directly logged in (creates this tab's own session)
+        session.setAuth({ token: data.token, user: data.user });
+        session.setOrgId(null);
+        delete api.defaults.headers.common['X-Org-Id'];
         navigate('/select-organisation');
       }
     } catch (err) {

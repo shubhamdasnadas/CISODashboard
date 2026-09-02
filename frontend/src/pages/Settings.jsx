@@ -1,3 +1,4 @@
+import * as session from '../utils/session.js';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
@@ -15,7 +16,7 @@ export default function Settings() {
   const navigate = useNavigate();
   const { currentOrg } = useOrg();
   const { selectedProviders, setSelectedProvider } = useProviders();
-  const user = JSON.parse(localStorage.getItem('ciso_user') || '{}');
+  const user = session.getUser();
   const [activeTab, setActiveTab] = useState('account');
 
   // Available providers for each category

@@ -1,9 +1,10 @@
+import * as session from '../utils/session.js';
 import { useEffect, useState } from 'react';
 import api from '../api';
 import { Card, PageHeader, PrimaryButton, Input, Badge } from '../components/UI.jsx';
 
 export default function Organisations() {
-  const user = JSON.parse(localStorage.getItem('ciso_user') || '{}');
+  const user = session.getUser();
   const [orgs, setOrgs] = useState([]);
   const [form, setForm] = useState({ org_name: '', address: '', mobile_no: '' });
   const [loading, setLoading] = useState(true);

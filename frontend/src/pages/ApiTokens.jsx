@@ -1,3 +1,4 @@
+import * as session from '../utils/session.js';
 import { useEffect, useState } from 'react';
 import api from '../api';
 import { Card, PageHeader, PrimaryButton, Input, Select, Badge } from '../components/UI.jsx';
@@ -6,7 +7,7 @@ import { useOrg } from '../context/OrgContext.jsx';
 export default function ApiTokens() {
   const [tokens, setTokens] = useState([]);
   const [form, setForm] = useState({ api_name: '', token: '' });
-  const user = JSON.parse(localStorage.getItem('ciso_user') || '{}');
+  const user = session.getUser();
   const isAdmin = user.role === 'superAdmin' || user.role === 'admin';
   const { currentOrg, switchOrg, organisations } = useOrg();
 

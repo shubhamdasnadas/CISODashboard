@@ -1,3 +1,4 @@
+import * as session from '../utils/session.js';
 import { useState, useEffect, useRef } from 'react';
 import api from '../api';
 import { useOrg } from '../context/OrgContext.jsx';
@@ -31,7 +32,7 @@ function labelCls() {
 
 export default function Members() {
   const { currentOrg } = useOrg();
-  const user = JSON.parse(localStorage.getItem('ciso_user') || '{}');
+  const user = session.getUser();
   const isSuperAdmin = user.role === 'superAdmin';
   const canManage = isSuperAdmin || user.role === 'admin' || user.role === 'org_admin';
 

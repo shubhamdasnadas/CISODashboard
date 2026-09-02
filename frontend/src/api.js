@@ -1,22 +1,20 @@
 import axios from 'axios';
+import { initSession, getToken, getOrgId, clearSession } from './utils/session.js';
 
 const api = axios.create({
   baseURL: '/api',
   headers: { 'Content-Type': 'application/json' },
 });
 
-// Restore active org from localStorage so the header survives page refreshes
-const _savedOrgId = localStorage.getItem('ciso_current_org_id');
-if (_savedOrgId) {
-  api.defaults.headers.common['X-Org-Id'] = _savedOrgId;
-}
+// Make sure this tab has a session id before any request goes out.
+initSession();
 
-// Attach JWT + active org to every request
+// Attach the tab's own token + org on every request (per-tab sessions).
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('ciso_token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
+  const token = getToken();
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  const orgId = getOrgId();
+  if (orgId) config.headers['X-Org-Id'] = String(orgId);
   return config;
 });
 
@@ -34,14 +32,13 @@ api.interceptors.response.use(
     const isAuthFlow =
       url.includes('/auth/login') ||
       url.includes('/auth/check-username') ||
+      url.includes('/auth/otp') ||
       url.includes('/auth/2fa/') ||
       url.includes('/organisations');
 
     if (status === 401 && !isAuthFlow && !_authRedirecting) {
       _authRedirecting = true;
-      localStorage.removeItem('ciso_token');
-      localStorage.removeItem('ciso_user');
-      localStorage.removeItem('ciso_current_org_id');
+      clearSession(); // drops only THIS tab's session
       if (window.location.pathname !== '/login') {
         window.location.href = '/login';
       }

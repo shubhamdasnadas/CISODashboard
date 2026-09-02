@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import api from '../api';
+import * as session from '../utils/session.js';
 
 export default function OtpVerify() {
   const navigate = useNavigate();
@@ -112,10 +113,9 @@ export default function OtpVerify() {
         throw new Error('Invalid flow: missing username or sessionId');
       }
 
-      // Store token and user
-      localStorage.setItem('ciso_token', token);
-      localStorage.setItem('ciso_user', JSON.stringify(user));
-      localStorage.removeItem('ciso_current_org_id');
+      // Store token and user in this tab's own session
+      session.setAuth({ token, user });
+      session.setOrgId(null);
       localStorage.removeItem('ciso_2fa_email');
       delete api.defaults.headers.common['X-Org-Id'];
       navigate('/select-organisation', { replace: true });

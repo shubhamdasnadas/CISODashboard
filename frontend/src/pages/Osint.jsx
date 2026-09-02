@@ -1,3 +1,4 @@
+import * as session from '../utils/session.js';
 import { useEffect, useState } from 'react';
 import api from '../api';
 import { Card, PageHeader, PrimaryButton, Badge } from '../components/UI.jsx';
@@ -39,7 +40,7 @@ export default function Osint() {
   const [loading, setLoading] = useState(true);
   const [activeCategory, setActiveCategory] = useState(CATEGORIES[0]);
 
-  const user = JSON.parse(localStorage.getItem('ciso_user') || '{}');
+  const user = session.getUser();
   const isAdmin = user.role === 'superAdmin' || user.role === 'admin';
 
   async function load() {
