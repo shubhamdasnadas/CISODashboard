@@ -6,6 +6,9 @@ import {
   Cell, PieChart, Pie, Legend, ComposedChart, LabelList,
 } from 'recharts';
 import api from '../api.js';
+import { useOrg } from '../context/OrgContext.jsx';
+import { fetchReportData } from './report/fetchReportData.js';
+import { generatePdfOnServer } from './report/generatePdf.jsx';
 import WidgetSkeleton from './dashboard/WidgetSkeleton.jsx';
 
 // ─── Preserved API (used by AnalyticsLaunchButton across module pages) ─────────
@@ -1750,9 +1753,27 @@ const NAV_ITEMS = [
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function Analytics() {
   const navigate = useNavigate();
+  const { currentOrg } = useOrg();
   const [searchParams] = useSearchParams();
   const launchModule = searchParams.get('module');
   const [activeTab, setActiveTab] = useState('security');
+
+  // PDF generation state
+  const [generating, setGenerating] = useState(false);
+  const [genStep, setGenStep]       = useState('');
+  const [genError, setGenError]     = useState('');
+
+  const handleGeneratePdf = async () => {
+    setGenerating(true); setGenError(''); setGenStep('Fetching data…');
+    try {
+      const data = await fetchReportData(currentOrg?.org_name || 'Organisation');
+      setGenStep('Rendering report…');
+      await generatePdfOnServer(data, currentOrg?.org_name || 'Organisation');
+      alert('✓ PDF Report Downloaded Successfully!\n\nThe full security report has been generated and saved to your downloads folder.');
+    } catch (err) {
+      setGenError(`PDF generation failed: ${err?.message || err}`);
+    } finally { setGenerating(false); setGenStep(''); }
+  };
 
   // Per-module data slices
   const [agents, setAgents] = useState([]);
@@ -1898,13 +1919,48 @@ export default function Analytics() {
 
   return (
     <div className="p-5 lg:p-7 space-y-6 min-h-screen bg-[var(--background)]">
+      {/* PDF generating overlay */}
+      {generating && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center">
+          <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-8 shadow-2xl flex flex-col items-center gap-4 min-w-[260px]">
+            <div className="w-12 h-12 rounded-full border-4 border-indigo-600 border-t-transparent animate-spin" />
+            <div className="text-center">
+              <p className="font-semibold text-[var(--foreground)]">Generating PDF Report</p>
+              <p className="text-sm text-[var(--muted)] mt-1">{genStep}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-[var(--foreground)]">Analytics</h1>
-        <p className="text-sm text-[var(--muted)] mt-0.5">
-          Live security &amp; operations widgets across all integrated modules · data synced from the database
-        </p>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-[var(--foreground)]">Analytics</h1>
+          <p className="text-sm text-[var(--muted)] mt-0.5">
+            Live security &amp; operations widgets across all integrated modules · data synced from the database
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleGeneratePdf}
+            disabled={generating}
+            className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+            {generating ? 'Generating…' : 'Generate PDF'}
+          </button>
+        </div>
       </div>
+
+      {/* Error banner */}
+      {genError && (
+        <div className="flex items-center justify-between gap-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl px-4 py-3">
+          <p className="text-sm text-red-700 dark:text-red-400">{genError}</p>
+          <button onClick={() => setGenError('')} className="text-red-400 hover:text-red-600 flex-shrink-0">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+      )}
 
       {/* Module tabs — one tab per integrated module */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1 -mx-1 px-1 border-b border-[var(--card-border)]">

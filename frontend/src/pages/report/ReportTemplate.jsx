@@ -50,27 +50,31 @@ function MttrGaugeCard({ cfgKey, mttr }) {
 }
 
 // ── Theme tokens ──────────────────────────────────────────────────────────────
+// Dark navy page background matching the reference design.
+const PAGE_BG = '#0f172a';
+const CARD_BG = '#1e293b';
+const CARD_BORDER = '#334155';
 const C = {
-  ink: '#111827', sub: '#4b5563', muted: '#6b7280', faint: '#9ca3af',
-  line: '#e5e7eb', lighter: '#f3f4f6', bg: '#f9fafb',
-  brand: '#4f46e5', brandDark: '#4338ca',
-  green: '#16a34a', red: '#dc2626', amber: '#d97706', sky: '#0284c7', violet: '#7c3aed', slate: '#64748b',
+  ink: '#f1f5f9', sub: '#cbd5e1', muted: '#94a3b8', faint: '#64748b',
+  line: '#334155', lighter: '#334155', bg: '#1e293b',
+  brand: '#818cf8', brandDark: '#6366f1',
+  green: '#4ade80', red: '#f87171', amber: '#fbbf24', sky: '#38bdf8', violet: '#a78bfa', slate: '#94a3b8',
 };
 
-// Techsec cover palette — yellow accent on white, matching the reference title page.
+// Cover page palette — dark navy with bright accent colours.
 const TC = {
   yellow: '#f6c500', yellowDeep: '#e0a800',
-  ink: '#16181d', sub: '#4b5563', muted: '#6b7280',
-  line: '#e5e7eb', panel: '#fafafa',
-  red: '#b3231b', bg: '#ffffff',
+  ink: '#f8fafc', sub: '#cbd5e1', muted: '#94a3b8',
+  line: '#334155', panel: '#1e293b',
+  red: '#f87171', bg: PAGE_BG,
 };
 
 const S = StyleSheet.create({
-  page: { fontSize: 9, color: C.ink, backgroundColor: '#ffffff', paddingTop: 26, paddingBottom: 34, paddingLeft: 40, paddingRight: 40 },
-  // Cover page uses a flush layout so the yellow accent rule sits at the very
+  page: { fontSize: 9, color: C.ink, backgroundColor: PAGE_BG, paddingTop: 26, paddingBottom: 34, paddingLeft: 40, paddingRight: 40 },
+  // Cover page uses a flush layout so the accent rule sits at the very
   // top edge; the cover renders its own internal header/footer, so no padding
   // and no running PageFooter are applied.
-  coverPage: { fontSize: 9, color: C.ink, backgroundColor: '#ffffff', paddingTop: 0, paddingBottom: 0, paddingLeft: 0, paddingRight: 0 },
+  coverPage: { fontSize: 9, color: C.ink, backgroundColor: PAGE_BG, paddingTop: 0, paddingBottom: 0, paddingLeft: 0, paddingRight: 0 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   brandBar: { height: 4, backgroundColor: C.brand, marginBottom: 12, borderRadius: 2 },
   // Running letterhead at the top of every content page (below the brand rule).
@@ -83,18 +87,18 @@ const S = StyleSheet.create({
   sectionTitle: { fontSize: 15, fontWeight: 700, color: C.ink },
   sectionRule: { flex: 1, height: 2, backgroundColor: C.line, marginLeft: 14 },
   kpiRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
-  kpiTile: { flex: 1, borderWidth: 1, borderColor: C.line, borderRadius: 8, padding: 8, backgroundColor: C.bg },
+  kpiTile: { flex: 1, borderWidth: 1, borderColor: C.line, borderRadius: 8, padding: 8, backgroundColor: CARD_BG },
   kpiLabel: { fontSize: 7.5, fontWeight: 600, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3 },
   kpiValue: { fontSize: 17, fontWeight: 800, color: C.ink },
   kpiSub: { fontSize: 7.5, color: C.faint, marginTop: 1 },
   block: { marginBottom: 12 },
-  card: { borderWidth: 1, borderColor: C.line, borderRadius: 8, backgroundColor: '#fff', padding: 10 },
+  card: { borderWidth: 1, borderColor: C.line, borderRadius: 8, backgroundColor: CARD_BG, padding: 10 },
   cardTitle: { fontSize: 10.5, fontWeight: 700, color: C.ink, marginBottom: 8 },
   // Row holding two chart cards side-by-side (each child flexes to half width).
   row2: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 12 },
   // Row holding four chart cards side-by-side (each child flexes to quarter width).
   row4: { flexDirection: 'row', flexWrap: 'nowrap', gap: 8, marginBottom: 12 },
-  chartHalf: { flex: 1, minWidth: 0, borderWidth: 1, borderColor: C.line, borderRadius: 8, backgroundColor: '#fff', padding: 10 },
+  chartHalf: { flex: 1, minWidth: 0, borderWidth: 1, borderColor: C.line, borderRadius: 8, backgroundColor: CARD_BG, padding: 10 },
   chartHalfTitle: { fontSize: 10.5, fontWeight: 700, color: C.ink, marginBottom: 8 },
   // Full-width, vertically centered column (used for the two weekly charts that
   // should stack one-below-the-other and sit centered on the page).
@@ -339,77 +343,71 @@ const fmtDate = (iso) => {
 // classification caveat, and a footer. The client name is dynamic (orgName).
 function CoverPage({ orgName, generatedAt }) {
   const date = fmtDate(generatedAt);
-  // Stable, deterministic report id derived from the generated-at timestamp so
-  // the cover is reproducible across runs for the same report date.
-  const idNum = (new Date(generatedAt).getTime() % 1000000).toString().padStart(6, '0');
-  const reportId = `TGP-IR-2026-${idNum}`;
-  const rows = [
-    ['For', orgName || 'Client Organisation'],
-    ['Assessment Type', 'Security Posture Assessment'],
-    ['Report Date', date],
-    ['Version', '1.0'],
-    ['Assessment Period', `${date} (Reporting Period)`],
+
+  // Section index entries for the report index panel.
+  const INDEX_ENTRIES = [
+    { num: '1',  label: 'Executive Summary',            sub: 'Security posture overview',            color: '#818cf8' },
+    { num: '2',  label: 'Checkpoint Harmony',           sub: 'Email & cloud security',              color: '#818cf8' },
+    { num: '3.1',label: 'SentinelOne — Threats',        sub: 'Threat analytics & detection',        color: '#f87171' },
+    { num: '3.2',label: 'SentinelOne — Agents',         sub: 'Agent health & OS distribution',      color: '#f87171' },
+    { num: '3.3',label: 'Most At-Risk Entities',        sub: 'Highest-risk devices & users',        color: '#f87171' },
+    { num: '3.4',label: 'Application CVEs',             sub: 'Known vulnerabilities',                color: '#a78bfa' },
+    { num: '3.5',label: 'Application Insights',         sub: 'Installed software analysis',         color: '#38bdf8' },
+    { num: '4',  label: 'Zoho Desk',                    sub: 'Support ticket analytics',            color: '#4ade80' },
+    { num: '5',  label: 'Palo Alto Firewall',           sub: 'Network security events',             color: '#fbbf24' },
+    { num: '6',  label: 'Weekly Insights',              sub: '7-day period comparison',             color: '#a78bfa' },
   ];
+
   return (
-    <View style={{ backgroundColor: TC.bg, flex: 1, fontSize: 9 }}>
-      {/* Top yellow accent rule */}
-      <View style={{ height: 10, backgroundColor: TC.yellow }} />
-      <View style={{ paddingTop: 18, paddingBottom: 18, paddingLeft: 40, paddingRight: 40 }}>
-        {/* Header: company name + classification badge */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <View style={{ width: 26, height: 26, borderRadius: 5, backgroundColor: TC.yellow, marginRight: 10 }} />
-            <Text style={{ fontSize: 14, fontWeight: 800, color: TC.ink }}>Techsec Global Private Limited</Text>
-          </View>
-          <View style={[S.badge, { backgroundColor: TC.red, color: '#fff', fontSize: 7.5, fontWeight: 700, paddingVertical: 3, paddingHorizontal: 8, letterSpacing: 0.5 }]}>
-            <Text>CONFIDENTIAL</Text>
-          </View>
+    <View style={{ backgroundColor: PAGE_BG, flex: 1, fontSize: 9, padding: 40 }}>
+      {/* ── Top accent rule ── */}
+      <View style={{ height: 6, backgroundColor: '#f6c500', borderRadius: 3, marginBottom: 32 }} />
+
+      {/* ── Org name centered ── */}
+      <View style={{ alignItems: 'center', marginBottom: 10 }}>
+        <Text style={{ fontSize: 18, fontWeight: 800, color: TC.ink, textAlign: 'center' }}>{orgName || 'Organisation'}</Text>
+      </View>
+
+      {/* ── Date badge centered ── */}
+      <View style={{ alignItems: 'center', marginBottom: 36 }}>
+        <View style={{ backgroundColor: '#1e293b', borderWidth: 1, borderColor: '#475569', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 18 }}>
+          <Text style={{ fontSize: 10, fontWeight: 600, color: '#e2e8f0', letterSpacing: 0.5 }}>{date}</Text>
         </View>
-        <View style={{ height: 2, backgroundColor: TC.line, marginTop: 14 }} />
       </View>
 
-      {/* Title block */}
-      <View style={{ paddingLeft: 40, paddingRight: 40, paddingTop: 8, paddingBottom: 8 }}>
-        <Text style={{ fontSize: 11, color: TC.muted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 6 }}>Techsec Global Private Limited</Text>
-        <Text style={{ fontSize: 26, fontWeight: 800, color: TC.ink }}>Security Assessment Report</Text>
-        <View style={{ height: 4, backgroundColor: TC.yellow, width: 64, marginTop: 12 }} />
-      </View>
+      {/* ── Report Index panel ── */}
+      <View style={{ backgroundColor: '#1e293b', borderWidth: 1, borderColor: '#334155', borderRadius: 10, padding: 24, flex: 1 }}>
+        {/* Index header */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 20 }}>
+          <View style={{ width: 4, height: 20, backgroundColor: '#f6c500', borderRadius: 2, marginRight: 10 }} />
+          <Text style={{ fontSize: 13, fontWeight: 800, color: '#f8fafc', letterSpacing: 2, textTransform: 'uppercase' }}>Report Index</Text>
+        </View>
 
-      {/* Assessment details table */}
-      <View style={{ paddingLeft: 40, paddingRight: 40, marginTop: 14 }}>
-        <View style={{ borderWidth: 1, borderColor: TC.line, borderRadius: 8, overflow: 'hidden' }}>
-          {rows.map(([k, v], i) => (
-            <View key={k} style={{ flexDirection: 'row', borderTopWidth: i === 0 ? 0 : 1, borderTopColor: TC.line, backgroundColor: i % 2 ? '#ffffff' : TC.panel }}>
-              <View style={{ width: 160, paddingVertical: 7, paddingHorizontal: 12, borderRightWidth: 1, borderRightColor: TC.line }}>
-                <Text style={{ fontSize: 8.5, fontWeight: 700, color: TC.sub, textTransform: 'uppercase', letterSpacing: 0.4 }}>{k}</Text>
-              </View>
-              <View style={{ flex: 1, paddingVertical: 7, paddingHorizontal: 12, justifyContent: 'center' }}>
-                <Text style={{ fontSize: 9.5, color: TC.ink }}>{v}</Text>
-              </View>
+        {/* Index rows */}
+        {INDEX_ENTRIES.map((e, i) => (
+          <View key={i} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: i === 0 ? 0 : 1, borderTopColor: '#334155' }}>
+            {/* Number badge */}
+            <View style={{ width: 30, height: 30, borderRadius: 6, backgroundColor: e.color, justifyContent: 'center', alignItems: 'center', marginRight: 14 }}>
+              <Text style={{ fontSize: 9, fontWeight: 800, color: '#ffffff' }}>{e.num}</Text>
             </View>
-          ))}
-        </View>
+            {/* Label + subtitle */}
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 11, fontWeight: 700, color: '#e2e8f0' }}>{e.label}</Text>
+              <Text style={{ fontSize: 8, color: '#94a3b8', marginTop: 2 }}>{e.sub}</Text>
+            </View>
+          </View>
+        ))}
       </View>
 
-      {/* Classification caveat */}
-      <View style={{ paddingLeft: 40, paddingRight: 40, marginTop: 16 }}>
-        <Text style={{ fontSize: 8.5, color: TC.muted, lineHeight: 1.5 }}>
-          This report is classified as <Text style={{ fontWeight: 700, color: TC.ink }}>CONFIDENTIAL</Text> and is intended solely for the
-          named client and authorised recipients. It contains security-sensitive information and must not be
-          distributed without the written permission of Techsec Global Private Limited.
-        </Text>
-      </View>
-
-      <View style={{ flex: 1 }} />
-
-      {/* Footer */}
-      <View style={{ paddingLeft: 40, paddingRight: 40, paddingBottom: 14 }}>
-        <View style={{ height: 1, backgroundColor: TC.line, marginBottom: 8 }} />
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text style={{ fontSize: 7.5, color: TC.muted }}>Techsec Global Private Limited</Text>
-          <Text style={{ fontSize: 7.5, color: TC.muted }}>{reportId}</Text>
-          <Text style={{ fontSize: 7.5, color: TC.muted }}>Page 1 of 1</Text>
+      {/* ── Bottom classification ── */}
+      <View style={{ marginTop: 24, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={{ backgroundColor: TC.red, borderRadius: 4, paddingVertical: 2, paddingHorizontal: 8, marginRight: 10 }}>
+            <Text style={{ fontSize: 7.5, fontWeight: 700, color: '#fff', letterSpacing: 0.5 }}>CONFIDENTIAL</Text>
+          </View>
+          <Text style={{ fontSize: 8, color: '#64748b' }}>CISO Security Report</Text>
         </View>
+        <Text style={{ fontSize: 8, color: '#64748b' }}>{orgName}</Text>
       </View>
     </View>
   );
@@ -1106,6 +1104,58 @@ function WeeklyInsights({ weekly }) {
   );
 }
 
+// ── Section divider (cover) page ──────────────────────────────────────────────
+// A full-page divider that introduces each major section with a large section
+// number, title, subtitle, org name, and date. Rendered as a flush page (no
+// content-header or page-footer) in the section's accent colour.
+function SectionCoverPage({ number, title, subtitle, color, orgName, generatedAt }) {
+  const date = fmtDate(generatedAt);
+  const secCount = 10; // total sections (1 + 2 + 5 S1 subs + 4 + 5 + 6 = 10 divider pages)
+  return (
+    <View style={{ backgroundColor: PAGE_BG, flex: 1, fontSize: 9, padding: 40 }}>
+      {/* Top accent rule in the section colour */}
+      <View style={{ height: 6, backgroundColor: color, borderRadius: 3, marginBottom: 24 }} />
+
+      {/* Org name + confidential tag */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 }}>
+        <Text style={{ fontSize: 10, fontWeight: 700, color: '#e2e8f0' }}>{orgName}</Text>
+        <View style={[S.badge, { backgroundColor: '#dc2626', color: '#fff', fontSize: 7, paddingVertical: 2, paddingHorizontal: 6 }]}>
+          <Text>CONFIDENTIAL</Text>
+        </View>
+      </View>
+
+      {/* Section number — large, in accent colour */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+        <View style={{ width: 56, height: 56, borderRadius: 12, backgroundColor: color, justifyContent: 'center', alignItems: 'center', marginRight: 20 }}>
+          <Text style={{ fontSize: 28, fontWeight: 800, color: '#ffffff' }}>{number}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 28, fontWeight: 800, color: '#f8fafc' }}>{title}</Text>
+          {subtitle ? <Text style={{ fontSize: 11, color: '#94a3b8', marginTop: 6 }}>{subtitle}</Text> : null}
+        </View>
+      </View>
+
+      {/* Thin rule */}
+      <View style={{ height: 2, backgroundColor: color, width: 80, borderRadius: 1, marginBottom: 20 }} />
+
+      {/* Meta row */}
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Text style={{ fontSize: 9, color: '#64748b' }}>CISO Security Report · {orgName}</Text>
+        <Text style={{ fontSize: 9, color: '#64748b' }}>{date} · Section {number}</Text>
+      </View>
+
+      <View style={{ flex: 1 }} />
+
+      {/* Bottom rule + page label */}
+      <View style={{ height: 1, backgroundColor: '#334155', marginBottom: 8 }} />
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Text style={{ fontSize: 7.5, color: '#475569' }}>CISO Security Report · {orgName}</Text>
+        <Text style={{ fontSize: 7.5, color: '#475569' }}>{date}</Text>
+      </View>
+    </View>
+  );
+}
+
 // ── Root document ─────────────────────────────────────────────────────────────
 export default function
   ReportTemplate({ data }) {
@@ -1120,65 +1170,105 @@ export default function
       creator="CISO Dashboard"
       producer="CISO Dashboard"
     >
+      {/* ── Front cover ── */}
       <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
         <CoverPage orgName={data.orgName} generatedAt={data.generatedAt} />
       </Page>
 
+      {/* ── Section 1: Executive Summary ── */}
+      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+        <SectionCoverPage number="1" title="Executive Summary" subtitle="Strategic overview of the organisation's security posture for the reporting period" color="#4f46e5" orgName={data.orgName} generatedAt={data.generatedAt} />
+      </Page>
       <Page size="A3" orientation="landscape" style={S.page} wrap>
         <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="1" />
         <ContentHeader orgName={data.orgName} sectionLabel="1 · Executive Summary" />
         <ExecutiveSummary d={data} weekly={weekly} />
       </Page>
 
+      {/* ── Section 2: Checkpoint Harmony ── */}
+      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+        <SectionCoverPage number="2" title="Checkpoint Harmony" subtitle="Email & cloud security events, severity analysis, and remediation tracking" color="#8b5cf6" orgName={data.orgName} generatedAt={data.generatedAt} />
+      </Page>
       <Page size="A3" orientation="landscape" style={S.page} wrap>
-        {/* <CoverPage orgName={data.orgName} generatedAt={data.generatedAt} /> */}
         <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="2" />
         <ContentHeader orgName={data.orgName} sectionLabel="2 · Checkpoint Harmony" />
         <CheckpointSection events={data.harmonyEvents} weekly={weekly} mttr={data.mttr} />
       </Page>
 
+      {/* ── Section 3.1: SentinelOne Threats ── */}
+      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+        <SectionCoverPage number="3.1" title="SentinelOne — Threat Analytics" subtitle="Threat detection, classification, mitigation status, and attack surface analysis" color="#dc2626" orgName={data.orgName} generatedAt={data.generatedAt} />
+      </Page>
       <Page size="A3" orientation="landscape" style={S.page} wrap>
         <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3.1" />
         <ContentHeader orgName={data.orgName} sectionLabel="3.1 · SentinelOne Threats" />
         <ThreatAnalytics threats={data.s1Threats} mttr={data.mttr} />
       </Page>
 
+      {/* ── Section 3.2: SentinelOne Agents ── */}
+      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+        <SectionCoverPage number="3.2" title="SentinelOne — Agent Analytics" subtitle="Agent health, connectivity, OS distribution, and version management" color="#0ea5e9" orgName={data.orgName} generatedAt={data.generatedAt} />
+      </Page>
       <Page size="A3" orientation="landscape" style={S.page} wrap>
         <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3.2" />
         <ContentHeader orgName={data.orgName} sectionLabel="3.2 · SentinelOne Agents" />
         <AgentAnalytics agents={data.s1Agents} generatedAt={data.generatedAt} removed={data.removedAgentsCount} />
       </Page>
 
+      {/* ── Section 3.3: Most At-Risk ── */}
+      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+        <SectionCoverPage number="3.3" title="Most At-Risk Entities" subtitle="Highest-risk devices, users, and groups across the endpoint fleet" color="#d97706" orgName={data.orgName} generatedAt={data.generatedAt} />
+      </Page>
       <Page size="A3" orientation="landscape" style={S.page} wrap>
         <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3.3" />
         <ContentHeader orgName={data.orgName} sectionLabel="3.3 · Most At-Risk" />
         <AtRiskSection threats={data.s1Threats} />
       </Page>
 
+      {/* ── Section 3.4: Application CVEs ── */}
+      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+        <SectionCoverPage number="3.4" title="Application CVEs" subtitle="Known vulnerabilities across applications, severity distribution, and aging" color="#7c3aed" orgName={data.orgName} generatedAt={data.generatedAt} />
+      </Page>
       <Page size="A3" orientation="landscape" style={S.page} wrap>
         <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3.4" />
         <ContentHeader orgName={data.orgName} sectionLabel="3.4 · Application CVEs" />
         <CveSection cves={data.s1Cves} />
       </Page>
 
+      {/* ── Section 3.5: Application Insights ── */}
+      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+        <SectionCoverPage number="3.5" title="Application Insights" subtitle="Application inventory, OS breakdown, and installed software analysis" color="#0ea5e9" orgName={data.orgName} generatedAt={data.generatedAt} />
+      </Page>
       <Page size="A3" orientation="landscape" style={S.page} wrap>
         <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3.5" />
         <ContentHeader orgName={data.orgName} sectionLabel="3.5 · Application Insights" />
         <AppInsightsSection apps={data.s1AppAgent} />
       </Page>
 
+      {/* ── Section 4: Zoho Desk ── */}
+      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+        <SectionCoverPage number="4" title="Zoho Desk" subtitle="Support ticket analytics, resolution times, engineer performance, and MTTR" color="#d97706" orgName={data.orgName} generatedAt={data.generatedAt} />
+      </Page>
       <Page size="A3" orientation="landscape" style={S.page} wrap>
         <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="4" />
         <ContentHeader orgName={data.orgName} sectionLabel="4 · Zoho Desk" />
         <ZohoSection tickets={data.zohoTickets} mttr={data.mttr} />
       </Page>
 
+      {/* ── Section 5: Palo Alto Firewall ── */}
+      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+        <SectionCoverPage number="5" title="Palo Alto Firewall" subtitle="Network sessions, high-risk events, attack sources, and firewall posture" color="#ea580c" orgName={data.orgName} generatedAt={data.generatedAt} />
+      </Page>
       <Page size="A3" orientation="landscape" style={S.page} wrap>
         <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="5" />
         <ContentHeader orgName={data.orgName} sectionLabel="5 · Palo Alto Firewall" />
         <FirewallSection fw={fw} />
       </Page>
 
+      {/* ── Section 6: Weekly Insights ── */}
+      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+        <SectionCoverPage number="6" title="Weekly Insights" subtitle="7-day period comparison — threats, events, remediation rates, and new agents" color="#7c3aed" orgName={data.orgName} generatedAt={data.generatedAt} />
+      </Page>
       <Page size="A3" orientation="landscape" style={S.page} wrap>
         <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="6" />
         <ContentHeader orgName={data.orgName} sectionLabel="6 · Weekly Insights" />

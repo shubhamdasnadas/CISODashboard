@@ -146,9 +146,13 @@ router.get('/files/:filename', (req, res) => {
 });
 
 // GET /api/reports
+// Only return reports that were generated as PDFs (have a file_path on disk),
+// so the frontend table shows only auto-generated security reports.
 router.get('/', async (req, res) => {
   try {
-    const { rows } = await req.orgPool.query('SELECT * FROM reports ORDER BY created_at DESC');
+    const { rows } = await req.orgPool.query(
+      'SELECT * FROM reports WHERE file_path IS NOT NULL ORDER BY created_at DESC'
+    );
     res.json({ reports: rows });
   } catch (err) {
     res.status(500).json({ message: err.message });

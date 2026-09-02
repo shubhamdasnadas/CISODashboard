@@ -266,7 +266,7 @@ export function VGauge({ pct = 0, size = 150, title, goodLabel = 'Resolved', bad
         <Circle cx={cx} cy={cy} r={4} fill="#111827" />
       </Svg>
       <Text style={{ fontSize: 15, fontWeight: 800, color: needleColor, marginTop: 2 }}>{Math.round(p)}%</Text>
-      {title ? <Text style={{ fontSize: 8, fontWeight: 700, color: '#374151', marginTop: 2, textAlign: 'center' }}>{title}</Text> : null}
+      {title ? <Text style={{ fontSize: 8, fontWeight: 700, color: '#e2e8f0', marginTop: 2, textAlign: 'center' }}>{title}</Text> : null}
       <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <View style={{ width: 7, height: 7, borderRadius: 2, backgroundColor: '#2ED573', marginRight: 3 }} />
@@ -372,10 +372,10 @@ export function VCorpMember({ corps = [], size = 220 }) {
         return (
           <View key={corp.corporation || ci} style={{
             width: size, height: size, borderRadius: size / 2,
-            backgroundColor: '#fdf4f2', borderWidth: 1.5, borderColor: 'rgba(220,100,80,0.30)',
+            backgroundColor: '#3b1a1a', borderWidth: 1.5, borderColor: 'rgba(248,113,113,0.30)',
             alignItems: 'center', justifyContent: 'center', padding: 6,
           }}>
-            <Text style={{ position: 'absolute', top: size / 2 - 12, fontSize: 8, fontWeight: 700, color: '#c04030', textAlign: 'center', width: size - 12 }}>{corp.corporation}</Text>
+            <Text style={{ position: 'absolute', top: size / 2 - 12, fontSize: 8, fontWeight: 700, color: '#fca5a5', textAlign: 'center', width: size - 12 }}>{corp.corporation}</Text>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 4, marginTop: 14 }}>
               {assignees.length === 0 ? (
                 <Text style={{ fontSize: 7, color: '#9ca3af' }}>No assignees</Text>
@@ -560,12 +560,12 @@ export function VScoreBar({ label, value = 0, max = 100, color = '#4f46e5', sub,
   return (
     <View style={{ width, marginBottom: 6 }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
-        <Text style={{ fontSize: 7.5, color: '#374151', fontWeight: 600 }}>{label}</Text>
-        <Text style={{ fontSize: 7.5, color: '#6b7280' }}>
+        <Text style={{ fontSize: 7.5, color: '#e2e8f0', fontWeight: 600 }}>{label}</Text>
+        <Text style={{ fontSize: 7.5, color: '#94a3b8' }}>
           {value}{max !== 100 ? ` / ${max}` : ''}{' '}{Math.round(pct * 100)}%
         </Text>
       </View>
-      <View style={{ width, height, backgroundColor: '#f1f5f9', borderRadius: height / 2 }}>
+      <View style={{ width, height, backgroundColor: '#334155', borderRadius: height / 2 }}>
         <View style={{ width: `${pct * 100}%`, height, backgroundColor: color, borderRadius: height / 2 }} />
       </View>
       {sub ? <Text style={{ fontSize: 6.5, color: '#9ca3af', marginTop: 1 }}>{sub}</Text> : null}
