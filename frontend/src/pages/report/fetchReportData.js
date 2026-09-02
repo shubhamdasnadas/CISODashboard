@@ -5,7 +5,7 @@ import api from '../../api';
  * that falls on that calendar day is returned so the PDF reflects a single-day
  * snapshot.  When omitted the full dataset is returned (existing behaviour).
  */
-export async function fetchReportData(orgName, forDate) {
+export async function fetchReportData(orgName, forDate, section) {
   const safe = (promise) => promise.catch(() => null);
 
   // Build an optional query-string param so backends that support date
@@ -33,6 +33,13 @@ export async function fetchReportData(orgName, forDate) {
     removedAgentsRes,
     zohoRes,
     healthRes,
+    // MDM (Hexnode)
+    mdmDevicesRes,
+    mdmAppsRes,
+    // NVD
+    nvdStatsRes,
+    // Microsoft 365
+    msDataRes,
   ] = await Promise.all([
     safe(api.get(`/sentinelone/db/threats${dateQs}`)),
     safe(api.get(`/sentinelone/db/agents${dateQs}`)),
@@ -53,6 +60,13 @@ export async function fetchReportData(orgName, forDate) {
     safe(api.get('/sentinelone/db/agents/removed-count')),
     safe(api.get(`/zoho/tickets-db${dateQs}`)),
     safe(api.get('/compliance-health-scores')),
+    // MDM
+    safe(api.get('/hexnode/db/devices')),
+    safe(api.get('/hexnode/db/applications')),
+    // NVD
+    safe(api.get('/nvd/stats')),
+    // Microsoft 365
+    safe(api.get('/microsoft/data')),
   ]);
 
   // --- client-side date filtering helper ---
@@ -128,6 +142,7 @@ export async function fetchReportData(orgName, forDate) {
   return {
     generatedAt: forDate ? new Date(`${forDate}T23:59:59`) : new Date(),
     orgName: orgName || 'Organisation',
+    section: section || null,
     s1Threats,
     s1Agents:           agentsRes?.data?.agents    ?? [],
     s1Cves:             cveRes?.data?.data ?? cveRes?.data?.cves ?? [],
@@ -147,5 +162,12 @@ export async function fetchReportData(orgName, forDate) {
     removedAgentsCount: removedAgentsRes?.data?.count ?? 0,
     zohoTickets,
     mttr,
+    // MDM (Hexnode)
+    mdmDevices:         Array.isArray(mdmDevicesRes?.data?.data) ? mdmDevicesRes.data.data : [],
+    mdmApps:            Array.isArray(mdmAppsRes?.data?.data) ? mdmAppsRes.data.data : [],
+    // NVD
+    nvdStats:           nvdStatsRes?.data ?? null,
+    // Microsoft 365
+    msData:             msDataRes?.data ?? {},
   };
 }

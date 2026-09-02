@@ -1078,7 +1078,240 @@ function FirewallSection({ fw }) {
   );
 }
 
-// ── Weekly Insights ───────────────────────────────────────────────────────────
+// ── MDM / Hexnode ─────────────────────────────────────────────────────────────
+function MdmSection({ devices, apps }) {
+  const devList = Array.isArray(devices) ? devices : [];
+  const appList = Array.isArray(apps) ? apps : [];
+
+  // KPI stats
+  const staleCount = devList.filter(d =>
+    d.last_reported && (Date.now() - new Date(d.last_reported).getTime()) > 7 * 24 * 60 * 60 * 1000
+  ).length;
+  const nonCompliant = devList.filter(d => d.compliant !== true).length;
+  const compliantCount = devList.filter(d => d.compliant === true).length;
+
+  // OS distribution donut
+  const osMap = {};
+  devList.forEach(d => {
+    const k = d.os_name || d.os_type || d.platform || d.os || 'Unknown';
+    osMap[k] = (osMap[k] || 0) + 1;
+  });
+  const osData = Object.entries(osMap).sort((a, b) => b[1] - a[1])
+    .map(([name, value]) => ({ name, value }));
+
+  // Compliance donut
+  const complianceData = devList.length === 0 ? [] : [
+    { name: 'Compliant', value: compliantCount },
+    { name: 'Non-compliant', value: nonCompliant },
+  ].filter(d => d.value > 0);
+  const complianceColors = ['#10b981', '#ef4444'];
+
+  // Device type donut
+  const typeMap = {};
+  devList.forEach(d => {
+    const k = d.device_type || 'Unknown';
+    typeMap[k] = (typeMap[k] || 0) + 1;
+  });
+  const deviceTypeData = Object.entries(typeMap).sort((a, b) => b[1] - a[1])
+    .map(([name, value]) => ({ name, value }));
+
+  // App platform donut
+  const platMap = {};
+  appList.forEach(a => {
+    const k = a.platform || a.os_type || a.os_name || 'Unknown';
+    platMap[k] = (platMap[k] || 0) + 1;
+  });
+  const appPlatformData = Object.entries(platMap).sort((a, b) => b[1] - a[1])
+    .map(([name, value]) => ({ name, value }));
+
+  return (
+    <View>
+      <SectionDivider number="M" title="MDM — Hexnode Mobile Device Management" color="#06b6d4" />
+      <Text style={S.lead}>
+        {devList.length} enrolled devices · {appList.length} applications tracked · {nonCompliant} non-compliant · {staleCount} stale ({">"} 7 days).
+      </Text>
+      <View style={S.kpiRow} wrap={false}>
+        <KpiTile label="Enrolled Devices" value={devList.length} color={C.sky} />
+        <KpiTile label="Compliant" value={compliantCount} color={C.green}
+          sub={devList.length ? `${Math.round((compliantCount / devList.length) * 100)}% of total` : ''} />
+        <KpiTile label="Non-compliant" value={nonCompliant} color={C.red} />
+        <KpiTile label="Stale (>7d)" value={staleCount} color={C.amber} />
+        <KpiTile label="Applications" value={appList.length} color={C.violet} />
+      </View>
+      <View style={S.row2}>
+        <DonutSide title="Device OS / Platform" data={osData} colors={COLORS} donutSize={110} half />
+        <DonutSide title="Compliance Status" data={complianceData} colors={complianceColors} donutSize={110} half />
+        <DonutSide title="Device Type" data={deviceTypeData} colors={COLORS} donutSize={110} half />
+        {appPlatformData.length > 0 && (
+          <DonutSide title="App Platform Breakdown" data={appPlatformData} colors={COLORS} donutSize={110} half />
+        )}
+      </View>
+    </View>
+  );
+}
+
+// ── NVD ───────────────────────────────────────────────────────────────────────
+function NvdSection({ nvdStats }) {
+  const stats = nvdStats || null;
+  const sevCount = (name) => ((stats?.severityCounts || []).find(s => s.severity === name))?.count ?? 0;
+  const critCount = sevCount('CRITICAL');
+  const highCount = sevCount('HIGH');
+  const medCount  = sevCount('MEDIUM');
+  const lowCount  = sevCount('LOW');
+  const highRisk  = critCount + highCount;
+  const highRiskPct = stats?.total ? Math.round((highRisk / stats.total) * 100) : 0;
+
+  const severityData = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
+    .filter(s => sevCount(s) > 0)
+    .map(s => ({ name: s, value: sevCount(s) }));
+  const sevColors = ['#a855f7', '#ef4444', '#eab308', '#3b82f6'];
+
+  const statusData = (stats?.statusCounts || [])
+    .filter(s => s.status)
+    .sort((a, b) => b.count - a.count)
+    .map(s => ({ name: s.status, value: s.count }));
+
+  return (
+    <View>
+      <SectionDivider number="N" title="NVD — National Vulnerability Database" color="#8b5cf6" />
+      <Text style={S.lead}>
+        {stats ? `${stats.total?.toLocaleString('en-IN') || 0} CVEs stored in the local database.` : 'No NVD data synced yet.'}
+        {stats && highRisk > 0 ? ` ${highRisk} critical/high severity (${highRiskPct}% of total).` : ''}
+      </Text>
+      <View style={S.kpiRow} wrap={false}>
+        <KpiTile label="Total CVEs" value={stats ? (stats.total || 0).toLocaleString('en-IN') : '—'} color={C.brand} />
+        <KpiTile label="CRITICAL" value={critCount} color={C.violet} />
+        <KpiTile label="HIGH" value={highCount} color={C.red} />
+        <KpiTile label="MEDIUM" value={medCount} color={C.amber} />
+        <KpiTile label="LOW" value={lowCount} color={C.sky} />
+        <KpiTile label="Critical + High" value={highRisk} color={C.red} sub={`${highRiskPct}% of total`} />
+        <KpiTile label="Last Synced" value={stats?.lastSynced ? new Date(stats.lastSynced).toLocaleDateString('en-GB') : '—'} color={C.slate} />
+      </View>
+      <View style={S.row2}>
+        {severityData.length > 0 && (
+          <DonutSide title="CVEs by Severity" data={severityData} colors={sevColors} donutSize={120} half />
+        )}
+        {statusData.length > 0 && (
+          <HBarBlock title="CVEs by Status" data={statusData} color={C.brand} half />
+        )}
+      </View>
+    </View>
+  );
+}
+
+// ── Microsoft 365 ─────────────────────────────────────────────────────────────
+function MicrosoftSection({ msData }) {
+  const arr = (key) => msData?.[key]?.data?.value ?? [];
+
+  const riskyUsers       = arr('riskyUsers');
+  const users            = arr('users');
+  const riskDetections   = arr('riskDetections');
+  const signIns          = arr('auditSignIns');
+  const securityAlerts   = arr('securityAlerts');
+  const secureScore      = arr('secureScores')[0] || null;
+  const managedDevices   = arr('managedDevices');
+  const serviceIssues    = arr('serviceIssues');
+  const subscribedSkus   = arr('subscribedSkus');
+  const authMeta         = msData?.['organization']?.data?.value?.[0];
+
+  const tenantName       = authMeta?.displayName || authMeta?.userPrincipalName || '—';
+  const failedSignIns    = signIns.filter(s => s.status?.errorCode !== 0);
+  const failedPct        = signIns.length ? Math.round((failedSignIns.length / signIns.length) * 100) : 0;
+  const assignedLicenses = subscribedSkus.reduce((s, sku) => s + (sku.consumedUnits || 0), 0);
+  const totalLicenses    = subscribedSkus.reduce((s, sku) => s + (sku.prepaidUnits?.enabled || 0), 0);
+  const licenseUtil      = totalLicenses ? Math.round((assignedLicenses / totalLicenses) * 100) : 0;
+  const unassigned       = Math.max(0, totalLicenses - assignedLicenses);
+
+  // Risk Detection donut
+  const riskEvtMap = {};
+  riskDetections.forEach(r => {
+    const k = r.riskEventType || 'unknown';
+    riskEvtMap[k] = (riskEvtMap[k] || 0) + 1;
+  });
+  const riskEvtData = Object.entries(riskEvtMap).sort((a, b) => b[1] - a[1])
+    .slice(0, 8).map(([name, value]) => ({ name: name.length > 30 ? name.slice(0, 30) + '…' : name, value }));
+
+  // Risky users by level donut
+  const riskLvlMap = {};
+  riskyUsers.forEach(u => { const k = u.riskLevel || 'unknown'; riskLvlMap[k] = (riskLvlMap[k] || 0) + 1; });
+  const riskLvlData = Object.entries(riskLvlMap).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value }));
+
+  // Alerts by severity donut
+  const alertSevMap = {};
+  securityAlerts.forEach(a => { const k = a.severity || 'unknown'; alertSevMap[k] = (alertSevMap[k] || 0) + 1; });
+  const alertSevData = Object.entries(alertSevMap).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value }));
+
+  // Device compliance donut
+  const compMap = {};
+  managedDevices.forEach(d => { const k = d.complianceState || 'unknown'; compMap[k] = (compMap[k] || 0) + 1; });
+  const complianceData = Object.entries(compMap).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value }));
+
+  // Sign-in trend (last 15 days)
+  const dayMap = {};
+  signIns.forEach(s => {
+    const day = s.createdDateTime ? s.createdDateTime.slice(0, 10) : null;
+    if (!day) return;
+    if (!dayMap[day]) dayMap[day] = { date: day, success: 0, failure: 0 };
+    if (s.status?.errorCode === 0) dayMap[day].success += 1; else dayMap[day].failure += 1;
+  });
+  const signInTrend = Object.values(dayMap).sort((a, b) => a.date.localeCompare(b.date)).slice(-15)
+    .map(d => ({ name: d.date.slice(5), value: d.success + d.failure }));
+
+  return (
+    <View>
+      <SectionDivider number="MS" title="Microsoft 365 — Cloud Identity & Security" color="#3b82f6" />
+      <Text style={S.lead}>
+        Tenant: {tenantName} · {users.length} users · {signIns.length} sign-ins · {failedSignIns.length} failed ({failedPct}%) · {riskyUsers.length} risky users.
+        {secureScore ? ` Secure Score: ${secureScore.currentScore ?? '—'}/${secureScore.maxScore ?? '—'}.` : ''}
+      </Text>
+      <View style={S.kpiRow} wrap={false}>
+        <KpiTile label="Sign-ins" value={signIns.length} color={C.sky} />
+        <KpiTile label="Failed Sign-ins" value={failedSignIns.length} color={C.red} sub={`${failedPct}% of sign-ins`} />
+        <KpiTile label="Risky Users" value={riskyUsers.length} color={C.red} />
+        <KpiTile label="Total Users" value={users.length} color={C.brand} />
+        <KpiTile label="Secure Score" value={secureScore?.currentScore ?? '—'} color={C.green}
+          sub={secureScore?.maxScore ? `/ ${secureScore.maxScore}` : ''} />
+        <KpiTile label="Security Alerts" value={securityAlerts.length} color={C.amber} />
+      </View>
+      <View style={S.kpiRow} wrap={false}>
+        <KpiTile label="License Utilization" value={`${licenseUtil}%`} color={C.violet}
+          sub={`${assignedLicenses} / ${totalLicenses} assigned`} />
+        <KpiTile label="Unassigned Licenses" value={unassigned} color={C.slate} />
+        <KpiTile label="Managed Devices" value={managedDevices.length} color={C.sky} />
+        <KpiTile label="Service Issues" value={serviceIssues.length} color={C.amber} />
+        <KpiTile label="License SKUs" value={subscribedSkus.length} color={C.brand} />
+      </View>
+      <View style={S.row2}>
+        {riskEvtData.length > 0 && (
+          <HBarBlock title="Risk Detections by Type" data={riskEvtData} color={C.violet} half />
+        )}
+        {riskLvlData.length > 0 && (
+          <DonutSide title="Risky Users by Level" data={riskLvlData} colors={COLORS} donutSize={110} half />
+        )}
+        {alertSevData.length > 0 && (
+          <DonutSide title="Alerts by Severity" data={alertSevData} colors={COLORS} donutSize={110} half />
+        )}
+        {complianceData.length > 0 && (
+          <DonutSide title="Device Compliance State" data={complianceData} colors={COLORS} donutSize={110} half />
+        )}
+      </View>
+      {signInTrend.length > 0 && (
+        <View style={S.row2}>
+          <LineBlock title="Sign-in Trend (last 15 days)" data={signInTrend} color={C.sky} half labelKey="name" valueKey="value" />
+          {totalLicenses > 0 && (
+            <View style={S.chartHalf} wrap={false}>
+              <Text style={S.chartHalfTitle}>License Utilization</Text>
+              <VScoreBar label="Assigned Licenses" value={licenseUtil} color={C.brand} width={300}
+                sub={`${assignedLicenses} assigned · ${unassigned} free · ${totalLicenses} total`} />
+            </View>
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
+
+
 function WeeklyInsights({ weekly }) {
   return (
     <View>
@@ -1157,11 +1390,167 @@ function SectionCoverPage({ number, title, subtitle, color, orgName, generatedAt
 }
 
 // ── Root document ─────────────────────────────────────────────────────────────
+// When `data.section` is set, render only a section-scoped cover + content page
+// for that section — useful for generating a PDF that matches the active tab on
+// the Analytics page. When omitted or "all", render the full document (existing
+// behaviour).
+const SECTION_META = {
+  checkpoint: { number: '2',    title: 'Checkpoint Harmony',          subtitle: 'Email & cloud security events, severity analysis, and remediation tracking', color: '#8b5cf6' },
+  security:   { number: '3.1',  title: 'SentinelOne',                  subtitle: 'Threat detection, agent health, CVEs, and application analytics', color: '#dc2626' },
+  threats:    { number: '3.1',  title: 'SentinelOne — Threats',       subtitle: 'Threat analytics & detection',       color: '#dc2626' },
+  agents:     { number: '3.2',  title: 'SentinelOne — Agents',        subtitle: 'Agent health & OS distribution',      color: '#0ea5e9' },
+  atRisk:     { number: '3.3',  title: 'Most At-Risk Entities',      subtitle: 'Highest-risk devices & users',        color: '#d97706' },
+  cves:       { number: '3.4',  title: 'Application CVEs',            subtitle: 'Known vulnerabilities',              color: '#7c3aed' },
+  apps:       { number: '3.5',  title: 'Application Insights',      subtitle: 'Application inventory & analysis',   color: '#0ea5e9' },
+  zoho:       { number: '4',    title: 'Zoho Desk',                    subtitle: 'Support ticket analytics, resolution times, engineer performance, and MTTR', color: '#d97706' },
+  firewall:   { number: '5',    title: 'Palo Alto Firewall',          subtitle: 'Network sessions, high-risk events, attack sources, and firewall posture', color: '#ea580c' },
+  mdm:        { number: 'M',    title: 'MDM — Hexnode',                subtitle: 'Mobile device management enrollment, compliance, and app tracking', color: '#06b6d4' },
+  nvd:        { number: 'N',    title: 'NVD — CVE Database',          subtitle: 'National vulnerability database statistics & severity distribution', color: '#8b5cf6' },
+  microsoft:  { number: 'MS',   title: 'Microsoft 365',               subtitle: 'Cloud identity, sign-in analytics, risky users, and secure score', color: '#3b82f6' },
+};
+
 export default function
   ReportTemplate({ data }) {
   if (!data) return null;
   const weekly = computeWeeklyStats(data.harmonyEvents, data.s1Threats, data.s1Agents, data.s1Cves);
   const fw = buildFirewallSummary(data);
+  const section = data.section || 'all';
+
+  // ── Helpers to render each section's content page (no cover) ───────────────────
+  const renderContent = (sec) => {
+    switch (sec) {
+      case 'exec':
+        return (
+          <>
+            <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="1" />
+            <ContentHeader orgName={data.orgName} sectionLabel="1 · Executive Summary" />
+            <ExecutiveSummary d={data} weekly={weekly} />
+          </>
+        );
+      case 'checkpoint':
+        return (
+          <>
+            <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="2" />
+            <ContentHeader orgName={data.orgName} sectionLabel="2 · Checkpoint Harmony" />
+            <CheckpointSection events={data.harmonyEvents} weekly={weekly} mttr={data.mttr} />
+          </>
+        );
+      case 'threats':
+        return (
+          <>
+            <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3.1" />
+            <ContentHeader orgName={data.orgName} sectionLabel="3.1 · SentinelOne Threats" />
+            <ThreatAnalytics threats={data.s1Threats} mttr={data.mttr} />
+          </>
+        );
+      case 'agents':
+        return (
+          <>
+            <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3.2" />
+            <ContentHeader orgName={data.orgName} sectionLabel="3.2 · SentinelOne Agents" />
+            <AgentAnalytics agents={data.s1Agents} generatedAt={data.generatedAt} removed={data.removedAgentsCount} />
+          </>
+        );
+      case 'atRisk':
+        return (
+          <>
+            <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3.3" />
+            <ContentHeader orgName={data.orgName} sectionLabel="3.3 · Most At-Risk" />
+            <AtRiskSection threats={data.s1Threats} />
+          </>
+        );
+      case 'cves':
+        return (
+          <>
+            <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3.4" />
+            <ContentHeader orgName={data.orgName} sectionLabel="3.4 · Application CVEs" />
+            <CveSection cves={data.s1Cves} />
+          </>
+        );
+      case 'apps':
+        return (
+          <>
+            <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3.5" />
+            <ContentHeader orgName={data.orgName} sectionLabel="3.5 · Application Insights" />
+            <AppInsightsSection apps={data.s1AppAgent} />
+          </>
+        );
+      case 'zoho':
+        return (
+          <>
+            <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="4" />
+            <ContentHeader orgName={data.orgName} sectionLabel="4 · Zoho Desk" />
+            <ZohoSection tickets={data.zohoTickets} mttr={data.mttr} />
+          </>
+        );
+      case 'firewall':
+        return (
+          <>
+            <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="5" />
+            <ContentHeader orgName={data.orgName} sectionLabel="5 · Palo Alto Firewall" />
+            <FirewallSection fw={fw} />
+          </>
+        );
+      case 'weekly':
+        return (
+          <>
+            <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="6" />
+            <ContentHeader orgName={data.orgName} sectionLabel="6 · Weekly Insights" />
+            <WeeklyInsights weekly={weekly} d={data} />
+          </>
+        );
+      case 'mdm':
+        return (
+          <>
+            <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="M" />
+            <ContentHeader orgName={data.orgName} sectionLabel="M · MDM / Hexnode" />
+            <MdmSection devices={data.mdmDevices} apps={data.mdmApps} generatedAt={data.generatedAt} />
+          </>
+        );
+      case 'nvd':
+        return (
+          <>
+            <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="N" />
+            <ContentHeader orgName={data.orgName} sectionLabel="N · NVD CVE Database" />
+            <NvdSection nvdStats={data.nvdStats} />
+          </>
+        );
+      case 'microsoft':
+        return (
+          <>
+            <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="MS" />
+            <ContentHeader orgName={data.orgName} sectionLabel="MS · Microsoft 365" />
+            <MicrosoftSection msData={data.msData} generatedAt={data.generatedAt} />
+          </>
+        );
+      case 'security':
+        return (
+          <>
+            <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3" />
+            <ContentHeader orgName={data.orgName} sectionLabel="3 · SentinelOne" />
+            <ThreatAnalytics threats={data.s1Threats} mttr={data.mttr} />
+          </>
+        );
+      default:
+        return null;
+    }
+  };
+
+  const renderSectionPages = (sec, includeWeekly = false) => {
+    const meta = SECTION_META[sec];
+    if (!meta) return null;
+    return (
+      <>
+        <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+          <SectionCoverPage number={meta.number} title={meta.title} subtitle={meta.subtitle} color={meta.color} orgName={data.orgName} generatedAt={data.generatedAt} />
+        </Page>
+        <Page size="A3" orientation="landscape" style={S.page} wrap>
+          {renderContent(sec)}
+        </Page>
+        {includeWeekly && renderContent('weekly')}
+      </>
+    );
+  };
 
   return (
     <Document
@@ -1170,110 +1559,110 @@ export default function
       creator="CISO Dashboard"
       producer="CISO Dashboard"
     >
-      {/* ── Front cover ── */}
+      {/* ── Front cover (always shown) ── */}
       <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
         <CoverPage orgName={data.orgName} generatedAt={data.generatedAt} />
       </Page>
 
-      {/* ── Section 1: Executive Summary ── */}
-      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
-        <SectionCoverPage number="1" title="Executive Summary" subtitle="Strategic overview of the organisation's security posture for the reporting period" color="#4f46e5" orgName={data.orgName} generatedAt={data.generatedAt} />
-      </Page>
-      <Page size="A3" orientation="landscape" style={S.page} wrap>
-        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="1" />
-        <ContentHeader orgName={data.orgName} sectionLabel="1 · Executive Summary" />
-        <ExecutiveSummary d={data} weekly={weekly} />
-      </Page>
+      {/* ── Full report (section === 'all') ── */}
+      {section === 'all' && (
+        <>
+          {/* Section 1: Executive Summary */}
+          <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+            <SectionCoverPage number="1" title="Executive Summary" subtitle="Strategic overview of the organisation's security posture for the reporting period" color="#4f46e5" orgName={data.orgName} generatedAt={data.generatedAt} />
+          </Page>
+          <Page size="A3" orientation="landscape" style={S.page} wrap>
+            {renderContent('exec')}
+          </Page>
 
-      {/* ── Section 2: Checkpoint Harmony ── */}
-      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
-        <SectionCoverPage number="2" title="Checkpoint Harmony" subtitle="Email & cloud security events, severity analysis, and remediation tracking" color="#8b5cf6" orgName={data.orgName} generatedAt={data.generatedAt} />
-      </Page>
-      <Page size="A3" orientation="landscape" style={S.page} wrap>
-        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="2" />
-        <ContentHeader orgName={data.orgName} sectionLabel="2 · Checkpoint Harmony" />
-        <CheckpointSection events={data.harmonyEvents} weekly={weekly} mttr={data.mttr} />
-      </Page>
+          {/* Section 2: Checkpoint Harmony */}
+          <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+            <SectionCoverPage number="2" title="Checkpoint Harmony" subtitle="Email & cloud security events, severity analysis, and remediation tracking" color="#8b5cf6" orgName={data.orgName} generatedAt={data.generatedAt} />
+          </Page>
+          <Page size="A3" orientation="landscape" style={S.page} wrap>
+            {renderContent('checkpoint')}
+          </Page>
 
-      {/* ── Section 3.1: SentinelOne Threats ── */}
-      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
-        <SectionCoverPage number="3.1" title="SentinelOne — Threat Analytics" subtitle="Threat detection, classification, mitigation status, and attack surface analysis" color="#dc2626" orgName={data.orgName} generatedAt={data.generatedAt} />
-      </Page>
-      <Page size="A3" orientation="landscape" style={S.page} wrap>
-        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3.1" />
-        <ContentHeader orgName={data.orgName} sectionLabel="3.1 · SentinelOne Threats" />
-        <ThreatAnalytics threats={data.s1Threats} mttr={data.mttr} />
-      </Page>
+          {/* Section 3.1: SentinelOne Threats */}
+          <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+            <SectionCoverPage number="3.1" title="SentinelOne — Threat Analytics" subtitle="Threat detection, classification, mitigation status, and attack surface analysis" color="#dc2626" orgName={data.orgName} generatedAt={data.generatedAt} />
+          </Page>
+          <Page size="A3" orientation="landscape" style={S.page} wrap>
+            {renderContent('threats')}
+          </Page>
 
-      {/* ── Section 3.2: SentinelOne Agents ── */}
-      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
-        <SectionCoverPage number="3.2" title="SentinelOne — Agent Analytics" subtitle="Agent health, connectivity, OS distribution, and version management" color="#0ea5e9" orgName={data.orgName} generatedAt={data.generatedAt} />
-      </Page>
-      <Page size="A3" orientation="landscape" style={S.page} wrap>
-        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3.2" />
-        <ContentHeader orgName={data.orgName} sectionLabel="3.2 · SentinelOne Agents" />
-        <AgentAnalytics agents={data.s1Agents} generatedAt={data.generatedAt} removed={data.removedAgentsCount} />
-      </Page>
+          {/* Section 3.2: SentinelOne Agents */}
+          <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+            <SectionCoverPage number="3.2" title="SentinelOne — Agent Analytics" subtitle="Agent health, connectivity, OS distribution, and version management" color="#0ea5e9" orgName={data.orgName} generatedAt={data.generatedAt} />
+          </Page>
+          <Page size="A3" orientation="landscape" style={S.page} wrap>
+            {renderContent('agents')}
+          </Page>
 
-      {/* ── Section 3.3: Most At-Risk ── */}
-      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
-        <SectionCoverPage number="3.3" title="Most At-Risk Entities" subtitle="Highest-risk devices, users, and groups across the endpoint fleet" color="#d97706" orgName={data.orgName} generatedAt={data.generatedAt} />
-      </Page>
-      <Page size="A3" orientation="landscape" style={S.page} wrap>
-        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3.3" />
-        <ContentHeader orgName={data.orgName} sectionLabel="3.3 · Most At-Risk" />
-        <AtRiskSection threats={data.s1Threats} />
-      </Page>
+          {/* Section 3.3: Most At-Risk */}
+          <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+            <SectionCoverPage number="3.3" title="Most At-Risk Entities" subtitle="Highest-risk devices, users, and groups across the endpoint fleet" color="#d97706" orgName={data.orgName} generatedAt={data.generatedAt} />
+          </Page>
+          <Page size="A3" orientation="landscape" style={S.page} wrap>
+            {renderContent('atRisk')}
+          </Page>
 
-      {/* ── Section 3.4: Application CVEs ── */}
-      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
-        <SectionCoverPage number="3.4" title="Application CVEs" subtitle="Known vulnerabilities across applications, severity distribution, and aging" color="#7c3aed" orgName={data.orgName} generatedAt={data.generatedAt} />
-      </Page>
-      <Page size="A3" orientation="landscape" style={S.page} wrap>
-        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3.4" />
-        <ContentHeader orgName={data.orgName} sectionLabel="3.4 · Application CVEs" />
-        <CveSection cves={data.s1Cves} />
-      </Page>
+          {/* Section 3.4: Application CVEs */}
+          <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+            <SectionCoverPage number="3.4" title="Application CVEs" subtitle="Known vulnerabilities across applications, severity distribution, and aging" color="#7c3aed" orgName={data.orgName} generatedAt={data.generatedAt} />
+          </Page>
+          <Page size="A3" orientation="landscape" style={S.page} wrap>
+            {renderContent('cves')}
+          </Page>
 
-      {/* ── Section 3.5: Application Insights ── */}
-      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
-        <SectionCoverPage number="3.5" title="Application Insights" subtitle="Application inventory, OS breakdown, and installed software analysis" color="#0ea5e9" orgName={data.orgName} generatedAt={data.generatedAt} />
-      </Page>
-      <Page size="A3" orientation="landscape" style={S.page} wrap>
-        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="3.5" />
-        <ContentHeader orgName={data.orgName} sectionLabel="3.5 · Application Insights" />
-        <AppInsightsSection apps={data.s1AppAgent} />
-      </Page>
+          {/* Section 3.5: Application Insights */}
+          <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+            <SectionCoverPage number="3.5" title="Application Insights" subtitle="Application inventory, OS breakdown, and installed software analysis" color="#0ea5e9" orgName={data.orgName} generatedAt={data.generatedAt} />
+          </Page>
+          <Page size="A3" orientation="landscape" style={S.page} wrap>
+            {renderContent('apps')}
+          </Page>
 
-      {/* ── Section 4: Zoho Desk ── */}
-      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
-        <SectionCoverPage number="4" title="Zoho Desk" subtitle="Support ticket analytics, resolution times, engineer performance, and MTTR" color="#d97706" orgName={data.orgName} generatedAt={data.generatedAt} />
-      </Page>
-      <Page size="A3" orientation="landscape" style={S.page} wrap>
-        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="4" />
-        <ContentHeader orgName={data.orgName} sectionLabel="4 · Zoho Desk" />
-        <ZohoSection tickets={data.zohoTickets} mttr={data.mttr} />
-      </Page>
+          {/* Section 4: Zoho Desk */}
+          <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+            <SectionCoverPage number="4" title="Zoho Desk" subtitle="Support ticket analytics, resolution times, engineer performance, and MTTR" color="#d97706" orgName={data.orgName} generatedAt={data.generatedAt} />
+          </Page>
+          <Page size="A3" orientation="landscape" style={S.page} wrap>
+            {renderContent('zoho')}
+          </Page>
 
-      {/* ── Section 5: Palo Alto Firewall ── */}
-      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
-        <SectionCoverPage number="5" title="Palo Alto Firewall" subtitle="Network sessions, high-risk events, attack sources, and firewall posture" color="#ea580c" orgName={data.orgName} generatedAt={data.generatedAt} />
-      </Page>
-      <Page size="A3" orientation="landscape" style={S.page} wrap>
-        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="5" />
-        <ContentHeader orgName={data.orgName} sectionLabel="5 · Palo Alto Firewall" />
-        <FirewallSection fw={fw} />
-      </Page>
+          {/* Section 5: Palo Alto Firewall */}
+          <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+            <SectionCoverPage number="5" title="Palo Alto Firewall" subtitle="Network sessions, high-risk events, attack sources, and firewall posture" color="#ea580c" orgName={data.orgName} generatedAt={data.generatedAt} />
+          </Page>
+          <Page size="A3" orientation="landscape" style={S.page} wrap>
+            {renderContent('firewall')}
+          </Page>
 
-      {/* ── Section 6: Weekly Insights ── */}
-      <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
-        <SectionCoverPage number="6" title="Weekly Insights" subtitle="7-day period comparison — threats, events, remediation rates, and new agents" color="#7c3aed" orgName={data.orgName} generatedAt={data.generatedAt} />
-      </Page>
-      <Page size="A3" orientation="landscape" style={S.page} wrap>
-        <PageFooter orgName={data.orgName} generatedAt={data.generatedAt} sectionNumber="6" />
-        <ContentHeader orgName={data.orgName} sectionLabel="6 · Weekly Insights" />
-        <WeeklyInsights weekly={weekly} d={data} />
-      </Page>
+          {/* Section 6: Weekly Insights */}
+          <Page size="A3" orientation="landscape" style={S.coverPage} wrap>
+            <SectionCoverPage number="6" title="Weekly Insights" subtitle="7-day period comparison — threats, events, remediation rates, and new agents" color="#7c3aed" orgName={data.orgName} generatedAt={data.generatedAt} />
+          </Page>
+          <Page size="A3" orientation="landscape" style={S.page} wrap>
+            {renderContent('weekly')}
+          </Page>
+        </>
+      )}
+
+      {/* ── Section-scoped reports ── */}
+      {section === 'checkpoint' && renderSectionPages('checkpoint')}
+      {section === 'zoho' && renderSectionPages('zoho')}
+      {section === 'firewall' && renderSectionPages('firewall')}
+      {section === 'weekly' && renderSectionPages('weekly')}
+      {section === 'mdm' && renderSectionPages('mdm')}
+      {section === 'nvd' && renderSectionPages('nvd')}
+      {section === 'microsoft' && renderSectionPages('microsoft')}
+      {section === 'security' && renderSectionPages('security')}
+      {section === 'threats' && renderSectionPages('threats')}
+      {section === 'agents' && renderSectionPages('agents')}
+      {section === 'atRisk' && renderSectionPages('atRisk')}
+      {section === 'cves' && renderSectionPages('cves')}
+      {section === 'apps' && renderSectionPages('apps')}
     </Document>
   );
 }

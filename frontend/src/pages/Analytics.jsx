@@ -8,7 +8,7 @@ import {
 import api from '../api.js';
 import { useOrg } from '../context/OrgContext.jsx';
 import { fetchReportData } from './report/fetchReportData.js';
-import { generatePdfOnServer } from './report/generatePdf.jsx';
+import { generatePdfOnServer, generatePdfForSection } from './report/generatePdf.jsx';
 import WidgetSkeleton from './dashboard/WidgetSkeleton.jsx';
 
 // ─── Preserved API (used by AnalyticsLaunchButton across module pages) ─────────
@@ -1775,6 +1775,18 @@ export default function Analytics() {
     } finally { setGenerating(false); setGenStep(''); }
   };
 
+  const handleGeneratePdfForSection = async () => {
+    setGenerating(true); setGenError(''); setGenStep('Fetching data…');
+    try {
+      const data = await fetchReportData(currentOrg?.org_name || 'Organisation', null, activeTab);
+      setGenStep('Rendering report…');
+      await generatePdfForSection(data, currentOrg?.org_name || 'Organisation', activeTab);
+      alert(`✓ Section PDF Downloaded!\n\nA PDF for the "${NAV_ITEMS.find(n => n.id === activeTab)?.label || activeTab}" section has been generated.`);
+    } catch (err) {
+      setGenError(`PDF generation failed: ${err?.message || err}`);
+    } finally { setGenerating(false); setGenStep(''); }
+  };
+
   // Per-module data slices
   const [agents, setAgents] = useState([]);
   const [cves, setCves] = useState([]);
@@ -1948,6 +1960,14 @@ export default function Analytics() {
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
             {generating ? 'Generating…' : 'Generate PDF'}
+          </button>
+          <button
+            onClick={handleGeneratePdfForSection}
+            disabled={generating}
+            className="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+            {generating ? 'Generating…' : 'Generate PDF — This Section'}
           </button>
         </div>
       </div>

@@ -85,3 +85,18 @@ export async function generatePdfOnServer(data, orgName) {
   console.log(`[PDF] ✓ Generated & saved server-side as ${fileName} (${blob.size} bytes)`);
   return { success: true, fileName, size: blob.size };
 }
+
+/**
+ * Generate a PDF scoped to a single Analytics section/tab.
+ *
+ * @param {object} data     - The full report data object (from fetchReportData)
+ * @param {string} orgName  - Organisation name
+ * @param {string} section  - Section key: 'security', 'checkpoint', 'zoho',
+ *                            'firewall', 'mdm', 'nvd', 'microsoft'
+ * @returns {Promise<{success,fileName,size}>}
+ */
+export async function generatePdfForSection(data, orgName, section) {
+  const sectionData = { ...data, section };
+  const result = await generatePdfOnServer(sectionData, orgName);
+  return result;
+}
