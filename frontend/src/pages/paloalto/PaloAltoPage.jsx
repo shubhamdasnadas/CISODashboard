@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api';
 import { useProviders } from '../../context/ProviderContext.jsx';
+import AnalyticsLaunchButton from '../../components/AnalyticsLaunchButton.jsx';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
   ComposedChart, Line, PieChart, Pie,
@@ -449,7 +450,7 @@ export default function PaloAltoPage() {
   // report entries (e.g. one row per day+risk bucket with a count/session
   // field), not one row per individual event — DetailView sums that count
   // column itself to show alongside the raw row count.
-  const goToDetail = (rows, title, dateRange) => navigate('/security/detail', {
+  const goToDetail = (rows, title, dateRange) => navigate('/paloalto/detail', {
     state: { dataset: 'firewall', rows, title, dateFrom: dateRange?.from, dateTo: dateRange?.to },
   });
 
@@ -575,6 +576,7 @@ export default function PaloAltoPage() {
         >
           {loading ? 'Loading…' : 'Refresh All'}
         </button>
+        <AnalyticsLaunchButton moduleKey="paloalto" />
       </div>
 
       {/* Loader */}

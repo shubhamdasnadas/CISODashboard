@@ -108,6 +108,102 @@ async function applySchema(pool, sqlPath) {
 }
 
 /**
+ * Convert an arbitrary string into a safe, lowercase slug.
+ * "Acme Corp!" -> "acme-corp", "Techsec Global" -> "techsec-global".
+ * Drops leading/trailing/duplicate separators.
+ */
+function slugify(input) {
+  return String(input)
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-') // non-alphanumerics -> single dash
+    .replace(/^-+|-+$/g, '')     // trim leading/trailing dashes
+    .replace(/-{2,}/g, '-');      // collapse repeats
+}
+
+/**
+ * Build a slug from `org_name`, guaranteeing it is unique across the
+ * organisations table. Falls back to a "org-N" suffix if the name yields
+ * nothing usable. Retries up to 100 times before throwing.
+ */
+async function generateUniqueSlug(orgName, providedSlug) {
+  let base = providedSlug ? slugify(providedSlug) : slugify(orgName);
+  if (!base) base = 'org';
+
+  let slug = base;
+  for (let i = 1; i <= 100; i++) {
+    const { rows } = await centralPool.query('SELECT 1 FROM organisations WHERE slug = $1', [slug]);
+    if (rows.length === 0) return slug;
+    slug = `${base}-${i}`;
+  }
+  throw new Error('Could not generate a unique slug (too many collisions)');
+}
+
+/**
+ * Create the per-org database `ciso_org_<slug>` if it doesn't exist yet,
+ * then apply the per-org schema. Returns true if the DB was newly created.
+ * `slug` MUST already be sanitised/validated by the caller.
+ */
+async function createOrgDatabase(orgSlug) {
+  if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(orgSlug)) {
+    throw new Error(`Refusing to CREATE DATABASE with unsafe slug: ${orgSlug}`);
+  }
+  const dbName = `ciso_org_${orgSlug}`;
+
+  const created = await withMaintenanceClient(async (client) => {
+    const r = await client.query('SELECT 1 FROM pg_database WHERE datname = $1', [dbName]);
+    if (r.rows.length > 0) return false;
+    // CREATE DATABASE cannot use a parameterised name — sanitise manually.
+    await client.query(`CREATE DATABASE "${dbName}"`);
+    return true;
+  });
+
+  if (created) {
+    console.log(`🆕 Created database: ${dbName}`);
+  }
+
+  // Always apply the per-org schema (idempotent via CREATE TABLE IF NOT EXISTS).
+  const pool = getOrgPool(orgSlug);
+  const schemaPath = path.join(__dirname, 'schema_per_org.sql');
+  await applySchema(pool, schemaPath);
+  return created;
+}
+
+/**
+ * Drop a per-org database. Postgres requires connecting to a different DB to
+ * drop one, and no other sessions may be using it — so the cached pool is
+ * closed first. Returns true if a DB was actually dropped.
+ */
+async function dropOrgDatabase(orgSlug) {
+  const dbName = `ciso_org_${orgSlug}`;
+  if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(orgSlug)) {
+    throw new Error(`Refusing to DROP DATABASE with unsafe slug: ${orgSlug}`);
+  }
+  closeOrgPool(orgSlug);
+
+  const client = new Client({
+    host: DB_HOST,
+    port: DB_PORT,
+    database: 'postgres',
+    user: DB_USER,
+    password: DB_PASSWORD,
+  });
+  await client.connect();
+  try {
+    await client.query(
+      `SELECT pg_terminate_backend(pid)
+         FROM pg_stat_activity
+        WHERE datname = $1 AND pid <> pg_backend_pid()`,
+      [dbName]
+    );
+    await client.query(`DROP DATABASE IF EXISTS "${dbName}"`);
+    return true;
+  } finally {
+    await client.end();
+  }
+}
+
+/**
  * On startup:
  *  1. Ensure central DB exists (it must — schema.sql creates it).
  *  2. Read all orgs from central registry.
@@ -147,29 +243,9 @@ async function ensureOrgDatabases() {
       failed.push({ id: org.id, name: org.org_name, error: 'missing slug' });
       continue;
     }
-    const dbName = `ciso_org_${orgSlug}`;
     try {
-      const created = await withMaintenanceClient(async (client) => {
-        const r = await client.query('SELECT 1 FROM pg_database WHERE datname = $1', [dbName]);
-        if (r.rows.length > 0) return false;
-        // CREATE DATABASE cannot use a parameterised name — sanitise manually.
-        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(dbName)) {
-          throw new Error(`Refusing to CREATE DATABASE with unsafe name: ${dbName}`);
-        }
-        await client.query(`CREATE DATABASE "${dbName}"`);
-        return true;
-      });
-
-      if (created) {
-        console.log(`🆕 Created database: ${dbName} (for ${org.org_name})`);
-      } else {
-        console.log(`✔  Database exists: ${dbName}`);
-      }
-
-      // Always apply the per-org schema (now idempotent via CREATE TABLE IF NOT EXISTS).
-      const pool = getOrgPool(orgSlug);
-      const schemaPath = path.join(__dirname, 'schema_per_org.sql');
-      await applySchema(pool, schemaPath);
+      const created = await createOrgDatabase(orgSlug);
+      if (!created) console.log(`✔  Database exists: ciso_org_${orgSlug}`);
       succeeded.push(orgSlug);
     } catch (e) {
       console.error(`⚠️  Skipped org ${org.id} (${org.org_name}):`, e.message);
@@ -212,6 +288,10 @@ module.exports = {
   getOrgPool,
   getOrgSlug,
   ensureOrgDatabases,
+  createOrgDatabase,
+  dropOrgDatabase,
+  generateUniqueSlug,
+  slugify,
   closeOrgPool,
   shutdownAllPools,
 };

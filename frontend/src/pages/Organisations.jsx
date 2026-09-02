@@ -6,7 +6,7 @@ import { Card, PageHeader, PrimaryButton, Input, Badge } from '../components/UI.
 export default function Organisations() {
   const user = session.getUser();
   const [orgs, setOrgs] = useState([]);
-  const [form, setForm] = useState({ org_name: '', address: '', mobile_no: '' });
+  const [form, setForm] = useState({ org_name: '', address: '', mobile_no: '', slug: '' });
   const [loading, setLoading] = useState(true);
   const isSuperAdmin = user.role === 'superAdmin';
 
@@ -26,7 +26,7 @@ export default function Organisations() {
     e.preventDefault();
     try {
       await api.post('/organisations', form);
-      setForm({ org_name: '', address: '', mobile_no: '' });
+      setForm({ org_name: '', address: '', mobile_no: '', slug: '' });
       load();
     } catch (err) {
       alert(err.response?.data?.error || 'Failed to add');
@@ -65,6 +65,11 @@ export default function Organisations() {
               placeholder="Mobile number"
               value={form.mobile_no}
               onChange={(e) => setForm({ ...form, mobile_no: e.target.value })}
+            />
+            <Input
+              placeholder="Slug (optional, auto-generated)"
+              value={form.slug}
+              onChange={(e) => setForm({ ...form, slug: e.target.value })}
             />
             <PrimaryButton type="submit">+ Add</PrimaryButton>
           </form>

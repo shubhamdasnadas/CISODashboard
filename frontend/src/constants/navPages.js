@@ -9,6 +9,8 @@ export const PAGES = [
   { key: 'security',      label: 'EDR' },
   { key: 'checkpoint',    label: 'Email Security' },
   { key: 'nvd',           label: 'NVD' },
+  { key: 'updated-nvd',    label: 'Updated NVD' },
+  { key: 'updated-cpes',   label: 'Updated CPEs' },
   { key: 'paloalto',      label: 'Firewall' },
   { key: 'mdm',           label: 'MDM' },
   { key: 'microsoft365',  label: 'Microsoft 365' },

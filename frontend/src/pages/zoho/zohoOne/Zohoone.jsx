@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../../api';
 import { useProviders } from '../../../context/ProviderContext.jsx';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
+import AnalyticsLaunchButton from '../../../components/AnalyticsLaunchButton.jsx';
 import TicketVolcanoGraph from './TicketVolcanoGraph';
 import Circlemember from './Circlemember';
 import Mttrcard from './Mttrcard';
@@ -759,7 +760,7 @@ export default function Zohoone() {
 
   // Helper to navigate to the detail view with Zoho ticket data
   const goToDetail = useCallback((filterId, value, title, overrideRows) => {
-    navigate('/security/detail', {
+    navigate('/zoho/detail', {
       state: { dataset: 'zoho', filterId, value, title, rows: overrideRows || tickets },
     });
   }, [navigate, tickets]);
@@ -835,6 +836,7 @@ export default function Zohoone() {
               : 'Sync from Zoho'
             }
           </button>
+          <AnalyticsLaunchButton moduleKey="zoho-one" />
         </div>
       </div>
 

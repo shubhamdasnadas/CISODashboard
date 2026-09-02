@@ -1,0 +1,100 @@
+[build:report] Bundling ReportTemplate.jsx → C:\Users\Shubham\Desktop\shubham\CISOProjectLatest\CISODasboard\backend\dist\reportTemplate.cjs
+X [ERROR] No matching export in "frontend/src/pages/report/dataUtils.js" for import "buildZohoTicketCounts"
+
+    frontend/src/pages/report/ReportTemplate.jsx:7:2:
+      7 │   buildZohoTicketCounts, buildZohoFunnel, buildZohoHeatmap, buildZo...
+        ╵   ~~~~~~~~~~~~~~~~~~~~~
+
+X [ERROR] No matching export in "frontend/src/pages/report/dataUtils.js" for import "buildZohoFunnel"
+
+    frontend/src/pages/report/ReportTemplate.jsx:7:25:
+      7 │   buildZohoTicketCounts, buildZohoFunnel, buildZohoHeatmap, buildZo...
+        ╵                          ~~~~~~~~~~~~~~~
+
+X [ERROR] No matching export in "frontend/src/pages/report/dataUtils.js" for import "buildZohoHeatmap"
+
+    frontend/src/pages/report/ReportTemplate.jsx:7:42:
+      7 │ ...oTicketCounts, buildZohoFunnel, buildZohoHeatmap, buildZohoVolcano,
+        ╵                                    ~~~~~~~~~~~~~~~~
+
+X [ERROR] No matching export in "frontend/src/pages/report/dataUtils.js" for import "buildZohoVolcano"
+
+    frontend/src/pages/report/ReportTemplate.jsx:7:60:
+      7 │ ...oTicketCounts, buildZohoFunnel, buildZohoHeatmap, buildZohoVolcano,
+        ╵                                                      ~~~~~~~~~~~~~~~~
+
+X [ERROR] No matching export in "frontend/src/pages/report/dataUtils.js" for import "buildZohoTopPerformance"
+
+    frontend/src/pages/report/ReportTemplate.jsx:8:2:
+      8 │   buildZohoTopPerformance, buildZohoCorpMembers, buildZohoMttr,
+        ╵   ~~~~~~~~~~~~~~~~~~~~~~~
+
+X [ERROR] No matching export in "frontend/src/pages/report/dataUtils.js" for import "buildZohoCorpMembers"
+
+    frontend/src/pages/report/ReportTemplate.jsx:8:27:
+      8 │   buildZohoTopPerformance, buildZohoCorpMembers, buildZohoMttr,
+        ╵                            ~~~~~~~~~~~~~~~~~~~~
+
+X [ERROR] No matching export in "frontend/src/pages/report/dataUtils.js" for import "buildZohoMttr"
+
+    frontend/src/pages/report/ReportTemplate.jsx:8:49:
+      8 │   buildZohoTopPerformance, buildZohoCorpMembers, buildZohoMttr,
+        ╵                                                  ~~~~~~~~~~~~~
+
+X [ERROR] No matching export in "frontend/src/pages/report/pdfChartComponents.jsx" for import "ZohoCountCards"
+
+    frontend/src/pages/report/ReportTemplate.jsx:11:71:
+      11 │ ...ist, VLegendRow, VGauge, ZohoCountCards, VHeatmap, VFunnel, VVo...
+         ╵                             ~~~~~~~~~~~~~~
+
+X [ERROR] No matching export in "frontend/src/pages/report/pdfChartComponents.jsx" for import "VHeatmap"
+
+    frontend/src/pages/report/ReportTemplate.jsx:11:87:
+      11 │ ...ow, VGauge, ZohoCountCards, VHeatmap, VFunnel, VVolcano, VTopTa...
+         ╵                                ~~~~~~~~
+
+X [ERROR] No matching export in "frontend/src/pages/report/pdfChartComponents.jsx" for import "VFunnel"
+
+    frontend/src/pages/report/ReportTemplate.jsx:11:97:
+      11 │ ..., ZohoCountCards, VHeatmap, VFunnel, VVolcano, VTopTable, VMttr...
+         ╵                                ~~~~~~~
+
+X [ERROR] No matching export in "frontend/src/pages/report/pdfChartComponents.jsx" for import "VVolcano"
+
+    frontend/src/pages/report/ReportTemplate.jsx:11:106:
+      11 │ ...ntCards, VHeatmap, VFunnel, VVolcano, VTopTable, VMttrCard } fr...
+         ╵                                ~~~~~~~~
+
+X [ERROR] No matching export in "frontend/src/pages/report/pdfChartComponents.jsx" for import "VTopTable"
+
+    frontend/src/pages/report/ReportTemplate.jsx:11:116:
+      11 │ ...eatmap, VFunnel, VVolcano, VTopTable, VMttrCard } from './pdfCh...
+         ╵                               ~~~~~~~~~
+
+X [ERROR] No matching export in "frontend/src/pages/report/pdfChartComponents.jsx" for import "VMttrCard"
+
+    frontend/src/pages/report/ReportTemplate.jsx:11:127:
+      11 │ ...nnel, VVolcano, VTopTable, VMttrCard } from './pdfChartComponen...
+         ╵                               ~~~~~~~~~
+
+13 errors
+[build:report] FAILED: Error: Build failed with 13 errors:
+frontend/src/pages/report/ReportTemplate.jsx:7:2: ERROR: No matching export in "frontend/src/pages/report/dataUtils.js" for import "buildZohoTicketCounts"
+frontend/src/pages/report/ReportTemplate.jsx:7:25: ERROR: No matching export in "frontend/src/pages/report/dataUtils.js" for import "buildZohoFunnel"
+frontend/src/pages/report/ReportTemplate.jsx:7:42: ERROR: No matching export in "frontend/src/pages/report/dataUtils.js" for import "buildZohoHeatmap"
+frontend/src/pages/report/ReportTemplate.jsx:7:60: ERROR: No matching export in "frontend/src/pages/report/dataUtils.js" for import "buildZohoVolcano"
+frontend/src/pages/report/ReportTemplate.jsx:8:2: ERROR: No matching export in "frontend/src/pages/report/dataUtils.js" for import "buildZohoTopPerformance"
+...
+    at failureErrorWithLog (C:\Users\Shubham\Desktop\shubham\CISOProjectLatest\CISODasboard\backend\node_modules\esbuild\lib\main.js:1752:15)
+    at C:\Users\Shubham\Desktop\shubham\CISOProjectLatest\CISODasboard\backend\node_modules\esbuild\lib\main.js:1211:25
+    at C:\Users\Shubham\Desktop\shubham\CISOProjectLatest\CISODasboard\backend\node_modules\esbuild\lib\main.js:1163:52
+    at buildResponseToResult (C:\Users\Shubham\Desktop\shubham\CISOProjectLatest\CISODasboard\backend\node_modules\esbuild\lib\main.js:1209:7)
+    at C:\Users\Shubham\Desktop\shubham\CISOProjectLatest\CISODasboard\backend\node_modules\esbuild\lib\main.js:1236:16
+    at responseCallbacks.<computed> (C:\Users\Shubham\Desktop\shubham\CISOProjectLatest\CISODasboard\backend\node_modules\esbuild\lib\main.js:886:9)
+    at handleIncomingPacket (C:\Users\Shubham\Desktop\shubham\CISOProjectLatest\CISODasboard\backend\node_modules\esbuild\lib\main.js:941:12)
+    at Socket.readFromStdout (C:\Users\Shubham\Desktop\shubham\CISOProjectLatest\CISODasboard\backend\node_modules\esbuild\lib\main.js:864:7)
+    at Socket.emit (node:events:509:28)
+    at addChunk (node:internal/streams/readable:563:12) {
+  errors: [Getter/Setter],
+  warnings: [Getter/Setter]
+}

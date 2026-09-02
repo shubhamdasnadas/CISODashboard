@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import api from '../api';
 import { useOrg } from '../context/OrgContext.jsx';
 import { fetchReportData } from './report/fetchReportData.js';
-import { generatePdfFromElement } from './report/generatePdf.jsx';
+import { generatePdfFromElement, generatePdfOnServer } from './report/generatePdf.jsx';
 
 const TYPE_CONFIG = {
   sales:      { label: 'Sales',      bg: 'bg-green-100 dark:bg-green-900/30',   text: 'text-green-700 dark:text-green-400' },
@@ -100,32 +100,28 @@ export default function Reports() {
         const orgSlug = (currentOrg?.org_name || 'report').replace(/\s+/g, '_').toLowerCase();
         // Use the original report date for re-downloads, today for fresh generates
         const date    = redownloadDateRef.current || new Date().toISOString().slice(0, 10);
-        const filename = `${orgSlug}_security_report_${date}.pdf`;
 
-        console.log('[Reports] Target filename:', filename);
-
-        const result = await generatePdfFromElement(reportData, filename);
-
-        console.log('[Reports] PDF generated successfully:', result);
-
-        // Only save a new report record when this is a FRESH generate,
-        // NOT when re-downloading a previous report.
+        let fileName;
         if (!isRedownloadRef.current) {
-          console.log('[Reports] Saving report record to database...');
-          await api.post('/reports', {
-            title:   `Security Report — ${currentOrg?.org_name || 'Organisation'} — ${date}`,
-            content: `Auto-generated PDF security report covering Checkpoint Harmony, SentinelOne, and Palo Alto Firewall data. File: ${filename}.`,
-            type:    'security',
-            status:  'published',
-          });
-          console.log('[Reports] Report record saved successfully');
+          // FRESH generate → render + store on the SERVER.
+          // The backend writes the PDF to reportList/<orgSlug>/<username>_<orgSlug>_<stamp>.pdf
+          // and records a row in the per-org reports table.
+          console.log('[Reports] Generating & storing PDF on server...');
+          const result = await generatePdfOnServer(reportData, currentOrg?.org_name || 'Organisation');
+          fileName = result.fileName;
+          console.log('[Reports] PDF generated & saved server-side:', result);
           loadReports();
         } else {
+          // RE-DOWNLOAD of a previous report → render locally (no new DB row,
+          // no new file). Uses the original report date in the filename.
+          fileName = `${orgSlug}_security_report_${date}.pdf`;
+          console.log('[Reports] Re-downloading (local render), filename:', fileName);
+          await generatePdfFromElement(reportData, fileName);
           console.log('[Reports] Re-download — skipped creating new report entry');
         }
 
         // Show success notification
-        alert(`✓ PDF Report Downloaded Successfully!\n\nFilename: ${filename}\n\nThe PDF has been saved to your downloads folder.`);
+        alert(`✓ PDF Report Downloaded Successfully!\n\nFilename: ${fileName}\n\nThe PDF has been saved to your downloads folder.`);
 
       } catch (err) {
         console.error('[Reports] PDF generation failed:', err);

@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
-import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
+import AnalyticsLaunchButton from '../components/AnalyticsLaunchButton.jsx';
 
 const tooltipStyle = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12 };
 
@@ -18,6 +19,106 @@ function Empty({ msg }) {
   return (
     <div className="flex items-center justify-center h-full min-h-[80px] px-4 text-center">
       <p className="text-sm text-[var(--muted)]">{msg}</p>
+    </div>
+  );
+}
+
+// Legend item component (side-by-side legend for improved donuts)
+function LegendItem({ color, name, value, onClick }) {
+  return (
+    <div
+      onClick={onClick}
+      className="flex items-center gap-2 px-1.5 py-1.5 rounded-md hover:bg-[var(--muted-bg)]/40 transition-colors cursor-pointer group"
+    >
+      <span
+        className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 shadow-sm"
+        style={{ backgroundColor: color }}
+      />
+      <span className="text-[11px] font-semibold text-[var(--foreground)] group-hover:text-indigo-400 transition-colors">
+        {name}
+      </span>
+      <span className="text-[10px] text-[var(--muted)] group-hover:text-[var(--foreground)] transition-colors">
+        ({value})
+      </span>
+    </div>
+  );
+}
+
+// Improved Donut chart with side-by-side legends (left + right)
+function ImprovedDonut({ data, onSliceClick }) {
+  if (data.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full min-h-[260px]">
+        <p className="text-sm text-[var(--muted)]">No data available</p>
+      </div>
+    );
+  }
+
+  const midpoint = Math.ceil(data.length / 2);
+  const leftItems = data.slice(0, midpoint);
+  const rightItems = data.slice(midpoint);
+
+  return (
+    <div className="flex items-center h-full min-h-[260px] w-full px-2 gap-3">
+      {/* Left Legend */}
+      <div className="flex flex-col gap-3 justify-center shrink-0">
+        {leftItems.map((item) => (
+          <LegendItem
+            key={item.name}
+            color={item.fill}
+            name={item.name}
+            value={item.value}
+            onClick={() => onSliceClick && onSliceClick(item)}
+          />
+        ))}
+      </div>
+
+      {/* Center Chart */}
+      <div className="flex-1 min-w-0 h-full min-h-[240px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={data}
+              dataKey="value"
+              innerRadius="50%"
+              outerRadius="80%"
+              cornerRadius={10}
+              paddingAngle={2}
+              cursor="pointer"
+              onClick={onSliceClick}
+              animationBegin={0}
+              animationDuration={400}
+            >
+              {data.map((entry, i) => (
+                <Cell key={`cell-${i}`} fill={entry.fill} stroke="var(--card-bg)" strokeWidth={2} />
+              ))}
+            </Pie>
+            <Tooltip
+              contentStyle={tooltipStyle}
+              formatter={(value) => {
+                const n = Number(value);
+                const total = data.reduce((s, d) => s + d.value, 0);
+                return [`${n} (${Math.round((n / total) * 100)}%)`, ''];
+              }}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Right Legend */}
+      {rightItems.length > 0 && (
+        <div className="flex flex-col gap-3 justify-center shrink-0">
+          {rightItems.map((item) => (
+            <LegendItem
+              key={item.name}
+              color={item.fill}
+              name={item.name}
+              value={item.value}
+              onClick={() => onSliceClick && onSliceClick(item)}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -156,6 +257,7 @@ export default function MDM() {
         >
           {syncing ? <><div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />Syncing…</> : 'Sync'}
         </button>
+        <AnalyticsLaunchButton moduleKey="mdm" />
       </div>
 
       {syncMsg && (
@@ -220,16 +322,10 @@ export default function MDM() {
         <CardShell title="Device OS / Platform Breakdown" className="h-[420px]">
           <div className="h-full p-3">
             {devicesLoading ? <Spin /> : osData.length === 0 ? <Empty msg="No device data" /> : (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={osData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="50%" outerRadius="70%" paddingAngle={2} cursor="pointer"
-                    onClick={(d) => navigate('/mdm/detail', { state: { dataset: 'devices', filterId: 'os', value: d.name, title: `Devices — ${d.name}` } })}>
-                    {osData.map((d, i) => <Cell key={i} fill={d.fill} />)}
-                  </Pie>
-                  <Tooltip contentStyle={tooltipStyle} />
-                  <Legend iconSize={9} wrapperStyle={{ fontSize: 11, color: 'var(--muted)' }} />
-                </PieChart>
-              </ResponsiveContainer>
+              <ImprovedDonut
+                data={osData}
+                onSliceClick={(d) => navigate('/mdm/detail', { state: { dataset: 'devices', filterId: 'os', value: d.name, title: `Devices — ${d.name}` } })}
+              />
             )}
           </div>
         </CardShell>
@@ -240,16 +336,10 @@ export default function MDM() {
         <CardShell title="Compliance Status" className="h-[340px]">
           <div className="h-full p-3">
             {devicesLoading ? <Spin /> : complianceData.length === 0 ? <Empty msg="No device data" /> : (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={complianceData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="50%" outerRadius="70%" paddingAngle={2} cursor="pointer"
-                    onClick={(d) => navigate('/mdm/detail', { state: { dataset: 'devices', filterId: 'compliant', value: d.name === 'Compliant', title: `${d.name} Devices` } })}>
-                    {complianceData.map((d, i) => <Cell key={i} fill={d.fill} />)}
-                  </Pie>
-                  <Tooltip contentStyle={tooltipStyle} />
-                  <Legend iconSize={9} wrapperStyle={{ fontSize: 11, color: 'var(--muted)' }} />
-                </PieChart>
-              </ResponsiveContainer>
+              <ImprovedDonut
+                data={complianceData}
+                onSliceClick={(d) => navigate('/mdm/detail', { state: { dataset: 'devices', filterId: 'compliant', value: d.name === 'Compliant', title: `${d.name} Devices` } })}
+              />
             )}
           </div>
         </CardShell>
@@ -257,15 +347,7 @@ export default function MDM() {
         <CardShell title="Device Type Breakdown" className="h-[340px]">
           <div className="h-full p-3">
             {devicesLoading ? <Spin /> : deviceTypeData.length === 0 ? <Empty msg="No device data" /> : (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={deviceTypeData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="50%" outerRadius="70%" paddingAngle={2}>
-                    {deviceTypeData.map((d, i) => <Cell key={i} fill={d.fill} />)}
-                  </Pie>
-                  <Tooltip />
-                  <Legend iconSize={9} wrapperStyle={{ fontSize: 11, color: 'var(--muted)' }} />
-                </PieChart>
-              </ResponsiveContainer>
+              <ImprovedDonut data={deviceTypeData} />
             )}
           </div>
         </CardShell>
@@ -331,31 +413,12 @@ export default function MDM() {
             <div className="h-full min-w-0">
               <p className="text-[10px] font-semibold text-[var(--muted)] uppercase tracking-wider text-center mb-1">Platform</p>
               {appsLoading ? <Spin /> : platformData.length === 0 ? <Empty msg="No app data" /> : (
-                <ResponsiveContainer width="100%" height="90%">
-                  <PieChart>
-                    <Pie data={platformData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="45%" outerRadius="65%" paddingAngle={2} cursor="pointer"
-                      onClick={(d) => navigate('/mdm/detail', { state: { dataset: 'apps', filterId: 'platform', value: d.name, title: `Apps — ${d.name}` } })}>
-                      {platformData.map((d, i) => <Cell key={i} fill={d.fill} />)}
-                    </Pie>
-                    <Tooltip contentStyle={tooltipStyle} />
-                    <Legend iconSize={8} wrapperStyle={{ fontSize: 10, color: 'var(--muted)' }} />
-                  </PieChart>
-                </ResponsiveContainer>
+                <ImprovedDonut
+                  data={platformData}
+                  onSliceClick={(d) => navigate('/mdm/detail', { state: { dataset: 'apps', filterId: 'platform', value: d.name, title: `Apps — ${d.name}` } })}
+                />
               )}
             </div>
-            {/* <div className="h-full min-w-0">
-              <p className="text-[10px] font-semibold text-[var(--muted)] uppercase tracking-wider text-center mb-1">Category</p>
-              {appsLoading ? <Spin /> : categoryData.length === 0 ? <Empty msg="No app data" /> : (
-                <ResponsiveContainer width="100%" height="90%">
-                  <PieChart>
-                    <Pie data={categoryData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="45%" outerRadius="65%" paddingAngle={2}>
-                      {categoryData.map((d, i) => <Cell key={i} fill={d.fill} />)}
-                    </Pie>
-                    <Tooltip />
-                  </PieChart>
-                </ResponsiveContainer>
-              )}
-            </div> */}
           </div>
         </CardShell>
 

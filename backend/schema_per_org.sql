@@ -105,6 +105,12 @@ CREATE TABLE IF NOT EXISTS s1_rss (
   data      JSONB       NOT NULL,
   synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE TABLE IF NOT EXISTS s1_custome_alert (
+  id        UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  alert_id  TEXT        UNIQUE,
+  data      JSONB       NOT NULL,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
 -- Hexnode MDM
 CREATE TABLE IF NOT EXISTS hexnode_devices (
@@ -205,6 +211,9 @@ CREATE TABLE IF NOT EXISTS reports (
   data        JSONB,
   status      TEXT        NOT NULL DEFAULT 'draft',
   created_by  TEXT,
+  file_path   TEXT,
+  org_slug    TEXT,
+  generated_at TIMESTAMPTZ,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

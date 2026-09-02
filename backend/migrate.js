@@ -23,6 +23,19 @@ async function applySchemaPatches(orgPool, slug) {
   await orgPool.query(
     'ALTER TABLE s1_agents ADD COLUMN IF NOT EXISTS removed_at TIMESTAMPTZ'
   );
+
+  // Reports: add columns so generated PDFs are stored/referenced in the DB
+  // alongside the on-disk file under backend/reportList/<orgSlug>/.
+  // ADD COLUMN IF NOT EXISTS keeps this idempotent across restarts.
+  await orgPool.query(
+    'ALTER TABLE reports ADD COLUMN IF NOT EXISTS file_path TEXT'
+  );
+  await orgPool.query(
+    'ALTER TABLE reports ADD COLUMN IF NOT EXISTS org_slug TEXT'
+  );
+  await orgPool.query(
+    'ALTER TABLE reports ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ'
+  );
   // Ensure all Microsoft tables exist (idempotent)
   const msTables = [
     'ms_organization','ms_subscribed_skus','ms_domains','ms_users',

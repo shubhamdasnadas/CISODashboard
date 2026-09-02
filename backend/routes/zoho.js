@@ -89,6 +89,32 @@ async function exchangeCodeForTickets(pool, code, creds = {}) {
   const tokenData = await tokenRes.json();
   if (!tokenData.access_token) throw Object.assign(new Error('Token exchange failed'), { tokenData });
 
+  // Zoho returns a refresh_token (only on the first exchange for a consent) that
+  // lets the cron keep refreshing without a fresh single-use code. Persist it onto
+  // the stored `zoho` credentials so services/zoho.js can use the refresh_token
+  // grant going forward.
+  if (tokenData.refresh_token) {
+    try {
+      const { rows } = await pool.query(
+        "SELECT credentials FROM integration_credentials WHERE integration = 'zoho' LIMIT 1"
+      );
+      const existing = rows[0]?.credentials || {};
+      if (existing.refreshToken !== tokenData.refresh_token) {
+        await pool.query(
+          `INSERT INTO integration_credentials (integration, credentials, updated_at)
+           VALUES ('zoho', $1, NOW())
+           ON CONFLICT (integration) DO UPDATE SET
+             credentials = EXCLUDED.credentials,
+             updated_at  = EXCLUDED.updated_at`,
+          [JSON.stringify({ ...existing, refreshToken: tokenData.refresh_token })]
+        );
+        console.log('[Zoho] persisted refresh token from code exchange — cron will use it');
+      }
+    } catch (e) {
+      console.warn('[Zoho] could not persist refresh token:', e.message);
+    }
+  }
+
   const ticketData = await fetchFromZoho(tokenData.access_token, creds.domain, creds.orgId);
   await storeTicketData(pool, ticketData);
   return extractTickets(ticketData);

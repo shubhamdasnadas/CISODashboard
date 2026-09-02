@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
+import AnalyticsLaunchButton from '../components/AnalyticsLaunchButton.jsx';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 const tooltipStyle = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12 };
@@ -163,6 +164,7 @@ export default function Microsoft365() {
         >
           {syncing ? <><div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />Syncing…</> : 'Sync'}
         </button>
+        <AnalyticsLaunchButton moduleKey="microsoft365" />
       </div>
 
       {syncMsg && (

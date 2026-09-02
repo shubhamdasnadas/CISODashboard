@@ -54,6 +54,8 @@ import Reports from './pages/Reports.jsx';
 import Analytics from './pages/Analytics.jsx';
 import News from './pages/News.jsx';
 import Nvd from './pages/Nvd.jsx';
+import UpdatedNvd from './pages/UpdatedNvd.jsx';
+import UpdatedCpes from './pages/UpdatedCpes.jsx';
 import Support from './pages/Support.jsx';
 import Notifications from './pages/Notifications.jsx';
 import Billing from './pages/Billing.jsx';
@@ -121,6 +123,7 @@ export default function App() {
               >
                 {/* Core */}
                 <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/dashboard/detail" element={<DetailView />} />
                 <Route path="/mdm" element={<MDM />} />
                 <Route path="/mdm/detail" element={<MDMDetailView />} />
                 <Route path="/microsoft365" element={<Microsoft365 />} />
@@ -142,9 +145,12 @@ export default function App() {
 
                 {/* Integrations */}
                 <Route path="/paloalto" element={<PaloAltoPage />} />
+                <Route path="/paloalto/detail" element={<DetailView />} />
                 <Route path="/checkpoint" element={<CheckpointPage />} />
+                <Route path="/checkpoint/detail" element={<DetailView />} />
                 <Route path="/zoho" element={<Zohoone />} />
                 <Route path="/zoho/one" element={<Zohoone />} />
+                <Route path="/zoho/detail" element={<DetailView />} />
 
                 {/* Members */}
                 <Route path="/members" element={<Members />} />
@@ -155,6 +161,8 @@ export default function App() {
                 <Route path="/analytics" element={<Analytics />} />
                 <Route path="/news" element={<News />} />
                 <Route path="/nvd" element={<Nvd />} />
+        <Route path="/updated-nvd" element={<UpdatedNvd />} />
+        <Route path="/updated-cpes" element={<UpdatedCpes />} />
                 <Route path="/support" element={<Support />} />
                 <Route path="/notifications" element={<Notifications />} />
                 <Route path="/billing" element={<Billing />} />

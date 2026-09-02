@@ -5,6 +5,7 @@ import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, R
 import CheckpointDashboard from './CheckpointDashboard';
 import { useProviders } from '../../context/ProviderContext.jsx';
 import Emailsecuritymttr from '../CyberHygen/Emailsecuritymttr.jsx';
+import AnalyticsLaunchButton from '../../components/AnalyticsLaunchButton.jsx';
 
 const ALL_EVENT_TYPES = ['phishing','malware','suspicious_malware','suspicious_phishing','dlp'];
 
@@ -132,14 +133,6 @@ function ThreatCard({ label, summary, expanded, onToggle, activeTypes, onTypeCha
               <div>
                 <p className={`text-3xl font-bold leading-none ${summary.detectedPct > 0 ? 'text-orange-500' : 'text-[var(--muted)]'}`}>{summary.detectedPct}%</p>
                 <p className="text-xs text-[var(--muted)] mt-1.5 font-medium">Detected</p>
-              </div>
-              <div>
-                <p className={`text-3xl font-bold leading-none ${summary.pending > 0 ? 'text-red-500' : 'text-[var(--muted)]'}`}>
-                  {summary.pending > 0 ? `${Math.round((summary.pending/summary.total)*100)}%` : '0%'}
-                </p>
-                <p className={`text-xs mt-1.5 font-medium ${summary.pending > 0 ? 'text-red-500' : 'text-[var(--muted)]'}`}>
-                  Pending{summary.pending > 0 && <span className="ml-1 text-red-400">({summary.pending})</span>}
-                </p>
               </div>
             </div>
           </>
@@ -305,11 +298,11 @@ export default function CheckpointPage() {
     const count = data[name];
     if (!count || count === 0) return;
     
-    navigate('/security/detail', {
-      state: { 
-        dataset: 'checkpoint', 
-        filterId: 'checkpointDate', 
-        value: date, 
+    navigate('/checkpoint/detail', {
+      state: {
+        dataset: 'checkpoint',
+        filterId: 'checkpointDate',
+        value: date,
         title: `${type} events on ${date}`,
         dateFrom: chartStart,
         dateTo: chartEnd,
@@ -391,6 +384,7 @@ export default function CheckpointPage() {
         >
           {syncing ? <><div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />Syncing…</> : 'Sync'}
         </button>
+        <AnalyticsLaunchButton moduleKey="checkpoint" />
       </div>
 
       {syncMsg && (

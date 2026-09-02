@@ -4,8 +4,18 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
 import api from '../api.js';
+import AnalyticsLaunchButton from '../components/AnalyticsLaunchButton.jsx';
 
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
+
+// Dynamic window for the date-windowed "Update CVE" sync: start = yesterday,
+// end = today. Computed at click time so it is always the last 24h.
+const ymd = (d) => d.toISOString().slice(0, 10);
+const toIso = (dateStr, endOfDay = false) => {
+  if (!dateStr) return null;
+  const d = new Date(dateStr + (endOfDay ? 'T23:59:59.000Z' : 'T00:00:00.000Z'));
+  return isNaN(d.getTime()) ? null : d.toISOString();
+};
 const SEVERITY_COLORS = { CRITICAL: '#a855f7', HIGH: '#ef4444', MEDIUM: '#eab308', LOW: '#3b82f6' };
 const tooltipStyle = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12 };
 
@@ -53,6 +63,106 @@ function Info({ label, value }) {
   );
 }
 
+// Legend item component (side-by-side legend for improved donuts)
+function LegendItem({ color, name, value, onClick }) {
+  return (
+    <div
+      onClick={onClick}
+      className="flex items-center gap-2 px-1.5 py-1.5 rounded-md hover:bg-[var(--muted-bg)]/40 transition-colors cursor-pointer group"
+    >
+      <span
+        className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 shadow-sm"
+        style={{ backgroundColor: color }}
+      />
+      <span className="text-[11px] font-semibold text-[var(--foreground)] group-hover:text-indigo-400 transition-colors">
+        {name}
+      </span>
+      <span className="text-[10px] text-[var(--muted)] group-hover:text-[var(--foreground)] transition-colors">
+        ({value})
+      </span>
+    </div>
+  );
+}
+
+// Improved Donut chart with side-by-side legends (left + right)
+function ImprovedDonut({ data, onSliceClick }) {
+  if (data.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-sm text-[var(--muted)]">No data available</p>
+      </div>
+    );
+  }
+
+  const midpoint = Math.ceil(data.length / 2);
+  const leftItems = data.slice(0, midpoint);
+  const rightItems = data.slice(midpoint);
+
+  return (
+    <div className="flex items-center h-72 px-2 gap-3">
+      {/* Left Legend */}
+      <div className="flex flex-col gap-3 justify-center shrink-0">
+        {leftItems.map((item) => (
+          <LegendItem
+            key={item.name}
+            color={item.fill}
+            name={item.name}
+            value={item.value}
+            onClick={() => onSliceClick && onSliceClick(item)}
+          />
+        ))}
+      </div>
+
+      {/* Center Chart */}
+      <div className="flex-1 min-w-0 h-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={data}
+              dataKey="value"
+              innerRadius="50%"
+              outerRadius="80%"
+              cornerRadius={10}
+              paddingAngle={2}
+              cursor="pointer"
+              onClick={onSliceClick}
+              animationBegin={0}
+              animationDuration={400}
+            >
+              {data.map((entry, i) => (
+                <Cell key={`cell-${i}`} fill={entry.fill} stroke="var(--card-bg)" strokeWidth={2} />
+              ))}
+            </Pie>
+            <Tooltip
+              contentStyle={tooltipStyle}
+              formatter={(value) => {
+                const n = Number(value);
+                const total = data.reduce((s, d) => s + d.value, 0);
+                return [`${n} (${Math.round((n / total) * 100)}%)`, ''];
+              }}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Right Legend */}
+      {rightItems.length > 0 && (
+        <div className="flex flex-col gap-3 justify-center shrink-0">
+          {rightItems.map((item) => (
+            <LegendItem
+              key={item.name}
+              color={item.fill}
+              name={item.name}
+              value={item.value}
+              onClick={() => onSliceClick && onSliceClick(item)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SeverityBadge({ severity }) {
   if (!severity) return <span className="text-[var(--muted)] text-xs">—</span>;
   const color = SEVERITY_COLORS[severity.toUpperCase()] || '#64748b';
@@ -92,6 +202,14 @@ export default function Nvd() {
   const [cpeSyncing, setCpeSyncing] = useState(false);
   const [cpeStats, setCpeStats] = useState(null);
   const [cpeMsg, setCpeMsg] = useState(null);
+
+  // Updated-CVE (date-windowed) sync state
+  const [updatingCve, setUpdatingCve] = useState(false);
+  const [updateCveMsg, setUpdateCveMsg] = useState(null);
+
+  // Updated-CPE (date-windowed, cpe_match column only) sync state
+  const [updatingCpe, setUpdatingCpe] = useState(false);
+  const [updateCpeMsg, setUpdateCpeMsg] = useState(null);
 
   const loadCreds = useCallback(async () => {
     setLoadingCreds(true);
@@ -207,6 +325,85 @@ export default function Nvd() {
     }
   };
 
+  // Updated-CVE sync — date-windowed NVD pull (routes/updatedNvd.js).
+  // Uses lastModStartDate/lastModEndDate so only CVEs modified since the last
+  // run are upserted. Reuses the same Token + API URL fields on this page.
+  const runUpdateCve = async () => {
+    if (!creds.apiKey) {
+      setUpdateCveMsg({ type: 'error', text: 'Enter the NVD API key (token) first.' });
+      return;
+    }
+    setUpdatingCve(true);
+    setUpdateCveMsg(null);
+    try {
+      // Persist the token + base URL under the nvd_modified integration so the
+      // backend can track the sync window across runs, then run the windowed sync
+      // with the values straight from the frontend.
+      await api.put('/updated-nvd/credentials', {
+        apiKey: creds.apiKey,
+        apiUrl: creds.apiUrl || 'https://services.nvd.nist.gov/rest/json/cves/2.0',
+      });
+      // Send the dynamic last-24h window (yesterday -> today) so the backend
+      // pulls only CVEs modified in that range and never the old stored date.
+      const start = ymd((() => { const d = new Date(); d.setDate(d.getDate() - 1); return d; })());
+      const end = ymd(new Date());
+      const r = await api.post('/updated-nvd/sync', {
+        apiKey: creds.apiKey,
+        apiUrl: creds.apiUrl || 'https://services.nvd.nist.gov/rest/json/cves/2.0',
+        lastModStartDate: toIso(start),
+        lastModEndDate: toIso(end, true),
+      });
+      setUpdateCveMsg({ type: 'success', text: r.data.message });
+      loadStats();
+      loadList();
+    } catch (e) {
+      setUpdateCveMsg({
+        type: 'error',
+        text: e.response?.data?.message || 'Updated CVE sync failed',
+      });
+    } finally {
+      setUpdatingCve(false);
+    }
+  };
+
+  // Updated-CPE sync — date-windowed NVD /cpes/2.0 pull (routes/updatedCpes.js).
+  // Each returned CPE is matched to existing CVEs by their stored configuration
+  // criteria, and ONLY the cpe_match column of those CVEs is updated.
+  const runUpdateCpe = async () => {
+    if (!creds.apiKey) {
+      setUpdateCpeMsg({ type: 'error', text: 'Enter the NVD API key (token) first.' });
+      return;
+    }
+    setUpdatingCpe(true);
+    setUpdateCpeMsg(null);
+    try {
+      // Always use the CPE endpoint — never derive from creds.apiUrl (which holds the CVE endpoint).
+      const CPE_BASE = 'https://services.nvd.nist.gov/rest/json/cpes/2.0';
+      await api.put('/updated-cpes/credentials', {
+        apiKey: creds.apiKey,
+        apiUrl: CPE_BASE,
+      });
+      const start = ymd((() => { const d = new Date(); d.setDate(d.getDate() - 1); return d; })());
+      const end = ymd(new Date());
+      const r = await api.post('/updated-cpes/sync', {
+        apiKey: creds.apiKey,
+        apiUrl: CPE_BASE,
+        lastModStartDate: toIso(start),
+        lastModEndDate: toIso(end, true),
+      });
+      setUpdateCpeMsg({ type: 'success', text: r.data.message });
+      loadStats();
+      loadList();
+    } catch (e) {
+      setUpdateCpeMsg({
+        type: 'error',
+        text: e.response?.data?.message || 'Updated CPE sync failed',
+      });
+    } finally {
+      setUpdatingCpe(false);
+    }
+  };
+
   const openDetail = async (cveId) => {
     setLoadingDetail(true);
     setDetail(null);
@@ -249,6 +446,7 @@ export default function Nvd() {
             {stats?.lastSynced && ` · Last synced ${new Date(stats.lastSynced).toLocaleString()}`}
           </p>
         </div>
+        <AnalyticsLaunchButton moduleKey="nvd" />
       </div>
 
       {/* Config + Sync */}
@@ -302,11 +500,37 @@ export default function Nvd() {
           >
             {cpeSyncing ? 'CPE Sync starting…' : 'Sync CPE (all CVEs)'}
           </button>
+          <button
+            onClick={runUpdateCve}
+            disabled={updatingCve || !creds.apiKey}
+            className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {updatingCve ? 'Updating CVEs…' : 'Update CVE'}
+          </button>
+          <button
+            onClick={runUpdateCpe}
+            disabled={updatingCpe || !creds.apiKey}
+            className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {updatingCpe ? 'Updating CPEs…' : 'Update CPE'}
+          </button>
         </div>
 
         {syncMsg && (
           <div className={`text-xs px-3 py-2 rounded-lg ${syncMsg.type === 'success' ? 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300' : 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300'}`}>
             {syncMsg.text}
+          </div>
+        )}
+
+        {updateCveMsg && (
+          <div className={`text-xs px-3 py-2 rounded-lg ${updateCveMsg.type === 'success' ? 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300' : 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300'}`}>
+            {updateCveMsg.text}
+          </div>
+        )}
+
+        {updateCpeMsg && (
+          <div className={`text-xs px-3 py-2 rounded-lg ${updateCpeMsg.type === 'success' ? 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300' : 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300'}`}>
+            {updateCpeMsg.text}
           </div>
         )}
 
@@ -341,21 +565,10 @@ export default function Nvd() {
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             <ChartCard title="CVEs by Severity">
-              <div style={{ height: 260 }}>
-                {severityChartData.length === 0
-                  ? <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No severity data</p></div>
-                  : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie data={severityChartData} dataKey="value" innerRadius="55%" outerRadius="85%" paddingAngle={3} cornerRadius={8}>
-                          {severityChartData.map((e, i) => <Cell key={i} fill={e.fill} />)}
-                        </Pie>
-                        <Tooltip contentStyle={tooltipStyle} />
-                        <Legend wrapperStyle={{ fontSize: 11 }} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  )}
-              </div>
+              {severityChartData.length === 0
+                ? <div className="flex items-center justify-center h-64"><p className="text-sm text-[var(--muted)]">No severity data</p></div>
+                : <ImprovedDonut data={severityChartData} />
+              }
             </ChartCard>
 
             <ChartCard title="CVEs by Status">

@@ -29,6 +29,7 @@ const RESOURCES = {
   'sentinelone-agents': { ttl: 300, fetcher: fetchSentinelOneAgents },
   'sentinelone-cves':   { ttl: 300, fetcher: fetchSentinelOneCves },
   'sentinelone-threats': { ttl: 300, fetcher: fetchSentinelOneAgents },
+  'sentinelone-custom-alerts': { ttl: 300, fetcher: fetchSentinelOneCustomAlerts },
   'harmony-events':     { ttl: 300, fetcher: fetchHarmonyEvents },
   'firewall-reports':   { ttl: 300, fetcher: fetchFirewallReports },
   'zoho-tickets':       { ttl: 900, fetcher: fetchZohoTickets },
@@ -69,6 +70,14 @@ async function fetchSentinelOneCves(orgSlug) {
   if (!creds) throw new Error('SentinelOne not configured');
   const r = await syncSentinelOne(orgSlug, creds);
   return { applicationCve: r.applicationCve, syncedAt: new Date().toISOString() };
+}
+
+async function fetchSentinelOneCustomAlerts(orgSlug) {
+  const { syncCustomAlerts } = require('./sentinelone');
+  const creds = await readCreds(orgSlug, 'sentinelone');
+  if (!creds) throw new Error('SentinelOne not configured');
+  const r = await syncCustomAlerts(orgSlug, creds);
+  return { alerts: r.alerts, syncedAt: new Date().toISOString() };
 }
 
 async function fetchHarmonyEvents(orgSlug) {
@@ -119,7 +128,7 @@ async function fetchDashboardAggregate(orgSlug) {
   const pool = getOrgPool(orgSlug);
   const [
     threatsRows, agentsRows, appAgentRows, appCveRows,
-    deviceControlRows, rssRows, harmonyRows, fwWidgetsRows,
+    deviceControlRows, rssRows, customAlertRows, harmonyRows, fwWidgetsRows,
   ] = await Promise.all([
     pool.query('SELECT data FROM s1_threats ORDER BY synced_at DESC'),
     pool.query('SELECT data FROM s1_agents ORDER BY synced_at DESC'),
@@ -127,6 +136,7 @@ async function fetchDashboardAggregate(orgSlug) {
     pool.query('SELECT data FROM s1_application_cve ORDER BY synced_at DESC'),
     pool.query('SELECT data FROM s1_device_control ORDER BY synced_at DESC'),
     pool.query('SELECT data FROM s1_rss ORDER BY synced_at DESC'),
+    pool.query('SELECT data FROM s1_custome_alert ORDER BY synced_at DESC'),
     pool.query('SELECT * FROM checkpoint_events ORDER BY synced_at DESC'),
     pool.query('SELECT * FROM firewall_widgets ORDER BY created_at ASC'),
   ]);
@@ -141,6 +151,7 @@ async function fetchDashboardAggregate(orgSlug) {
       applicationCve: appCveRows.rows.map((r) => r.data),
       deviceControl: deviceControlRows.rows.map((r) => r.data),
       rss: rssRows.rows.map((r) => r.data),
+      customAlerts: customAlertRows.rows.map((r) => r.data),
     },
     harmony: { events: harmonyRows.rows },
     firewall: { widgets: fwWidgetsRows.rows },
