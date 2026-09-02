@@ -6,6 +6,7 @@ import CheckpointDashboard from './CheckpointDashboard';
 import { useProviders } from '../../context/ProviderContext.jsx';
 import Emailsecuritymttr from '../CyberHygen/Emailsecuritymttr.jsx';
 import AnalyticsLaunchButton from '../../components/AnalyticsLaunchButton.jsx';
+import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 
 const ALL_EVENT_TYPES = ['phishing','malware','suspicious_malware','suspicious_phishing','dlp'];
 
@@ -362,8 +363,24 @@ export default function CheckpointPage() {
   const dlpDetail      = sortedCardEvents.filter(e => dlpTypes.includes(e.type));
 
   if (loading) return (
-    <div className="p-8 flex items-center justify-center h-64">
-      <div className="animate-spin w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full" />
+    <div className="p-6 lg:p-8 space-y-6">
+      {/* 3 stat cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-5 shadow-sm">
+            <div className="h-3 w-1/3 bg-[var(--muted-bg)] rounded animate-pulse mb-3" />
+            <div className="h-8 w-1/2 bg-[var(--muted-bg)] rounded animate-pulse" />
+          </div>
+        ))}
+      </div>
+      {/* Threat cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {[0, 1, 2].map((i) => <WidgetSkeleton key={i} variant="chart" />)}
+      </div>
+      {/* Events chart */}
+      <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-5 shadow-sm">
+        <WidgetSkeleton variant="chart" />
+      </div>
     </div>
   );
 

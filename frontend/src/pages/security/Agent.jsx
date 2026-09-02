@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import api from '../../api';
+import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 
 export default function Agent() {
   const [agents, setAgents] = useState([]);
@@ -30,7 +31,7 @@ export default function Agent() {
 
       <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
         {loading ? (
-          <div className="p-12 text-center"><div className="animate-spin w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full mx-auto" /></div>
+          <WidgetSkeleton variant="table" />
         ) : filtered.length === 0 ? (
           <div className="p-12 text-center text-[var(--muted)]">No agents found.</div>
         ) : (

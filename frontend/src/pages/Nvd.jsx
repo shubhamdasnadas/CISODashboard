@@ -5,6 +5,7 @@ import {
 } from 'recharts';
 import api from '../api.js';
 import AnalyticsLaunchButton from '../components/AnalyticsLaunchButton.jsx';
+import WidgetSkeleton from './dashboard/WidgetSkeleton.jsx';
 
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
 
@@ -709,9 +710,7 @@ export default function Nvd() {
             onClick={(e) => e.stopPropagation()}
           >
             {loadingDetail ? (
-              <div className="flex items-center justify-center p-10">
-                <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full" />
-              </div>
+              <WidgetSkeleton variant="table" />
             ) : detail.error ? (
               <div className="p-6 text-center text-sm text-red-500">Failed to load CVE detail.</div>
             ) : (

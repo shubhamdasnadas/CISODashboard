@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import api from '../api';
 import { useOrg } from '../context/OrgContext.jsx';
 import { PAGES as ALL_PAGES } from '../constants/navPages.js';
+import WidgetSkeleton from './dashboard/WidgetSkeleton.jsx';
 
 function Modal({ title, subtitle, onClose, children }) {
   return (
@@ -230,8 +231,20 @@ export default function Members() {
   const adminCount  = members.filter(m => m.role === 'org_admin' || m.role === 'admin').length;
 
   if (loading) return (
-    <div className="p-8 flex items-center justify-center h-64">
-      <div className="animate-spin w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full" />
+    <div className="p-6 lg:p-8 space-y-6">
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-4">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-4 shadow-sm">
+            <div className="h-3 w-1/3 bg-[var(--muted-bg)] rounded animate-pulse mb-3" />
+            <div className="h-8 w-1/3 bg-[var(--muted-bg)] rounded animate-pulse" />
+          </div>
+        ))}
+      </div>
+      {/* Table */}
+      <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl overflow-hidden shadow-sm">
+        <WidgetSkeleton variant="table" />
+      </div>
     </div>
   );
 

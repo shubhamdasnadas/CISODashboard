@@ -3,6 +3,7 @@ import api from '../api';
 import { useOrg } from '../context/OrgContext.jsx';
 import { fetchReportData } from './report/fetchReportData.js';
 import { generatePdfFromElement, generatePdfOnServer } from './report/generatePdf.jsx';
+import WidgetSkeleton from './dashboard/WidgetSkeleton.jsx';
 
 const TYPE_CONFIG = {
   sales:      { label: 'Sales',      bg: 'bg-green-100 dark:bg-green-900/30',   text: 'text-green-700 dark:text-green-400' },
@@ -318,7 +319,7 @@ export default function Reports() {
       {/* Table */}
       <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl overflow-hidden shadow-sm">
         {loading ? (
-          <div className="p-12 text-center"><div className="animate-spin w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full mx-auto" /></div>
+          <WidgetSkeleton variant="table" />
         ) : visible.length === 0 ? (
           <div className="p-12 text-center text-[var(--muted)]">No reports{filter !== 'all' ? ` with status "${filter}"` : ''}{dateFilter ? ` on ${dateFilter}` : ''} yet.</div>
         ) : (

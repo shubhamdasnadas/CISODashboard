@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import AnalyticsLaunchButton from '../components/AnalyticsLaunchButton.jsx';
+import WidgetSkeleton from './dashboard/WidgetSkeleton.jsx';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 const tooltipStyle = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12 };
@@ -9,13 +10,6 @@ const COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4'
 
 const fmt = (d) => d ? new Date(d).toLocaleString() : '—';
 
-function Spin() {
-  return (
-    <div className="flex items-center justify-center h-full min-h-[100px]">
-      <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full" />
-    </div>
-  );
-}
 function Empty({ msg }) {
   return (
     <div className="flex items-center justify-center h-full min-h-[80px] px-4 text-center">
@@ -177,7 +171,7 @@ export default function Microsoft365() {
         </div>
       )}
 
-      {loading ? <Spin /> : (
+      {loading ? <WidgetSkeleton variant="table" /> : (
         <>
           {/* ── Tenant & Licensing ─────────────────────────────────────────── */}
           <SectionHeader sublabel="Entra ID" label="Tenant & Licensing" />

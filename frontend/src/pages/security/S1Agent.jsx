@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 import {
   PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -441,8 +442,8 @@ export default function S1Agent() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[300px]">
-        <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full" />
+      <div className="p-6">
+        <WidgetSkeleton variant="table" />
       </div>
     );
   }

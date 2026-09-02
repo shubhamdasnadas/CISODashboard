@@ -2,6 +2,7 @@ import * as session from '../utils/session.js';
 import { useEffect, useState } from 'react';
 import api from '../api';
 import { Card, PageHeader, PrimaryButton, Input, Badge } from '../components/UI.jsx';
+import WidgetSkeleton from './dashboard/WidgetSkeleton.jsx';
 
 export default function Organisations() {
   const user = session.getUser();
@@ -77,7 +78,7 @@ export default function Organisations() {
       )}
 
       {loading ? (
-        <div className="text-muted">Loading...</div>
+        <WidgetSkeleton variant="table" />
       ) : (
         <Card>
           <table className="w-full text-left">

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../../api';
+import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 
 const LIST_STATUS = [
   'Open', 'On Hold', 'Escalated', 'Technically Closed', 'Closed',
@@ -71,7 +72,7 @@ export default function ZohoTicketMatrix() {
   }, [tickets]);
 
   if (loading) {
-    return <div className="flex items-center justify-center py-16 text-[var(--muted)]">Loading tickets…</div>;
+    return <WidgetSkeleton variant="table" />;
   }
 
   return (

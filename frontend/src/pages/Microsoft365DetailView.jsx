@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import api from '../api';
+import WidgetSkeleton from './dashboard/WidgetSkeleton.jsx';
 
 const PAGE_SIZE = 25;
 
@@ -127,8 +128,8 @@ export default function Microsoft365DetailView() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[300px]">
-        <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full" />
+      <div className="p-6">
+        <WidgetSkeleton variant="table" />
       </div>
     );
   }

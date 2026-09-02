@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api';
 import { Card, PageHeader, PrimaryButton, Input, Select, Badge } from '../components/UI.jsx';
+import WidgetSkeleton from './dashboard/WidgetSkeleton.jsx';
 
 export default function Users() {
   const [users, setUsers] = useState([]);
@@ -81,7 +82,7 @@ export default function Users() {
       </Card>
 
       {loading ? (
-        <div className="text-muted">Loading...</div>
+        <WidgetSkeleton variant="table" />
       ) : (
         <Card>
           <table className="w-full text-left">

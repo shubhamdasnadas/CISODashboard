@@ -6,6 +6,7 @@ import {
   Cell, PieChart, Pie, Legend, ComposedChart, LabelList,
 } from 'recharts';
 import api from '../api.js';
+import WidgetSkeleton from './dashboard/WidgetSkeleton.jsx';
 
 // ─── Preserved API (used by AnalyticsLaunchButton across module pages) ─────────
 export const MODULE_PATHS = {
@@ -110,14 +111,6 @@ function formatBytes(b) {
 }
 
 // ─── Shared sub-components ─────────────────────────────────────────────────────
-
-function Spin() {
-  return (
-    <div className="flex items-center justify-center h-full min-h-[120px]">
-      <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full" />
-    </div>
-  );
-}
 
 function Empty({ msg = 'No data available' }) {
   return (
@@ -1874,7 +1867,34 @@ export default function Analytics() {
     if (tab) setActiveTab(tab);
   }, [loaded, launchModule]);
 
-  if (!loaded) return <Spin />;
+  if (!loaded) {
+    return (
+      <div className="p-5 lg:p-7 space-y-6 bg-[var(--background)]">
+        {/* Header */}
+        <div>
+          <div className="h-5 w-1/4 bg-[var(--muted-bg)] rounded animate-pulse" />
+          <div className="h-3 w-1/2 bg-[var(--muted-bg)] rounded animate-pulse mt-2" />
+        </div>
+        {/* KPI row */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-4 shadow-sm">
+              <div className="h-3 w-1/2 bg-[var(--muted-bg)] rounded animate-pulse mb-3" />
+              <div className="h-6 w-1/3 bg-[var(--muted-bg)] rounded animate-pulse" />
+            </div>
+          ))}
+        </div>
+        {/* Charts */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-5 shadow-sm">
+              <WidgetSkeleton variant="chart" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-5 lg:p-7 space-y-6 min-h-screen bg-[var(--background)]">

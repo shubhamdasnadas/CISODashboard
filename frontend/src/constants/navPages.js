@@ -17,6 +17,7 @@ export const PAGES = [
   { key: 'zoho-one',      label: 'Ticketing' },
   { key: 'reports',       label: 'Reports' },
   { key: 'analytics',     label: 'Analytics' },
+  { key: 'news',          label: 'News' },
   { key: 'settings',      label: 'Settings' },
   { key: 'members',       label: 'Users' },
 ];

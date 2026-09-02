@@ -1,15 +1,13 @@
+import { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { collectKeys, getPath, toYMD, buildChartData, labelFor } from './helpers.js';
+import WidgetSkeleton from './WidgetSkeleton.jsx';
 
 const tooltipStyle = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8 };
 
 export default function S1ConfigWidget({ data, loading, config, onConfigChange, accentColor = '#10b981' }) {
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="animate-spin w-6 h-6 border-4 border-emerald-500 border-t-transparent rounded-full" />
-      </div>
-    );
+    return <WidgetSkeleton variant={config.viewMode === 'graph' ? 'chart' : 'table'} />;
   }
   if (!data || data.length === 0) {
     return (
@@ -72,7 +70,18 @@ export default function S1ConfigWidget({ data, loading, config, onConfigChange, 
     if (!activeDateKey) return true;
     const day = toYMD(getPath(r, activeDateKey));
     return (!dateFrom || day >= dateFrom) && (!dateTo || day <= dateTo);
-  }).slice(0, 100);
+  });
+
+  // ── Per-widget search ── matches any visible column value (case-insensitive)
+  const [search, setSearch] = useState('');
+  const searchTerms = search.trim().toLowerCase();
+  const searched = searchTerms
+    ? filtered.filter((r) => {
+        const hay = [getPath(r, activeDateKey), ...visibleCols.map((c) => getPath(r, c))].map((v) => (v == null ? '' : String(v))).join(' ').toLowerCase();
+        return hay.includes(searchTerms);
+      })
+    : filtered;
+  const shown = searched.slice(0, 100);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -94,12 +103,21 @@ export default function S1ConfigWidget({ data, loading, config, onConfigChange, 
             className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-emerald-500"
           />
         </div>
-        <span className="text-[10px] text-[var(--muted)] ml-auto">{filtered.length} rows</span>
+        <div className="flex items-center gap-1 ml-auto">
+          <svg className="w-3.5 h-3.5 text-[var(--muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 10a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+          <input
+            type="text" value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search…"
+            className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-1 focus:ring-emerald-500 w-28"
+          />
+          <span className="text-[10px] text-[var(--muted)]">{shown.length} rows</span>
+        </div>
       </div>
 
       {/* Scrollable table */}
       <div className="flex-1 min-h-0 overflow-auto">
-        {filtered.length === 0 ? (
+        {shown.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <p className="text-xs text-[var(--muted)]">No records in date range</p>
           </div>
@@ -118,7 +136,7 @@ export default function S1ConfigWidget({ data, loading, config, onConfigChange, 
               </tr>
             </thead>
             <tbody>
-              {filtered.map((row, i) => {
+              {shown.map((row, i) => {
                 const rawDate = String(getPath(row, activeDateKey) ?? '—');
                 const displayDate = toYMD(rawDate) || rawDate.slice(0, 20);
                 return (

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../api';
 import { useProviders } from '../../context/ProviderContext.jsx';
 import AnalyticsLaunchButton from '../../components/AnalyticsLaunchButton.jsx';
+import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
   ComposedChart, Line, PieChart, Pie,
@@ -581,8 +582,24 @@ export default function PaloAltoPage() {
 
       {/* Loader */}
       {loading && (
-        <div className="flex h-72 items-center justify-center">
-          <div className="h-10 w-10 animate-spin rounded-full border-4 border-[#3b82f6] border-t-transparent" />
+        <div className="space-y-6">
+          {/* KPI cards */}
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(230px,1fr))] gap-4">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-4 shadow-sm h-[156px]">
+                <div className="h-3 w-2/5 bg-[var(--muted-bg)] rounded animate-pulse mb-4" />
+                <div className="h-8 w-1/3 bg-[var(--muted-bg)] rounded animate-pulse" />
+              </div>
+            ))}
+          </div>
+          {/* Charts */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-5 shadow-sm">
+                <WidgetSkeleton variant="chart" />
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

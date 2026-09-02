@@ -5,6 +5,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
 import api from '../../api.js';
+import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 import S1Mttr from '../CyberHygen/S1Mttr.jsx';
 
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
@@ -480,8 +481,8 @@ export default function Threats() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[300px]">
-        <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full" />
+      <div className="p-6">
+        <WidgetSkeleton variant="table" />
       </div>
     );
   }

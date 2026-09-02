@@ -4,6 +4,7 @@ import api from '../../../api';
 import { useProviders } from '../../../context/ProviderContext.jsx';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
 import AnalyticsLaunchButton from '../../../components/AnalyticsLaunchButton.jsx';
+import WidgetSkeleton from '../../dashboard/WidgetSkeleton.jsx';
 import TicketVolcanoGraph from './TicketVolcanoGraph';
 import Circlemember from './Circlemember';
 import Mttrcard from './Mttrcard';
@@ -1021,9 +1022,7 @@ export default function Zohoone() {
 
       <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
         {loading ? (
-          <div className="p-12 text-center">
-            <div className="animate-spin w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full mx-auto" />
-          </div>
+          <WidgetSkeleton variant="table" />
         ) : overviewFiltered.length === 0 ? (
           <div className="p-12 text-center text-[var(--muted)]">
             {tickets.length === 0

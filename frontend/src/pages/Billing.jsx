@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import api from '../api';
+import WidgetSkeleton from './dashboard/WidgetSkeleton.jsx';
 
 const PLANS = [
   {
@@ -48,8 +49,14 @@ export default function Billing() {
   };
 
   if (loading) return (
-    <div className="p-8 flex items-center justify-center h-40">
-      <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full" />
+    <div className="p-6 lg:p-8 space-y-6">
+      <div>
+        <div className="h-5 w-1/4 bg-[var(--muted-bg)] rounded animate-pulse" />
+        <div className="h-3 w-1/3 bg-[var(--muted-bg)] rounded animate-pulse mt-2" />
+      </div>
+      <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-6 shadow-sm">
+        <WidgetSkeleton variant="chart" />
+      </div>
     </div>
   );
 

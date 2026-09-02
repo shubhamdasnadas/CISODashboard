@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import api from '../../api.js';
 import DynChart from './DynChart.jsx';
+import WidgetSkeleton from './WidgetSkeleton.jsx';
 import { extractTable, parseAxis } from './helpers.js';
 
 export default function FwGraphWidget({ widget, onDelete, isEditMode }) {
@@ -56,9 +57,7 @@ export default function FwGraphWidget({ widget, onDelete, isEditMode }) {
       </div>
       <div className="flex-1 min-h-0 p-3">
         {loading ? (
-          <div className="h-full flex items-center justify-center">
-            <div className="animate-spin w-6 h-6 border-4 border-indigo-500 border-t-transparent rounded-full" />
-          </div>
+          <WidgetSkeleton variant="chart" height="h-full" />
         ) : error ? (
           <div className="h-full flex items-center justify-center">
             <p className="text-sm text-red-500">{error}</p>

@@ -3,18 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import AnalyticsLaunchButton from '../components/AnalyticsLaunchButton.jsx';
+import WidgetSkeleton from './dashboard/WidgetSkeleton.jsx';
 
 const tooltipStyle = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12 };
 
 const COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
 
-function Spin() {
-  return (
-    <div className="flex items-center justify-center h-full min-h-[100px]">
-      <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full" />
-    </div>
-  );
-}
 function Empty({ msg }) {
   return (
     <div className="flex items-center justify-center h-full min-h-[80px] px-4 text-center">
@@ -287,7 +281,7 @@ export default function MDM() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <CardShell title="Device Inventory" className="lg:col-span-2 h-[420px]">
           <div className="h-full overflow-auto">
-            {devicesLoading ? <Spin /> : devices.length === 0 ? <Empty msg="No devices found — configure & sync Hexnode in Settings" /> : (
+            {devicesLoading ? <WidgetSkeleton variant="table" /> : devices.length === 0 ? <Empty msg="No devices found — configure & sync Hexnode in Settings" /> : (
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-[var(--muted-bg)]">
                   <tr>
@@ -321,7 +315,7 @@ export default function MDM() {
 
         <CardShell title="Device OS / Platform Breakdown" className="h-[420px]">
           <div className="h-full p-3">
-            {devicesLoading ? <Spin /> : osData.length === 0 ? <Empty msg="No device data" /> : (
+            {devicesLoading ? <WidgetSkeleton variant="table" /> : osData.length === 0 ? <Empty msg="No device data" /> : (
               <ImprovedDonut
                 data={osData}
                 onSliceClick={(d) => navigate('/mdm/detail', { state: { dataset: 'devices', filterId: 'os', value: d.name, title: `Devices — ${d.name}` } })}
@@ -335,7 +329,7 @@ export default function MDM() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <CardShell title="Compliance Status" className="h-[340px]">
           <div className="h-full p-3">
-            {devicesLoading ? <Spin /> : complianceData.length === 0 ? <Empty msg="No device data" /> : (
+            {devicesLoading ? <WidgetSkeleton variant="table" /> : complianceData.length === 0 ? <Empty msg="No device data" /> : (
               <ImprovedDonut
                 data={complianceData}
                 onSliceClick={(d) => navigate('/mdm/detail', { state: { dataset: 'devices', filterId: 'compliant', value: d.name === 'Compliant', title: `${d.name} Devices` } })}
@@ -346,7 +340,7 @@ export default function MDM() {
 
         <CardShell title="Device Type Breakdown" className="h-[340px]">
           <div className="h-full p-3">
-            {devicesLoading ? <Spin /> : deviceTypeData.length === 0 ? <Empty msg="No device data" /> : (
+            {devicesLoading ? <WidgetSkeleton variant="table" /> : deviceTypeData.length === 0 ? <Empty msg="No device data" /> : (
               <ImprovedDonut data={deviceTypeData} />
             )}
           </div>
@@ -354,7 +348,7 @@ export default function MDM() {
 
         <CardShell title="Stale Devices" description={`(inactive for >${STALE_DAYS}d)`} className="h-[340px]">
           <div className="h-full overflow-auto">
-            {devicesLoading ? <Spin /> : staleDevices.length === 0 ? <Empty msg="No stale devices — all reporting recently" /> : (
+            {devicesLoading ? <WidgetSkeleton variant="table" /> : staleDevices.length === 0 ? <Empty msg="No stale devices — all reporting recently" /> : (
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-[var(--muted-bg)]">
                   <tr>
@@ -380,7 +374,7 @@ export default function MDM() {
       <div className="grid grid-cols-1 gap-4">
         <CardShell title="Application Inventory" className="h-[420px]">
           <div className="h-full overflow-auto">
-            {appsLoading ? <Spin /> : apps.length === 0 ? <Empty msg="No applications found — configure & sync Hexnode in Settings" /> : (
+            {appsLoading ? <WidgetSkeleton variant="table" /> : apps.length === 0 ? <Empty msg="No applications found — configure & sync Hexnode in Settings" /> : (
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-[var(--muted-bg)]">
                   <tr>
@@ -412,7 +406,7 @@ export default function MDM() {
           <div className="h-full grid grid-cols-1 gap-2 p-3">
             <div className="h-full min-w-0">
               <p className="text-[10px] font-semibold text-[var(--muted)] uppercase tracking-wider text-center mb-1">Platform</p>
-              {appsLoading ? <Spin /> : platformData.length === 0 ? <Empty msg="No app data" /> : (
+              {appsLoading ? <WidgetSkeleton variant="table" /> : platformData.length === 0 ? <Empty msg="No app data" /> : (
                 <ImprovedDonut
                   data={platformData}
                   onSliceClick={(d) => navigate('/mdm/detail', { state: { dataset: 'apps', filterId: 'platform', value: d.name, title: `Apps — ${d.name}` } })}
@@ -424,7 +418,7 @@ export default function MDM() {
 
         <CardShell title="Blacklisted / Mandatory Apps" className="h-[420px]">
           <div className="h-full overflow-auto">
-            {flaggedAppsLoading ? <Spin /> : flaggedApps.length === 0 ? <Empty msg="No blacklisted or mandatory apps found" /> : (
+            {flaggedAppsLoading ? <WidgetSkeleton variant="table" /> : flaggedApps.length === 0 ? <Empty msg="No blacklisted or mandatory apps found" /> : (
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-[var(--muted-bg)]">
                   <tr>
