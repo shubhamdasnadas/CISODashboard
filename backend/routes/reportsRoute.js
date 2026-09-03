@@ -117,17 +117,16 @@ router.post('/generate', async (req, res) => {
 //     in the DB — mirroring the server-side /generate flow.
 //   - The active org comes from `req.orgSlug` (set by orgMiddleware from the
 //     X-Org-Id header), so switching orgs auto-creates that org's own folder.
-router.post('/save', async (req, res) => {
+router.post('/save', express.raw({ type: 'application/pdf', limit: '50mb' }), async (req, res) => {
   try {
     if (!req.orgSlug) {
       return res.status(400).json({ message: 'active organisation not resolved' });
     }
 
-    // Body may arrive as a raw Buffer or (with express.json) as an array of numbers.
-    const buf = Buffer.isBuffer(req.body) || Array.isArray(req.body)
-      ? Buffer.from(req.body)
-      : Buffer.from('');
-    if (buf.length === 0) {
+    // Body is the raw PDF bytes (parsed by express.raw above). A Buffer is
+    // required; a falsy/empty body means no PDF was transmitted.
+    const buf = req.body;
+    if (!Buffer.isBuffer(buf) || buf.length === 0) {
       return res.status(400).json({ message: 'no PDF body received' });
     }
 

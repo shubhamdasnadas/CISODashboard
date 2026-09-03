@@ -10,6 +10,9 @@ import WidgetSkeleton from './dashboard/WidgetSkeleton.jsx';
 import { useOrg } from '../context/OrgContext.jsx';
 import { generateAnalyticsPdf, generateAnalyticsPdfForSection } from './report/generatePdf.jsx';
 import { fetchReportData } from './report/fetchReportData.js';
+import S1Mttr from './CyberHygen/S1Mttr.jsx';
+import Ticketingmttr from './CyberHygen/Ticketingmttr.jsx';
+import Emailsecuritymttr from './CyberHygen/Emailsecuritymttr.jsx';
 
 // ─── Preserved API (used by AnalyticsLaunchButton across module pages) ─────────
 export const MODULE_PATHS = {
@@ -661,6 +664,10 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
             <StatCard title="Avg MTTM" value={formatDuration(threatStats.avgMttm)} color="cyan" subtitle="time to mitigate" />
           </div>
 
+          <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-xl p-4">
+            <S1Mttr total={threatStats.total} mitigated={threatStats.mitigated} />
+          </div>
+
           <ChartCard title="Threat Trend Over Time" subtitle="Daily new threats">
             <div style={{ height: 260 }}>
               {threatTrend.length === 0 ? <Empty /> : (
@@ -966,6 +973,8 @@ function CheckpointSection({ events: fullEvents, from, to, syncing, onSync }) {
         <StatCard title="Critical Events" value={criticalCount} color="red" subtitle="severity ≥ 4" goodWhenUp={false} />
         <StatCard title="Detected" value={detected} color="orange" subtitle={`${detectedPct}% of total`} />
       </div>
+
+      <Emailsecuritymttr total={stats.total} remediated={stats.remediated} pending={stats.pending} />
 
       {/* Interactive Events Per Day chart */}
       <ChartCard title="Security Events Over Time" subtitle={cpTypeFilter ? `filtered: ${cpTypeFilter}` : 'all event types'}>
@@ -1433,6 +1442,10 @@ function ZohoSection({ tickets: fullTickets, from, to, syncing, onSync }) {
         <StatCard title="Departments" value={tickets.reduce((s, t) => s.add(getDept(t)), new Set()).size} color="default" />
         <StatCard title="Avg Response Time" value={timeMetrics.avgResponse != null ? formatDuration(timeMetrics.avgResponse) : '—'} color="cyan" subtitle="time to first reply" />
         <StatCard title="Avg Resolution Time" value={timeMetrics.avgResolution != null ? formatDuration(timeMetrics.avgResolution) : '—'} color="green" subtitle="open → closed" />
+      </div>
+
+      <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-xl p-4">
+        <Ticketingmttr tickets={tickets} />
       </div>
 
       {/* Interactive filter */}

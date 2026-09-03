@@ -122,14 +122,6 @@ export default function Reports() {
           <h1 className="text-2xl font-bold text-[var(--foreground)]">Reports</h1>
           <p className="text-sm text-[var(--muted)] mt-1">{reports.length} generated report{reports.length !== 1 ? 's' : ''}</p>
         </div>
-        <button
-          onClick={() => handleGeneratePdf()}
-          disabled={generating}
-          className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-          {generating ? 'Generating…' : 'Generate PDF'}
-        </button>
       </div>
 
       {/* Error banner */}
