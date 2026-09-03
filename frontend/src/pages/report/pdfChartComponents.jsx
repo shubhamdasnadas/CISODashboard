@@ -20,9 +20,6 @@ export function VDonut({ data, width = 180, height = 150, thickness = 22, colors
   const cx = width / 2;
   const cy = height / 2;
   const r = Math.min(width, height) / 2 - 2;
-  const innerR = r - thickness;
-  const pageWhite = '#ffffff';
-
   // Full pie sector from the center to the outer radius.
   const sector = (a0, a1) => {
     const large = a1 - a0 > Math.PI ? 1 : 0;
@@ -53,8 +50,6 @@ export function VDonut({ data, width = 180, height = 150, thickness = 22, colors
   return (
     <Svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
       {segments}
-      {/* White center hole — never "transparent" (that renders black in react-pdf). */}
-      <Circle cx={cx} cy={cy} r={innerR} fill={pageWhite} stroke={pageWhite} strokeWidth={0} />
     </Svg>
   );
 }
@@ -142,7 +137,7 @@ export function VLineChart({ data, width = 320, height = 160, stroke = '#f97316'
 }
 
 // ── Horizontal bar row (rankings) ────────────────────────────────────────────
-export function VHBarList({ data, width = 320, barHeight = 16, color = '#4f46e5', labelKey = 'name', valueKey = 'value', maxItems = 8 }) {
+export function VHBarList({ data, width = 320, barHeight = 16, color = '#4f46e5', labelKey = 'name', valueKey = 'value', maxItems = 8, valueFormat }) {
   if (!data || data.length === 0) return null;
   const list = data.slice(0, maxItems);
   const max = Math.max(...list.map(d => Number(d[valueKey]) || 0), 1);
@@ -161,8 +156,8 @@ export function VHBarList({ data, width = 320, barHeight = 16, color = '#4f46e5'
               {String(d[labelKey]).slice(0, 28)}
             </SvgText>
             <Rect x={labelW} y={y} width={bw} height={barHeight} rx={2} fill={color} />
-            <SvgText x={labelW + bw + 6} y={y + barHeight / 2 + 1} fontSize={8.5} fill="#374151" fontWeight="bold">
-              {d[valueKey]}
+            <SvgText x={labelW + bw + 6} y={y + barHeight / 2 + 1} fontSize={8.5} fill="#e2e8f0" fontWeight="bold">
+              {valueFormat ? valueFormat(d[valueKey]) : d[valueKey]}
             </SvgText>
           </G>
         );

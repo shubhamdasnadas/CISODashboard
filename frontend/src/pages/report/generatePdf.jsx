@@ -1,6 +1,27 @@
 import React from 'react';
 import { pdf } from '@react-pdf/renderer';
 import ReportTemplate from './ReportTemplate';
+import AnalyticsReportTemplate from './AnalyticsReportTemplate';
+
+// Persist a client-rendered Analytics PDF to the server: it's saved into
+// backend/reportList/<orgSlug>/ and recorded in the per-org `reports` table,
+// so the PDF also appears on the Reports page. The active org is auto-resolved
+// server-side from the X-Org-Id header (set by the api client), so switching
+// organisations auto-creates/uses that org's folder.
+// Non-fatal: if the server save fails we still keep the local download.
+async function saveAnalyticsToServer(blob, orgName) {
+  try {
+    const { default: api } = await import('../../api');
+    const res = await api.post('/reports/save', blob, {
+      headers: { 'Content-Type': 'application/pdf' },
+      params: { orgName: orgName || '' },
+    });
+    return res.data?.fileName || null;
+  } catch (err) {
+    console.warn('[PDF] Analytics PDF saved locally but server save failed:', err?.message || err);
+    return null;
+  }
+}
 
 // True vector PDF generation using @react-pdf/renderer.
 // No html-to-image, no jsPDF raster slicing — text and charts stay crisp at any zoom.
@@ -99,4 +120,58 @@ export async function generatePdfForSection(data, orgName, section) {
   const sectionData = { ...data, section };
   const result = await generatePdfOnServer(sectionData, orgName);
   return result;
+}
+
+// ── Client-side Analytics PDF (mirrors Analytics page layout) ──────────────────
+
+/**
+ * Generate a client-side PDF that mirrors the Analytics page content.
+ * Uses AnalyticsReportTemplate instead of the server-side ReportTemplate.
+ *
+ * @param {object} data  - The full report data object (from fetchReportData)
+ * @param {string} filename - Desired PDF filename
+ */
+export async function generateAnalyticsPdf(data, filename) {
+  console.log('[PDF] Starting analytics PDF generation (client-side)...');
+  console.log('[PDF] Target filename:', filename);
+
+  if (isBrowser) {
+    const doc = pdf(<AnalyticsReportTemplate data={data} />);
+    const blob = await doc.toBlob();
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    // Persist a server copy + Reports-page record (best-effort).
+    const serverFile = await saveAnalyticsToServer(blob, data?.orgName);
+    console.log(serverFile ? `[PDF] ✓ Server copy: ${serverFile}` : '[PDF] Server save skipped/failed');
+    console.log(`[PDF] ✓ Analytics PDF saved as ${filename} (${blob.size} bytes)`);
+    return { success: true, fileName: filename, size: blob.size, serverFile };
+  }
+
+  // Node SSR fallback
+  const { renderToBuffer } = await import('@react-pdf/renderer');
+  const buffer = await renderToBuffer(<AnalyticsReportTemplate data={data} />);
+  const blob = new Blob([buffer], { type: 'application/pdf' });
+  console.log(`[PDF] ✓ Analytics PDF generated (server fallback, ${buffer.length} bytes)`);
+  return { success: true, fileName: filename, size: buffer.length };
+}
+
+/**
+ * Generate a client-side section-scoped Analytics PDF.
+ *
+ * @param {object} data     - The full report data object
+ * @param {string} filename - Desired PDF filename
+ * @param {string} section  - Section key: 'security', 'mdm', 'nvd',
+ *                            'checkpoint', 'firewall', 'zoho', 'microsoft'
+ */
+export async function generateAnalyticsPdfForSection(data, filename, section) {
+  const sectionData = { ...data, section };
+  return generateAnalyticsPdf(sectionData, filename);
 }
