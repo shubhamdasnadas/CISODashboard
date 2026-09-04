@@ -1,79 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-} from 'recharts';
 import api from '../../api.js';
 import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
+import {
+  MultiViewChart, ChartViewDropdown, useViewState,
+} from './widgetViews.jsx';
 
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
 const COLORS = { CRITICAL: '#a855f7', HIGH: '#ef4444', MEDIUM: '#eab308', LOW: '#3b82f6', UNKNOWN: '#64748b' };
-const tooltipStyle = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12 };
-
-// Shared donut styling so every pie chart in this file looks the same:
-// thick ring, rounded segment caps, and a bit of breathing room between slices.
-const DONUT_PROPS = {
-  innerRadius: '55%',
-  outerRadius: '85%',
-  cornerRadius: 10,
-  paddingAngle: 3,
-};
-
-// Donut chart with its legend split left/right of the ring (rather than
-// below it). Each entry needs { name, value, fill }. onSliceClick receives
-// the clicked entry's data, same as recharts' native Pie onClick.
-function LegendItem({ color, name, value }) {
-  return (
-    <div className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--foreground)' }}>
-      <span
-        className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
-        style={{ backgroundColor: color }}
-      />
-      <span className="font-semibold whitespace-nowrap">{name}</span>
-      <span className="text-[var(--muted)]">({value})</span>
-    </div>
-  );
-}
-
-function SideLegendDonut({ data, onSliceClick }) {
-  const midpoint = Math.ceil(data.length / 2);
-  const leftItems = data.slice(0, midpoint);
-  const rightItems = data.slice(midpoint);
-
-  return (
-    <div className="flex items-center h-full px-2 gap-2">
-      <div className="flex flex-col gap-4 shrink-0">
-        {leftItems.map((d) => (
-          <LegendItem key={d.name} color={d.fill} name={d.name} value={d.value} />
-        ))}
-      </div>
-      <div className="flex-1 min-w-0 h-full">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={data}
-              dataKey="value"
-              {...DONUT_PROPS}
-              cursor="pointer"
-              onClick={onSliceClick}
-            >
-              {data.map((entry, i) => <Cell key={i} fill={entry.fill} stroke="none" />)}
-            </Pie>
-            <Tooltip contentStyle={tooltipStyle} />
-          </PieChart>
-        </ResponsiveContainer>
-      </div>
-      {rightItems.length > 0 && (
-        <div className="flex flex-col gap-4 shrink-0">
-          {rightItems.map((d) => (
-            <LegendItem key={d.name} color={d.fill} name={d.name} value={d.value} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function shortName(v) {
   return v?.length > 18 ? v.slice(0, 18) + '...' : (v || '');
@@ -105,11 +39,12 @@ function StatCard({ title, value, color, onClick }) {
   );
 }
 
-function ChartCard({ title, children }) {
+function ChartCard({ title, controls, children }) {
   return (
     <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl overflow-hidden shadow-sm">
-      <div className="px-4 pt-4 pb-2">
+      <div className="px-4 pt-4 pb-2 flex items-start justify-between gap-3 flex-wrap">
         <p className="text-sm font-bold text-[var(--foreground)]">{title}</p>
+        {controls && <div className="flex items-center gap-2 flex-wrap">{controls}</div>}
       </div>
       {children}
     </div>
@@ -125,18 +60,6 @@ function Info({ label, value }) {
   );
 }
 
-function CustomRiskTooltip({ active, payload }) {
-  if (!active || !payload?.length) return null;
-  const d = payload[0].payload;
-  return (
-    <div style={tooltipStyle} className="p-2.5 text-xs space-y-0.5">
-      <p className="font-bold text-[var(--foreground)]">{d.fullName || d.name}</p>
-      <p className="text-[var(--muted)]">CVEs: <span className="font-semibold text-[var(--foreground)]">{d.cves}</span></p>
-      {d.score != null && <p className="text-[var(--muted)]">Score: <span className="font-semibold text-[var(--foreground)]">{d.score}</span></p>}
-    </div>
-  );
-}
-
 export default function S1Cve() {
   const navigate = useNavigate();
   const [apps, setApps]         = useState([]);
@@ -144,6 +67,15 @@ export default function S1Cve() {
   const [lastSync, setLastSync] = useState(null);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo]     = useState('');
+
+  // Chart-type view per card — same dropdown as Threats.jsx, persisted to
+  // localStorage so the chosen view survives a page refresh.
+  const [severityView, setSeverityView] = useViewState('cveSeverity', 'donut');
+  const [scoreView, setScoreView]       = useViewState('cveScore', 'donut');
+  const [riskyView, setRiskyView]       = useViewState('cveRisky', 'column');
+  const [agingView, setAgingView]       = useViewState('cveAging', 'column');
+  const [impactView, setImpactView]     = useViewState('cveImpact', 'column');
+  const [vendorView, setVendorView]     = useViewState('cveVendor', 'bar');
 
   useEffect(() => {
     api.get('/sentinelone/db/application-cve')
@@ -403,92 +335,79 @@ export default function S1Cve() {
       {/* Charts 2-col grid */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
 
-        {/* Severity Distribution donut */}
-        <ChartCard title="Severity Distribution">
+        {/* Severity Distribution */}
+        <ChartCard title="Severity Distribution" controls={<ChartViewDropdown value={severityView} onChange={setSeverityView} />}>
           <div style={{ height: 280 }}>
-            {severityPieData.length === 0 ? (
-              <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No severity data</p></div>
-            ) : (
-              <SideLegendDonut data={severityPieData} onSliceClick={(data) => goToDetail({ dataset: 'cve', filterId: 'severity', value: data.name, title: `${data.name} Severity CVEs` })} />
-            )}
+            <MultiViewChart
+              data={severityPieData}
+              viewType={severityView}
+              emptyLabel="No severity data"
+              onItemClick={(data) => goToDetail({ dataset: 'cve', filterId: 'severity', value: data.name, title: `${data.name} Severity CVEs` })}
+            />
           </div>
         </ChartCard>
 
-        {/* Base Score Range donut */}
-        <ChartCard title="Base Score Range">
+        {/* Base Score Range */}
+        <ChartCard title="Base Score Range" controls={<ChartViewDropdown value={scoreView} onChange={setScoreView} />}>
           <div style={{ height: 280 }}>
-            {scoreRangePieData.length === 0 ? (
-              <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No score data</p></div>
-            ) : (
-              <SideLegendDonut data={scoreRangePieData} onSliceClick={(data) => goToDetail({ dataset: 'cve', filterId: 'scoreRange', value: data.name, title: `CVEs in ${data.name} score range` })} />
-            )}
+            <MultiViewChart
+              data={scoreRangePieData}
+              viewType={scoreView}
+              emptyLabel="No score data"
+              onItemClick={(data) => goToDetail({ dataset: 'cve', filterId: 'scoreRange', value: data.name, title: `CVEs in ${data.name} score range` })}
+            />
           </div>
         </ChartCard>
 
         {/* Top 10 Risky Applications */}
-        <ChartCard title="Top 10 Risky Applications">
+        <ChartCard title="Top 10 Risky Applications" controls={<ChartViewDropdown value={riskyView} onChange={setRiskyView} />}>
           <div style={{ height: 300 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={topRiskyApps} margin={{ top: 8, right: 16, left: 0, bottom: 40 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} angle={-25} textAnchor="end" />
-                <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-                <Tooltip content={<CustomRiskTooltip />} />
-                <Bar dataKey="cves" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={30} name="CVEs" cursor="pointer"
-                  onClick={(data) => goToDetail({ dataset: 'cve', filterId: 'topRiskyApp', value: data.fullName, title: `CVEs for ${data.fullName}` })} />
-              </BarChart>
-            </ResponsiveContainer>
+            <MultiViewChart
+              data={topRiskyApps.map((a) => ({ name: a.name, fullName: a.fullName, value: a.cves, fill: '#ef4444' }))}
+              viewType={riskyView}
+              barColor="#ef4444"
+              emptyLabel="No application data"
+              onItemClick={(data) => goToDetail({ dataset: 'cve', filterId: 'topRiskyApp', value: data.fullName || data.name, title: `CVEs for ${data.fullName || data.name}` })}
+            />
           </div>
         </ChartCard>
 
         {/* CVE Aging */}
-        <ChartCard title="CVE Aging (Days Detected)">
+        <ChartCard title="CVE Aging (Days Detected)" controls={<ChartViewDropdown value={agingView} onChange={setAgingView} />}>
           <div style={{ height: 300 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={cveAging} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} />
-                <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-                <Tooltip contentStyle={tooltipStyle} />
-                <Bar dataKey="count" fill="#38bdf8" radius={[4, 4, 0, 0]} maxBarSize={50} name="Apps" 
-                onClick={(data) => goToDetail({ dataset: 'cve', filterId: 'cveAgingBucket', value: data.name, title: `CVEs in ${data.name} days aging bucket` })}/>
-              </BarChart>
-            </ResponsiveContainer>
+            <MultiViewChart
+              data={cveAging.map((a, i) => ({ name: a.name, value: a.count, fill: CHART_COLORS[i % CHART_COLORS.length] }))}
+              viewType={agingView}
+              barColor="#38bdf8"
+              emptyLabel="No aging data"
+              onItemClick={(data) => goToDetail({ dataset: 'cve', filterId: 'cveAgingBucket', value: data.name, title: `CVEs in ${data.name} days aging bucket` })}
+            />
           </div>
         </ChartCard>
 
         {/* Endpoint Impact */}
-        <ChartCard title="Endpoint Impact (Top 10)">
+        <ChartCard title="Endpoint Impact (Top 10)" controls={<ChartViewDropdown value={impactView} onChange={setImpactView} />}>
           <div style={{ height: 300 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={endpointImpact} margin={{ top: 8, right: 16, left: 0, bottom: 40 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} angle={-25} textAnchor="end" />
-                <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-                <Tooltip contentStyle={tooltipStyle} />
-                <Bar dataKey="endpoints" fill="#22c55e" radius={[4, 4, 0, 0]} maxBarSize={30} name="Endpoints" 
-                onClick={(data) => goToDetail({ dataset: 'cve', filterId: 'endpointImpact', value: data.fullName, title: `CVEs for ${data.fullName}` })}/>
-              </BarChart>
-            </ResponsiveContainer>
+            <MultiViewChart
+              data={endpointImpact.map((a) => ({ name: a.name, fullName: a.fullName, value: a.endpoints, fill: '#22c55e' }))}
+              viewType={impactView}
+              barColor="#22c55e"
+              emptyLabel="No endpoint data"
+              onItemClick={(data) => goToDetail({ dataset: 'cve', filterId: 'endpointImpact', value: data.fullName || data.name, title: `CVEs for ${data.fullName || data.name}` })}
+            />
           </div>
         </ChartCard>
 
         {/* Vendor Risk */}
-        <ChartCard title="Vendor Risk (CVEs by Vendor)">
+        <ChartCard title="Vendor Risk (CVEs by Vendor)" controls={<ChartViewDropdown value={vendorView} onChange={setVendorView} />}>
           <div style={{ height: 300 }}>
-            {vendorRisk.length === 0
-              ? <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No vendor data</p></div>
-              : <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={vendorRisk} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                    <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={100} />
-                    <XAxis type="number"   tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-                    <Tooltip content={<CustomRiskTooltip />} />
-                    <Bar dataKey="cves" fill="#f97316" radius={[0, 4, 4, 0]} maxBarSize={18} name="CVEs" 
-                    onClick={(data) => goToDetail({ dataset: 'cve', filterId: 'CVEs', value: data.fullName, title: `CVEs for vendor ${data.fullName}` })}/>
-                  </BarChart>
-                </ResponsiveContainer>
-            }
+            <MultiViewChart
+              data={vendorRisk.map((v) => ({ name: v.name, fullName: v.fullName, value: v.cves, fill: v.fill }))}
+              viewType={vendorView}
+              barColor="#f97316"
+              emptyLabel="No vendor data"
+              onItemClick={(data) => goToDetail({ dataset: 'cve', filterId: 'CVEs', value: data.fullName || data.name, title: `CVEs for vendor ${data.fullName || data.name}` })}
+            />
           </div>
         </ChartCard>
 

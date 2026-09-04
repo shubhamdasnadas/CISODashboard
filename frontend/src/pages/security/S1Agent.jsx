@@ -1,118 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
-import {
-  PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  BarChart, Bar
-} from 'recharts';
 import api from '../../api.js';
+import {
+  MultiViewChart, ChartViewDropdown, useViewState,
+} from './widgetViews.jsx';
 
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
-const tooltipStyle = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12 };
-
-// Shared donut styling so every pie chart in this file looks the same:
-// thick ring, rounded segment caps, and a bit of breathing room between slices.
-const DONUT_PROPS = {
-  innerRadius: '50%',
-  outerRadius: '80%',
-  cornerRadius: 10,
-  paddingAngle: 2,
-};
-
-// Legend item component
-function LegendItem({ color, name, value, onClick }) {
-  return (
-    <div
-      onClick={onClick}
-      className="flex items-center gap-2 px-1.5 py-1.5 rounded-md hover:bg-[var(--muted-bg)]/40 transition-colors cursor-pointer group"
-    >
-      <span
-        className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 shadow-sm"
-        style={{ backgroundColor: color }}
-      />
-      <span className="text-[11px] font-semibold text-[var(--foreground)] group-hover:text-indigo-400 transition-colors">
-        {name}
-      </span>
-      <span className="text-[10px] text-[var(--muted)] group-hover:text-[var(--foreground)] transition-colors">
-        ({value})
-      </span>
-    </div>
-  );
-}
-
-// Improved Donut chart with side-by-side legends
-function ImprovedDonut({ data, onSliceClick }) {
-  if (data.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-sm text-[var(--muted)]">No data available</p>
-      </div>
-    );
-  }
-
-  // Split legend items between left and right
-  const midpoint = Math.ceil(data.length / 2);
-  const leftItems = data.slice(0, midpoint);
-  const rightItems = data.slice(midpoint);
-
-  return (
-    <div className="flex items-center h-72 px-2 gap-3">
-      {/* Left Legend */}
-      <div className="flex flex-col gap-3 justify-center shrink-0">
-        {leftItems.map((item) => (
-          <LegendItem
-            key={item.name}
-            color={item.fill}
-            name={item.name}
-            value={item.value}
-            onClick={() => onSliceClick(item)}
-          />
-        ))}
-      </div>
-
-      {/* Center Chart */}
-      <div className="flex-1 min-w-0 h-full">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={data}
-              dataKey="value"
-              {...DONUT_PROPS}
-              cursor="pointer"
-              onClick={onSliceClick}
-              animationBegin={0}
-              animationDuration={400}
-            >
-              {data.map((entry, i) => (
-                <Cell key={`cell-${i}`} fill={entry.fill} stroke="var(--card-bg)" strokeWidth={2} />
-              ))}
-            </Pie>
-            <Tooltip
-              contentStyle={tooltipStyle}
-              formatter={(value) => [`${value} agents`, 'Count']}
-            />
-          </PieChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Right Legend */}
-      {rightItems.length > 0 && (
-        <div className="flex flex-col gap-3 justify-center shrink-0">
-          {rightItems.map((item) => (
-            <LegendItem
-              key={item.name}
-              color={item.fill}
-              name={item.name}
-              value={item.value}
-              onClick={() => onSliceClick(item)}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function parseDate(v) {
   if (!v) return null;
@@ -192,8 +86,6 @@ function TableWrap({ cols, rows, emptyMsg = 'None' }) {
   if (rows.length === 0) {
     return <div className="px-4 py-6 text-center text-sm text-[var(--muted)]">{emptyMsg}</div>;
   }
-  // Check if rows are JSX elements (have props) or plain arrays
-  const isJSX = typeof rows[0] === 'object' && rows[0] !== null && '$$typeof' in rows[0];
   return (
     <div className="overflow-x-auto max-h-64 overflow-y-auto">
       <table className="w-full text-xs">
@@ -205,19 +97,7 @@ function TableWrap({ cols, rows, emptyMsg = 'None' }) {
           </tr>
         </thead>
         <tbody className="divide-y divide-[var(--card-border)]">
-          {isJSX ? (
-            rows.map((row, i) => (
-              <tr key={i}>{row}</tr>
-            ))
-          ) : (
-            rows.map((row, i) => (
-              <tr key={i} className="hover:bg-[var(--muted-bg)]/60">
-                {row.map((cell, j) => (
-                  <td key={j} className="px-3 py-2 text-[var(--foreground)] whitespace-nowrap max-w-[200px] truncate">{cell ?? '—'}</td>
-                ))}
-              </tr>
-            ))
-          )}
+          {rows}
         </tbody>
       </table>
     </div>
@@ -243,6 +123,15 @@ export default function S1Agent() {
   const [openUser, setOpenUser] = useState(null);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+
+  // Chart view states (persisted to localStorage)
+  const [osView, setOsView] = useViewState('agentOs', 'donut');
+  const [activeView, setActiveView] = useViewState('agentActive', 'donut');
+  const [fwView, setFwView] = useViewState('agentFw', 'donut');
+  const [versionView, setVersionView] = useViewState('agentVersion', 'donut');
+  const [siteView, setSiteView] = useViewState('agentSite', 'donut');
+  const [netView, setNetView] = useViewState('agentNetwork', 'column');
+  const [scanView, setScanView] = useViewState('agentScan', 'column');
 
   useEffect(() => {
     api.get('/sentinelone/db/agents')
@@ -513,227 +402,279 @@ export default function S1Agent() {
 
       {/* Pie Chart Overview */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <SectionCard title="OS Distribution" count={osDistribution.length}>
-          <ImprovedDonut
-            data={osDistribution}
-            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'osName', value: data.name, title: `Agents with OS: ${data.name}` } })}
-          />
+        <SectionCard title="OS Distribution" count={osDistribution.length}
+          controls={<ChartViewDropdown value={osView} onChange={setOsView} />}>
+          <div style={{ height: 280 }}>
+            <MultiViewChart
+              data={osDistribution}
+              viewType={osView}
+              onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'osName', value: data.name, title: `Agents with OS: ${data.name}` } })}
+            />
+          </div>
         </SectionCard>
 
-        <SectionCard title="Active Status" count={activeStatusDistribution.length}>
-          <ImprovedDonut
-            data={activeStatusDistribution}
-            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'isActive', value: data.name === 'Active' ? 'true' : 'false', title: `${data.name} Agents` } })}
-          />
+        <SectionCard title="Active Status" count={activeStatusDistribution.length}
+          controls={<ChartViewDropdown value={activeView} onChange={setActiveView} />}>
+          <div style={{ height: 280 }}>
+            <MultiViewChart
+              data={activeStatusDistribution}
+              viewType={activeView}
+              onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'isActive', value: data.name === 'Active' ? 'true' : 'false', title: `${data.name} Agents` } })}
+            />
+          </div>
         </SectionCard>
 
-        <SectionCard title="Firewall Status" count={firewallStatusDistribution.length}>
-          <ImprovedDonut
-            data={firewallStatusDistribution}
-            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'firewallEnabled', value: data.name === 'Enabled' ? 'true' : 'false', title: `Firewall ${data.name}` } })}
-          />
+        <SectionCard title="Firewall Status" count={firewallStatusDistribution.length}
+          controls={<ChartViewDropdown value={fwView} onChange={setFwView} />}>
+          <div style={{ height: 280 }}>
+            <MultiViewChart
+              data={firewallStatusDistribution}
+              viewType={fwView}
+              onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'firewallEnabled', value: data.name === 'Enabled' ? 'true' : 'false', title: `Firewall ${data.name}` } })}
+            />
+          </div>
         </SectionCard>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-        <SectionCard title="Agent Version" count={agentVersionStatus.length}>
-          <ImprovedDonut
-            data={agentVersionStatus}
-            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'isUpToDate', value: data.name === 'Up to Date' ? 'true' : 'false', title: `${data.name} Agents` } })}
-          />
+        <SectionCard title="Agent Version" count={agentVersionStatus.length}
+          controls={<ChartViewDropdown value={versionView} onChange={setVersionView} />}>
+          <div style={{ height: 280 }}>
+            <MultiViewChart
+              data={agentVersionStatus}
+              viewType={versionView}
+              onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'isUpToDate', value: data.name === 'Up to Date' ? 'true' : 'false', title: `${data.name} Agents` } })}
+            />
+          </div>
         </SectionCard>
-        <SectionCard title="Site Distribution" count={siteDistribution.length}>
-          <ImprovedDonut
-            data={siteDistribution}
-            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'agentSite', value: data.name, title: `Agents in Site: ${data.name}` } })}
-          />
+        <SectionCard title="Site Distribution" count={siteDistribution.length}
+          controls={<ChartViewDropdown value={siteView} onChange={setSiteView} />}>
+          <div style={{ height: 280 }}>
+            <MultiViewChart
+              data={siteDistribution}
+              viewType={siteView}
+              onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'agentSite', value: data.name, title: `Agents in Site: ${data.name}` } })}
+            />
+          </div>
         </SectionCard>
 
-        <SectionCard title="Network Status" count={networkStatusDistribution.length}>
-          <ImprovedDonut
-            data={networkStatusDistribution}
-            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'networkStatus', value: data.name, title: `Network Status: ${data.name}` } })}
-          />
+        <SectionCard title="Network Status" count={networkStatusDistribution.length}
+          controls={<ChartViewDropdown value={netView} onChange={setNetView} />}>
+          <div style={{ height: 280 }}>
+            <MultiViewChart
+              data={networkStatusDistribution}
+              viewType={netView}
+              onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'networkStatus', value: data.name, title: `Network Status: ${data.name}` } })}
+            />
+          </div>
         </SectionCard>
 
-        <SectionCard title="Scan Status" count={scanStatusDistribution.length}>
-          <ImprovedDonut
-            data={scanStatusDistribution}
-            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'scanStatus', value: data.name, title: `Scan Status: ${data.name}` } })}
-          />
+        <SectionCard title="Scan Status" count={scanStatusDistribution.length}
+          controls={<ChartViewDropdown value={scanView} onChange={setScanView} />}>
+          <div style={{ height: 280 }}>
+            <MultiViewChart
+              data={scanStatusDistribution}
+              viewType={scanView}
+              onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'scanStatus', value: data.name, title: `Scan Status: ${data.name}` } })}
+            />
+          </div>
         </SectionCard>
       </div>
 
-      {/* 1. Inactive Machines */}
-      <SectionCard title="Inactive Machines (>7 days)" count={inactiveMachines.length}
-        controls={<DateFilter from={inactiveFilter.from} to={inactiveFilter.to} onFromChange={inactiveFilter.setFrom} onToChange={inactiveFilter.setTo} onClear={inactiveFilter.clear} />}>
-        <TableWrap
-          cols={['Machine', 'User', 'Site', 'Last Active', 'Days Inactive']}
-          rows={inactiveMachines.map((a, i) => (
-            <tr
-              key={i}
-              onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'inactiveMachines', value: a.computerName, title: `Inactive Machine: ${a.computerName}` } })}
-              className="hover:bg-[var(--muted-bg)]/60 cursor-pointer"
-            >
-              <td className="px-3 py-2 font-medium text-[var(--foreground)]">{a.computerName}</td>
-              <td className="px-3 py-2 text-[var(--muted)]">{a.lastLoggedInUserName}</td>
-              <td className="px-3 py-2 text-[var(--muted)]">{a.siteName}</td>
-              <td className="px-3 py-2 text-[var(--muted)]">{fmt(a.lastActiveDate)}</td>
-              <td className="px-3 py-2 text-[var(--muted)]">{inactiveDays(a)}</td>
-            </tr>
-          ))}
-          emptyMsg="No inactive machines over 7 days"
-        />
-      </SectionCard>
-
-      {/* 2. Old Agent Version */}
-      <SectionCard title="Outdated Agent Version" count={oldVersion.length}
-        controls={<DateFilter from={oldVersionFilter.from} to={oldVersionFilter.to} onFromChange={oldVersionFilter.setFrom} onToChange={oldVersionFilter.setTo} onClear={oldVersionFilter.clear} />}>
-        <TableWrap
-          cols={['Machine', 'User', 'Site', 'Current Version']}
-          rows={oldVersion.map((a, i) => (
-            <tr
-              key={i}
-              onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'outdatedAgent', value: a.computerName, title: `Outdated Agent: ${a.computerName}` } })}
-              className="hover:bg-[var(--muted-bg)]/60 cursor-pointer"
-            >
-              <td className="px-3 py-2 font-medium text-[var(--foreground)]">{a.computerName}</td>
-              <td className="px-3 py-2 text-[var(--muted)]">{a.lastLoggedInUserName}</td>
-              <td className="px-3 py-2 text-[var(--muted)]">{a.siteName}</td>
-              <td className="px-3 py-2 text-[var(--muted)]">{a.agentVersion}</td>
-            </tr>
-          ))}
-          emptyMsg="All agents are up to date"
-        />
-      </SectionCard>
-
-      {/* 3. Firewall Disabled */}
-      <SectionCard title="Firewall Disabled" count={fwDisabled.length}
-        controls={<DateFilter from={fwFilter.from} to={fwFilter.to} onFromChange={fwFilter.setFrom} onToChange={fwFilter.setTo} onClear={fwFilter.clear} />}>
-        <TableWrap
-          cols={['Machine', 'User', 'Site', 'Last IP']}
-          rows={fwDisabled.map((a, i) => (
-            <tr
-              key={i}
-              onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'firewallDisabled', value: a.computerName, title: `Firewall Disabled: ${a.computerName}` } })}
-              className="hover:bg-[var(--muted-bg)]/60 cursor-pointer"
-            >
-              <td className="px-3 py-2 font-medium text-[var(--foreground)]">{a.computerName}</td>
-              <td className="px-3 py-2 text-[var(--muted)]">{a.lastLoggedInUserName}</td>
-              <td className="px-3 py-2 text-[var(--muted)]">{a.siteName}</td>
-              <td className="px-3 py-2 text-[var(--muted)]">{a.lastIpToMgmt}</td>
-            </tr>
-          ))}
-          emptyMsg="All agents have firewall enabled"
-        />
-      </SectionCard>
-
-      {/* 4. Active Threats */}
-      <SectionCard title="Endpoints with Active Threats" count={activeThreats.length}
-        controls={<DateFilter from={threatsFilter.from} to={threatsFilter.to} onFromChange={threatsFilter.setFrom} onToChange={threatsFilter.setTo} onClear={threatsFilter.clear} />}>
-        <TableWrap
-          cols={['Machine', 'User', 'Site', 'Threat Count', 'Mitigation Mode']}
-          rows={activeThreats.map((a, i) => (
-            <tr
-              key={i}
-              onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'activeThreats', value: a.computerName, title: `Active Threats: ${a.computerName}` } })}
-              className="hover:bg-[var(--muted-bg)]/60 cursor-pointer"
-            >
-              <td className="px-3 py-2 font-medium text-[var(--foreground)]">{a.computerName}</td>
-              <td className="px-3 py-2 text-[var(--muted)]">{a.lastLoggedInUserName}</td>
-              <td className="px-3 py-2 text-[var(--muted)]">{a.siteName}</td>
-              <td className="px-3 py-2 text-[var(--muted)]">{a.activeThreats}</td>
-              <td className="px-3 py-2 text-[var(--muted)]">{a.mitigationMode}</td>
-            </tr>
-          ))}
-          emptyMsg="No active threats"
-        />
-      </SectionCard>
-
-      {/* 5. Old/Pending Scan */}
-      <SectionCard title="Old / Pending Scan" count={oldScans.length}
-        controls={<DateFilter from={scansFilter.from} to={scansFilter.to} onFromChange={scansFilter.setFrom} onToChange={scansFilter.setTo} onClear={scansFilter.clear} />}>
-        <TableWrap
-          cols={['Machine', 'User', 'Last Scan', 'Scan Age (days)', 'Status']}
-          rows={oldScans.map((a, i) => (
-            <tr
-              key={i}
-              onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'oldScan', value: a.computerName, title: `Old Scan: ${a.computerName}` } })}
-              className="hover:bg-[var(--muted-bg)]/60 cursor-pointer"
-            >
-              <td className="px-3 py-2 font-medium text-[var(--foreground)]">{a.computerName}</td>
-              <td className="px-3 py-2 text-[var(--muted)]">{a.lastLoggedInUserName}</td>
-              <td className="px-3 py-2 text-[var(--muted)]">{fmt(a.lastSuccessfulScanDate)}</td>
-              <td className="px-3 py-2 text-[var(--muted)]">{scanAgeDays(a)}</td>
-              <td className="px-3 py-2 text-[var(--muted)]">{a.scanStatus}</td>
-            </tr>
-          ))}
-          emptyMsg="All scans finished"
-        />
-      </SectionCard>
-
-      {/* 6. User–Device Mapping */}
-      <SectionCard title="User–Device Mapping" count={userDeviceMap.length}
-        controls={<DateFilter from={userMapFilter.from} to={userMapFilter.to} onFromChange={userMapFilter.setFrom} onToChange={userMapFilter.setTo} onClear={userMapFilter.clear} />}>
-        <div className="overflow-x-auto max-h-80 overflow-y-auto divide-y divide-[var(--card-border)]">
-          {userDeviceMap.length === 0
-            ? <div className="px-4 py-6 text-center text-sm text-[var(--muted)]">No data</div>
-            : userDeviceMap.map(({ user, total, active, inactive, devices }) => (
-              <div key={user}>
-                <button
-                  onClick={() => setOpenUser(openUser === user ? null : user)}
-                  className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-[var(--muted-bg)]/60 transition-colors text-left"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-7 h-7 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center flex-shrink-0">
-                      <svg className="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+      {/* Inactive Machines + Active Threats + Old/Pending Scan — side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* 1. Inactive Machines — card grid with severity badges */}
+        <SectionCard title="Inactive Machines (>7 days)" count={inactiveMachines.length}
+          controls={<DateFilter from={inactiveFilter.from} to={inactiveFilter.to} onFromChange={inactiveFilter.setFrom} onToChange={inactiveFilter.setTo} onClear={inactiveFilter.clear} />}>
+          {inactiveMachines.length === 0
+            ? <div className="px-4 py-6 text-center text-sm text-[var(--muted)]">No inactive machines over 7 days</div>
+            : <div className="grid grid-cols-1 gap-3 p-4 max-h-[520px] overflow-y-auto">
+              {inactiveMachines.map((a, i) => {
+                const days = inactiveDays(a);
+                const severity = days > 30 ? 'text-red-500 bg-red-50 dark:bg-red-900/20' : days > 14 ? 'text-orange-500 bg-orange-50 dark:bg-orange-900/20' : 'text-yellow-600 bg-yellow-50 dark:bg-yellow-900/20';
+                return (
+                  <div key={i}
+                    onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'inactiveMachines', value: a.computerName, title: `Inactive Machine: ${a.computerName}` } })}
+                    className="bg-[var(--muted-bg)]/40 rounded-xl p-3.5 hover:shadow-md transition-shadow cursor-pointer border border-[var(--card-border)]/50">
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <p className="text-xs font-bold text-[var(--foreground)] truncate flex-1">{a.computerName}</p>
+                      <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full ${severity}`}>{days}d</span>
                     </div>
-                    <span className="text-xs font-semibold text-[var(--foreground)]">{user}</span>
+                    <div className="flex items-center gap-3 text-[10px] text-[var(--muted)]">
+                      <span className="flex items-center gap-1">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                        {a.lastLoggedInUserName || '—'}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                        {a.siteName || '—'}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-[var(--muted)] mt-1.5">Last active: {fmt(a.lastActiveDate)}</p>
                   </div>
-                  <div className="flex items-center gap-4 text-[10px] text-[var(--muted)]">
-                    <span>{total} devices</span>
-                    <span className="text-green-600">{active} active</span>
-                    <span className="text-red-500">{inactive} inactive</span>
-                    <svg className={`w-3.5 h-3.5 transition-transform ${openUser === user ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-                  </div>
-                </button>
-                {openUser === user && (
-                  <div className="px-4 pb-3 pt-1 bg-[var(--muted-bg)]/30">
-                    <table className="w-full text-[10px]">
-                      <thead>
-                        <tr>
-                          {['Machine', 'OS', 'Site', 'Status', 'Version'].map((c) => (
-                            <th key={c} className="px-2 py-1 text-left font-bold text-[var(--muted)] uppercase tracking-wide">{c}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[var(--card-border)]">
-                        {devices.map((d, i) => (
-                          <tr
-                            key={i}
-                            onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'agentDetail', value: d.computerName, title: `Agent Detail: ${d.computerName}` } })}
-                            className="hover:bg-[var(--card-bg)] cursor-pointer"
-                          >
-                            <td className="px-2 py-1.5 font-medium text-[var(--foreground)]">{d.computerName}</td>
-                            <td className="px-2 py-1.5 text-[var(--muted)]">{d.osName}</td>
-                            <td className="px-2 py-1.5 text-[var(--muted)]">{d.siteName}</td>
-                            <td className="px-2 py-1.5">
-                              <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold ${d.isActive ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'}`}>
-                                {d.isActive ? 'Active' : 'Inactive'}
-                              </span>
-                            </td>
-                            <td className="px-2 py-1.5 text-[var(--muted)]">{d.agentVersion}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            ))
+                );
+              })}
+            </div>
           }
-        </div>
-      </SectionCard>
+        </SectionCard>
+
+        {/* 4. Active Threats — priority alert table */}
+        <SectionCard title="Endpoints with Active Threats" count={activeThreats.length}
+          controls={<DateFilter from={threatsFilter.from} to={threatsFilter.to} onFromChange={threatsFilter.setFrom} onToChange={threatsFilter.setTo} onClear={threatsFilter.clear} />}>
+          <div className="max-h-[520px] overflow-y-auto">
+            <TableWrap
+              cols={['Machine', 'User', 'Site', 'Threats', 'Mitigation']}
+              rows={activeThreats.map((a, i) => (
+                <tr key={i}
+                  onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'activeThreats', value: a.computerName, title: `Active Threats: ${a.computerName}` } })}
+                  className="hover:bg-[var(--muted-bg)]/60 cursor-pointer">
+                  <td className="px-3 py-2.5 font-medium text-[var(--foreground)]">{a.computerName}</td>
+                  <td className="px-3 py-2.5 text-[var(--muted)]">{a.lastLoggedInUserName || '—'}</td>
+                  <td className="px-3 py-2.5 text-[var(--muted)]">{a.siteName || '—'}</td>
+                  <td className="px-3 py-2.5">
+                    <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full ${a.activeThreats >= 5 ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' : 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'}`}>
+                      {a.activeThreats}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[var(--muted-bg)] text-[var(--foreground)]">{a.mitigationMode || '—'}</span>
+                  </td>
+                </tr>
+              ))}
+              emptyMsg="No active threats"
+            />
+          </div>
+        </SectionCard>
+
+        {/* 5. Old/Pending Scan — status indicator list */}
+        <SectionCard title="Old / Pending Scan" count={oldScans.length}
+          controls={<DateFilter from={scansFilter.from} to={scansFilter.to} onFromChange={scansFilter.setFrom} onToChange={scansFilter.setTo} onClear={scansFilter.clear} />}>
+          {oldScans.length === 0
+            ? <div className="px-4 py-6 text-center text-sm text-[var(--muted)]">All scans finished</div>
+            : <div className="divide-y divide-[var(--card-border)] max-h-[520px] overflow-y-auto">
+              {oldScans.map((a, i) => {
+                const age = scanAgeDays(a);
+                const ageColor = age !== null && age > 14 ? 'text-red-500' : age !== null && age > 7 ? 'text-orange-500' : 'text-yellow-600';
+                return (
+                  <div key={i}
+                    onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'oldScan', value: a.computerName, title: `Old Scan: ${a.computerName}` } })}
+                    className="flex items-center justify-between px-4 py-3 hover:bg-[var(--muted-bg)]/40 cursor-pointer transition-colors gap-3">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <div className="w-8 h-8 rounded-lg bg-purple-50 dark:bg-purple-900/20 flex items-center justify-center shrink-0">
+                        <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-[var(--foreground)] truncate">{a.computerName}</p>
+                        <p className="text-[10px] text-[var(--muted)]">{a.lastLoggedInUserName || '—'} · Last scan: {fmt(a.lastSuccessfulScanDate)}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {age !== null && <span className={`text-[11px] font-bold ${ageColor}`}>{age}d ago</span>}
+                      <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${a.scanStatus === 'ongoing' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'}`}>
+                        {a.scanStatus || 'unknown'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          }
+        </SectionCard>
+      </div>
+
+      {/* Outdated Agent Version + User–Device Mapping — side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* 2. Old Agent Version — compact list with version badges */}
+        <SectionCard title="Outdated Agent Version" count={oldVersion.length}
+          controls={<DateFilter from={oldVersionFilter.from} to={oldVersionFilter.to} onFromChange={oldVersionFilter.setFrom} onToChange={oldVersionFilter.setTo} onClear={oldVersionFilter.clear} />}>
+          {oldVersion.length === 0
+            ? <div className="px-4 py-6 text-center text-sm text-[var(--muted)]">All agents are up to date</div>
+            : <div className="divide-y divide-[var(--card-border)] max-h-[520px] overflow-y-auto">
+              {oldVersion.map((a, i) => (
+                <div key={i}
+                  onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'outdatedAgent', value: a.computerName, title: `Outdated Agent: ${a.computerName}` } })}
+                  className="flex items-center justify-between px-4 py-2.5 hover:bg-[var(--muted-bg)]/40 cursor-pointer transition-colors">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <div className="w-8 h-8 rounded-lg bg-red-50 dark:bg-red-900/20 flex items-center justify-center shrink-0">
+                      <svg className="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-[var(--foreground)] truncate">{a.computerName}</p>
+                      <p className="text-[10px] text-[var(--muted)]">{a.lastLoggedInUserName || '—'} · {a.siteName || '—'}</p>
+                    </div>
+                  </div>
+                  <span className="shrink-0 ml-3 text-[10px] font-mono font-bold px-2 py-1 rounded-md bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400">
+                    v{a.agentVersion || '?'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          }
+        </SectionCard>
+
+        {/* 6. User–Device Mapping */}
+        <SectionCard title="User–Device Mapping" count={userDeviceMap.length}
+          controls={<DateFilter from={userMapFilter.from} to={userMapFilter.to} onFromChange={userMapFilter.setFrom} onToChange={userMapFilter.setTo} onClear={userMapFilter.clear} />}>
+          <div className="overflow-x-auto max-h-[520px] overflow-y-auto divide-y divide-[var(--card-border)]">
+            {userDeviceMap.length === 0
+              ? <div className="px-4 py-6 text-center text-sm text-[var(--muted)]">No data</div>
+              : userDeviceMap.map(({ user, total, active, inactive, devices }) => (
+                <div key={user}>
+                  <button
+                    onClick={() => setOpenUser(openUser === user ? null : user)}
+                    className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-[var(--muted-bg)]/60 transition-colors text-left"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-7 h-7 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center flex-shrink-0">
+                        <svg className="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                      </div>
+                      <span className="text-xs font-semibold text-[var(--foreground)]">{user}</span>
+                    </div>
+                    <div className="flex items-center gap-4 text-[10px] text-[var(--muted)]">
+                      <span>{total} devices</span>
+                      <span className="text-green-600">{active} active</span>
+                      <span className="text-red-500">{inactive} inactive</span>
+                      <svg className={`w-3.5 h-3.5 transition-transform ${openUser === user ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                    </div>
+                  </button>
+                  {openUser === user && (
+                    <div className="px-4 pb-3 pt-1 bg-[var(--muted-bg)]/30">
+                      <table className="w-full text-[10px]">
+                        <thead>
+                          <tr>
+                            {['Machine', 'OS', 'Site', 'Status', 'Version'].map((c) => (
+                              <th key={c} className="px-2 py-1 text-left font-bold text-[var(--muted)] uppercase tracking-wide">{c}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[var(--card-border)]">
+                          {devices.map((d, i) => (
+                            <tr
+                              key={i}
+                              onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'agentDetail', value: d.computerName, title: `Agent Detail: ${d.computerName}` } })}
+                              className="hover:bg-[var(--card-bg)] cursor-pointer"
+                            >
+                              <td className="px-2 py-1.5 font-medium text-[var(--foreground)]">{d.computerName}</td>
+                              <td className="px-2 py-1.5 text-[var(--muted)]">{d.osName}</td>
+                              <td className="px-2 py-1.5 text-[var(--muted)]">{d.siteName}</td>
+                              <td className="px-2 py-1.5">
+                                <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold ${d.isActive ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'}`}>
+                                  {d.isActive ? 'Active' : 'Inactive'}
+                                </span>
+                              </td>
+                              <td className="px-2 py-1.5 text-[var(--muted)]">{d.agentVersion}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              ))
+            }
+          </div>
+        </SectionCard>
+      </div>
 
       {/* 7. Site Health Score */}
       <SectionCard title="Site Health Score"
@@ -797,7 +738,7 @@ export default function S1Agent() {
       </SectionCard>
 
       {/* 9. Network Status Distribution */}
-      <SectionCard title="Network Status Distribution"
+      {/* <SectionCard title="Network Status Distribution"
         controls={<DateFilter from={networkFilter.from} to={networkFilter.to} onFromChange={networkFilter.setFrom} onToChange={networkFilter.setTo} onClear={networkFilter.clear} />}>
         <div className="overflow-x-auto max-h-64 overflow-y-auto">
           <table className="w-full text-xs">
@@ -823,41 +764,70 @@ export default function S1Agent() {
             </tbody>
           </table>
         </div>
-      </SectionCard>
+      </SectionCard> */}
 
-      {/* 10. Top Risky Endpoints */}
-      <SectionCard title="Top Risky Endpoints" count={topRisky.length}
-        controls={<DateFilter from={riskyFilter.from} to={riskyFilter.to} onFromChange={riskyFilter.setFrom} onToChange={riskyFilter.setTo} onClear={riskyFilter.clear} />}>
-        <div className="overflow-x-auto max-h-80 overflow-y-auto">
-          <table className="w-full text-xs">
-            <thead className="sticky top-0 z-10">
-              <tr className="bg-[var(--muted-bg)]">
-                {['Endpoint', 'User', 'Risk Score', 'Reasons'].map((c) => (
-                  <th key={c} className="px-3 py-2 text-left font-semibold text-[var(--muted)] uppercase tracking-wide border-b border-[var(--card-border)] whitespace-nowrap">{c}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--card-border)]">
-              {topRisky.map((a, i) => (
-                <tr
-                  key={i}
-                  onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'agentDetail', value: a.computerName, title: `Agent Detail: ${a.computerName}` } })}
-                  className="hover:bg-[var(--muted-bg)]/60 cursor-pointer"
-                >
-                  <td className="px-3 py-2 font-medium text-[var(--foreground)]">{a.computerName}</td>
-                  <td className="px-3 py-2 text-[var(--muted)]">{a.lastLoggedInUserName}</td>
-                  <td className="px-3 py-2">
-                    <span className={`font-bold ${a.riskScore >= 60 ? 'text-red-500' : a.riskScore >= 30 ? 'text-orange-500' : 'text-yellow-500'}`}>
-                      {a.riskScore}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-[var(--muted)]">{a.reasons.join(', ')}</td>
+      {/* Top Risky Endpoints + Firewall Disabled — side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* 10. Top Risky Endpoints */}
+        <SectionCard title="Top Risky Endpoints" count={topRisky.length}
+          controls={<DateFilter from={riskyFilter.from} to={riskyFilter.to} onFromChange={riskyFilter.setFrom} onToChange={riskyFilter.setTo} onClear={riskyFilter.clear} />}>
+          <div className="overflow-x-auto max-h-[520px] overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-[var(--muted-bg)]">
+                  {['Endpoint', 'User', 'Risk Score', 'Reasons'].map((c) => (
+                    <th key={c} className="px-3 py-2 text-left font-semibold text-[var(--muted)] uppercase tracking-wide border-b border-[var(--card-border)] whitespace-nowrap">{c}</th>
+                  ))}
                 </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--card-border)]">
+                {topRisky.map((a, i) => (
+                  <tr
+                    key={i}
+                    onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'agentDetail', value: a.computerName, title: `Agent Detail: ${a.computerName}` } })}
+                    className="hover:bg-[var(--muted-bg)]/60 cursor-pointer"
+                  >
+                    <td className="px-3 py-2 font-medium text-[var(--foreground)]">{a.computerName}</td>
+                    <td className="px-3 py-2 text-[var(--muted)]">{a.lastLoggedInUserName}</td>
+                    <td className="px-3 py-2">
+                      <span className={`font-bold ${a.riskScore >= 60 ? 'text-red-500' : a.riskScore >= 30 ? 'text-orange-500' : 'text-yellow-500'}`}>
+                        {a.riskScore}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-[var(--muted)]">{a.reasons.join(', ')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </SectionCard>
+
+        {/* 3. Firewall Disabled — warning alert cards */}
+        <SectionCard title="Firewall Disabled" count={fwDisabled.length}
+          controls={<DateFilter from={fwFilter.from} to={fwFilter.to} onFromChange={fwFilter.setFrom} onToChange={fwFilter.setTo} onClear={fwFilter.clear} />}>
+          {fwDisabled.length === 0
+            ? <div className="px-4 py-6 text-center text-sm text-[var(--muted)]">All agents have firewall enabled</div>
+            : <div className="p-4 grid grid-cols-1 gap-3 max-h-[520px] overflow-y-auto">
+              {fwDisabled.map((a, i) => (
+                <div key={i}
+                  onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'firewallDisabled', value: a.computerName, title: `Firewall Disabled: ${a.computerName}` } })}
+                  className="flex items-center gap-3 p-3 rounded-xl bg-orange-50/60 dark:bg-orange-900/10 border border-orange-200/50 dark:border-orange-800/30 hover:shadow-md transition-shadow cursor-pointer">
+                  <div className="w-10 h-10 rounded-xl bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center shrink-0">
+                    <svg className="w-5 h-5 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold text-[var(--foreground)] truncate">{a.computerName}</p>
+                    <p className="text-[10px] text-[var(--muted)] truncate">{a.lastLoggedInUserName || '—'} · {a.siteName || '—'}</p>
+                  </div>
+                  {a.lastIpToMgmt && (
+                    <span className="shrink-0 text-[9px] font-mono text-[var(--muted)] bg-[var(--muted-bg)] px-1.5 py-0.5 rounded">{a.lastIpToMgmt}</span>
+                  )}
+                </div>
               ))}
-            </tbody>
-          </table>
-        </div>
-      </SectionCard>
+            </div>
+          }
+        </SectionCard>
+      </div>
 
     </div>
   );

@@ -1,24 +1,18 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-} from 'recharts';
 import api from '../../api.js';
 import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 import S1Mttr from '../CyberHygen/S1Mttr.jsx';
+import {
+  LineChart, Line, AreaChart, Area, Legend,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+} from 'recharts';
+import {
+  tooltipStyle, truncateLabel,
+  MultiViewChart, ChartViewDropdown, useViewState,
+} from './widgetViews.jsx';
 
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
-const tooltipStyle = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12 };
-
-// Shared donut styling so every pie chart in this file looks the same:
-// thick ring, rounded segment caps, and a bit of breathing room between slices.
-const DONUT_PROPS = {
-  innerRadius: '55%',
-  outerRadius: '85%',
-  cornerRadius: 10,
-  paddingAngle: 3,
-};
 
 // Canonical ATT&CK kill-chain order — S1's tactic names are matched against
 // this case-insensitively; anything unmatched falls into a trailing 'Other'
@@ -60,11 +54,6 @@ function formatDuration(minutes) {
   return h > 0 ? `${d}d ${h}h` : `${d}d`;
 }
 
-function truncateLabel(label, maxLen = 22) {
-  if (!label) return '';
-  return label.length > maxLen ? label.slice(0, maxLen) + '…' : label;
-}
-
 function topN(counts, n) {
   return Object.entries(counts)
     .sort((a, b) => b[1] - a[1])
@@ -72,59 +61,60 @@ function topN(counts, n) {
     .map(([name, value]) => ({ name, value }));
 }
 
-// Donut chart with its legend split left/right of the ring (rather than
-// below it). Each entry needs { name, value, fill }. onSliceClick receives
-// the clicked entry's data, same as recharts' native Pie onClick.
-function LegendItem({ color, name, value }) {
-  return (
-    <div className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--foreground)' }}>
-      <span
-        className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
-        style={{ backgroundColor: color }}
-      />
-      <span className="font-semibold whitespace-nowrap">{name}</span>
-      <span className="text-[var(--muted)]">({value})</span>
-    </div>
-  );
-}
+// Builds a current-vs-previous-month comparison, aligned by day-of-month,
+// from any daily series shaped [{ date, value }].  The reference is the
+// `to` of the date filter (else today); previous = the calendar month before.
+// If the reference month turns out to have no data, we fall back to the
+// latest month present in the series so the chart never renders empty.
+function monthComparison(series, refDate) {
+  const ref = refDate || new Date();
+  let refY = ref.getFullYear();
+  let refM = ref.getMonth();
+  const days = new Date(refY, refM + 1, 0).getDate();
 
-function SideLegendDonut({ data, onSliceClick }) {
-  const midpoint = Math.ceil(data.length / 2);
-  const leftItems = data.slice(0, midpoint);
-  const rightItems = data.slice(midpoint);
+  // Does the given year+month have at least one data point?
+  const hasData = (y, m) => series.some((p) => {
+    const d = p.date ? parseDate(p.date) : null;
+    return d && d.getFullYear() === y && d.getMonth() === m;
+  });
 
-  return (
-    <div className="flex items-center h-full px-2 gap-2">
-      <div className="flex flex-col gap-4 shrink-0">
-        {leftItems.map((d) => (
-          <LegendItem key={d.name} color={d.fill} name={d.name} value={d.value} />
-        ))}
-      </div>
-      <div className="flex-1 min-w-0 h-full">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={data}
-              dataKey="value"
-              {...DONUT_PROPS}
-              cursor="pointer"
-              onClick={onSliceClick}
-            >
-              {data.map((entry, i) => <Cell key={i} fill={entry.fill} stroke="none" />)}
-            </Pie>
-            <Tooltip contentStyle={tooltipStyle} />
-          </PieChart>
-        </ResponsiveContainer>
-      </div>
-      {rightItems.length > 0 && (
-        <div className="flex flex-col gap-4 shrink-0">
-          {rightItems.map((d) => (
-            <LegendItem key={d.name} color={d.fill} name={d.name} value={d.value} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
+  // If the requested reference month is empty, shift back to the latest
+  // populated month in the series so the comparison has data to show.
+  if (!hasData(refY, refM)) {
+    const latest = series
+      .map((p) => p.date ? parseDate(p.date) : null)
+      .filter(Boolean)
+      .sort((a, b) => b - a)[0];
+    if (latest) {
+      refY = latest.getFullYear();
+      refM = latest.getMonth();
+    }
+  }
+
+  // Sums daily values into index day-1, filtering to a given year+month.
+  const byDay = (y, m) => {
+    const arr = new Array(days).fill(null);
+    series.forEach((p) => {
+      const d = p.date ? parseDate(p.date) : null;
+      if (!d) return;
+      if (d.getFullYear() === y && d.getMonth() === m && d.getDate() <= days) {
+        const idx = d.getDate() - 1;
+        arr[idx] = (arr[idx] || 0) + (p.value || 0);
+      }
+    });
+    return arr.map((v) => v == null ? 0 : v);
+  };
+
+  const prevY = refM === 0 ? refY - 1 : refY;
+  const prevM = refM === 0 ? 11 : refM - 1;
+  const current = byDay(refY, refM);
+  const previous = byDay(prevY, prevM);
+
+  return {
+    data: Array.from({ length: days }, (_, i) => ({ day: i + 1, current: current[i], previous: previous[i] })),
+    currentLabel: ref.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
+    previousLabel: new Date(prevY, prevM, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
+  };
 }
 
 function KpiCard({ title, value, subtitle, accent, onClick }) {
@@ -140,22 +130,79 @@ function KpiCard({ title, value, subtitle, accent, onClick }) {
   );
 }
 
-function DateFilter({ from, to, onFromChange, onToChange, onClear }) {
+function DateFilter({ from, to, onFromChange, onToChange, onClear, compact = true }) {
   return (
-    <div className="flex items-center gap-1.5 flex-wrap">
+    <div className="flex items-center gap-1 shrink-0">
       <input type="date" value={from} max={to || undefined}
         onChange={(e) => onFromChange(e.target.value)}
-        className="text-[10px] px-1.5 py-0.5 rounded-md border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400" />
-      <span className="text-[10px] text-[var(--muted)]">→</span>
+        className={`rounded-md border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 ${compact ? 'text-[9px] px-1 py-0.5 w-[86px]' : 'text-[10px] px-1.5 py-0.5'}`} />
+      <span className="text-[9px] text-[var(--muted)] shrink-0">→</span>
       <input type="date" value={to} min={from || undefined}
         onChange={(e) => onToChange(e.target.value)}
-        className="text-[10px] px-1.5 py-0.5 rounded-md border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400" />
+        className={`rounded-md border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 ${compact ? 'text-[9px] px-1 py-0.5 w-[86px]' : 'text-[10px] px-1.5 py-0.5'}`} />
       {(from || to) && (
-        <button onClick={onClear} className="text-[10px] text-indigo-500 hover:text-indigo-700 font-semibold">✕</button>
+        <button onClick={onClear} className="text-[9px] text-indigo-500 hover:text-indigo-700 font-semibold shrink-0">✕</button>
       )}
     </div>
   );
 }
+
+// Line/Area/Daily selector shared by the trend cards (Threat Trend, MTTD,
+// MTTM).  Line & Area render the current-vs-previous-month comparison.
+function TrendViewDropdown({ value, onChange }) {
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)}
+      aria-label="Trend chart representation"
+      className="rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] text-[11px] pl-2 pr-6 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer">
+      <option value="line">Line</option>
+      <option value="area">Area</option>
+      <option value="daily">Daily</option>
+    </select>
+  );
+}
+
+// Renders the current-vs-previous-month comparison as a Line or Area chart.
+// `comparison` is the object from monthComparison(): { data, currentLabel,
+// previousLabel }.
+function ComparisonChart({ comparison, type, unit = (v) => v }) {
+  const isArea = type === 'area';
+  const Chart = isArea ? AreaChart : LineChart;
+  const Current = isArea ? Area : Line;
+  const Previous = isArea ? Area : Line;
+  const common = {
+    margin: { top: 10, right: 16, left: 0, bottom: 0 },
+  };
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <Chart data={comparison.data} {...common}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+        <XAxis dataKey="day" tick={{ fontSize: 10, fill: 'var(--muted)' }} />
+        <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} tickFormatter={(v) => unit(v)} />
+        <Tooltip contentStyle={tooltipStyle} formatter={(v) => [unit(v)]} cursor={{ fill: 'var(--card-bg)' }} />
+        {!isArea && <Legend iconType="plainline" wrapperStyle={{ fontSize: 11 }} />}
+        {isArea ? (
+          <>
+            <Current type="monotone" dataKey="current" name={comparison.currentLabel} stroke="#3b82f6"
+              fill="#3b82f6" fillOpacity={0.25} strokeWidth={2} dot={false} />
+            <Previous type="monotone" dataKey="previous" name={comparison.previousLabel} stroke="#9ca3af"
+              fill="#9ca3af" fillOpacity={0.15} strokeWidth={2} dot={false} />
+          </>
+        ) : (
+          <>
+            <Current type="monotone" dataKey="current" name={comparison.currentLabel} stroke="#3b82f6" strokeWidth={2.5} dot={false} />
+            <Previous type="monotone" dataKey="previous" name={comparison.previousLabel} stroke="#9ca3af" strokeWidth={2} dot={false} strokeDasharray="4 3" />
+          </>
+        )}
+      </Chart>
+    </ResponsiveContainer>
+  );
+}
+
+// Persists a widget's selected chart view to localStorage so it survives
+// a page refresh. Falls back gracefully (in-memory only) if storage is
+// unavailable — e.g. private browsing.
+const VIEW_STORAGE_PREFIX = 'threatsDashboard:chartView:';
+// (useViewState itself lives in widgetViews.jsx and is shared with S1Cve)
 
 function useCardFilter(threats) {
   const [from, setFrom] = useState('');
@@ -179,12 +226,12 @@ function useCardFilter(threats) {
 function ChartCard({ title, subtitle, controls, children, height = 260 }) {
   return (
     <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl overflow-hidden shadow-sm">
-      <div className="px-4 pt-4 pb-2 flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <p className="text-sm font-bold text-[var(--foreground)]">{title}</p>
-          {subtitle && <p className="text-[11px] text-[var(--muted)] mt-0.5">{subtitle}</p>}
+      <div className="px-3 pt-3 pb-2 flex items-center justify-between gap-2 min-w-0">
+        <div className="min-w-0 shrink">
+          <p className="text-sm font-bold text-[var(--foreground)] truncate">{title}</p>
+          {subtitle && <p className="text-[11px] text-[var(--muted)] mt-0.5 truncate">{subtitle}</p>}
         </div>
-        {controls && <div className="flex items-center gap-2 flex-wrap">{controls}</div>}
+        {controls && <div className="flex items-center gap-1.5 shrink-0">{controls}</div>}
       </div>
       <div style={{ height }}>{children}</div>
     </div>
@@ -243,6 +290,20 @@ export default function Threats() {
   const [loading, setLoading] = useState(true);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+
+  // Chart-type view mode per switchable widget (default matches the
+  // original look of each card: donut for the pies, bar for Top Users).
+  // Persisted to localStorage so the chosen view survives a page refresh.
+  const [trendView, setTrendView] = useViewState('threatTrend', 'line');
+  const [mttdView, setMttdView] = useViewState('mttdTrend', 'line');
+  const [mttmView, setMttmView] = useViewState('mttmTrend', 'line');
+  const [classView, setClassView] = useViewState('classification', 'donut');
+  const [filelessView, setFilelessView] = useViewState('fileless', 'donut');
+  const [mitigView, setMitigView] = useViewState('mitigation', 'donut');
+  const [usersView, setUsersView] = useViewState('topUsers', 'bar');
+  const [severityView, setSeverityView] = useViewState('severity', 'donut');
+  const [siteView, setSiteView] = useViewState('site', 'bar');
+  const [groupView, setGroupView] = useViewState('group', 'bar');
 
   useEffect(() => {
     setLoading(true);
@@ -314,6 +375,13 @@ export default function Threats() {
     });
     return Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)).map(([date, count]) => ({ date, count }));
   }, [trendFilter.filtered]);
+
+  // Current month vs previous month — aligned by day-of-month so the two
+  // series share an X axis. The "reference" month is the filter's `to` date
+  // (if set) else today; the previous month is the calendar month before it.
+  const threatComparison = useMemo(() =>
+    monthComparison(filteredThreatTrend.map((d) => ({ date: d.date, value: d.count })), trendFilter.to ? parseDate(trendFilter.to) : null),
+    [filteredThreatTrend, trendFilter.to]);
 
   const topEndpoints = useMemo(() => {
     const c = {};
@@ -461,13 +529,22 @@ export default function Threats() {
       .map(([date, { sum, count }]) => ({ date, avg: Math.round(sum / count) }));
   }, [mttmFilter.filtered]);
 
+  // Monthly (current vs previous) comparisons for the MTTD/MTTM trends.
+  const mttdComparison = useMemo(() =>
+    monthComparison(mttdTrend.map((d) => ({ date: d.date, value: d.avg })), mttdFilter.to ? parseDate(mttdFilter.to) : null),
+    [mttdTrend, mttdFilter.to]);
+
+  const mttmComparison = useMemo(() =>
+    monthComparison(mttmTrend.map((d) => ({ date: d.date, value: d.avg })), mttmFilter.to ? parseDate(mttmFilter.to) : null),
+    [mttmTrend, mttmFilter.to]);
+
   const bySiteData = useMemo(() => {
     const c = {};
     siteFilter.filtered.forEach((t) => {
       const k = t.agentRealtimeInfo?.siteName || t.siteName || t.agentDetectionInfo?.siteName || 'Unknown';
       c[k] = (c[k] || 0) + 1;
     });
-    return topN(c, 10).map((x) => ({ ...x, name: truncateLabel(x.name) }));
+    return topN(c, 10).map((x, i) => ({ ...x, name: truncateLabel(x.name), fill: CHART_COLORS[i % CHART_COLORS.length] }));
   }, [siteFilter.filtered]);
 
   const byGroupData = useMemo(() => {
@@ -476,7 +553,7 @@ export default function Threats() {
       const k = t.agentRealtimeInfo?.groupName || t.group_name || t.agentDetectionInfo?.groupName || 'Unknown';
       c[k] = (c[k] || 0) + 1;
     });
-    return topN(c, 10).map((x) => ({ ...x, name: truncateLabel(x.name) }));
+    return topN(c, 10).map((x, i) => ({ ...x, name: truncateLabel(x.name), fill: CHART_COLORS[i % CHART_COLORS.length] }));
   }, [groupFilter.filtered]);
 
   if (loading) {
@@ -558,43 +635,45 @@ export default function Threats() {
           onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mttm', title: 'Mean Time to Mitigate' } })} />
       </div>
 
-      {/* Threat Trend */}
-      <ChartCard title="Threat Trend Over Time" subtitle="Daily new threats" height={260}
-        controls={<DateFilter from={trendFilter.from} to={trendFilter.to} onFromChange={trendFilter.setFrom} onToChange={trendFilter.setTo} onClear={trendFilter.clear} />}>
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={filteredThreatTrend} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-            <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--muted)' }} tickFormatter={(v) => v.slice(5)} />
-            <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-            <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'var(--card-bg)' }} />
-            <Line type="monotone" dataKey="count" stroke="#3b82f6" strokeWidth={2} dot={false} name="Threats"
-              onClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'threatTrend', value: data.date, title: `Threats on ${data.date}` } })} />
-          </LineChart>
-        </ResponsiveContainer>
-      </ChartCard>
 
-      {/* Top Endpoints + MITRE */}
+
+      {/* Threat Trend + Mitigation Rate — side by side
+          When the dropdown is set to Line or Area the chart compares the
+          current month against the previous month (aligned by day), drawing
+          each series in its own color; otherwise the daily trend is shown. */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ChartCard title="Top Affected Endpoints" subtitle="Threat count per machine" height={300}
-          controls={<DateFilter from={endpointFilter.from} to={endpointFilter.to} onFromChange={endpointFilter.setFrom} onToChange={endpointFilter.setTo} onClear={endpointFilter.clear} />}>
-          {topEndpoints.length === 0
-            ? <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No data</p></div>
-            : <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={topEndpoints} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
+        <ChartCard
+          title="Threat Trend Over Time"
+          subtitle={trendView === 'line' || trendView === 'area'
+            ? `${threatComparison.currentLabel} vs ${threatComparison.previousLabel}`
+            : 'Daily new threats'}
+          height={260}
+          controls={<>
+            <TrendViewDropdown value={trendView} onChange={setTrendView} />
+            <DateFilter from={trendFilter.from} to={trendFilter.to} onFromChange={trendFilter.setFrom} onToChange={trendFilter.setTo} onClear={trendFilter.clear} />
+          </>}>
+          {trendView === 'line' || trendView === 'area' ? (
+            <ComparisonChart comparison={threatComparison} type={trendView} />
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={filteredThreatTrend} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={110} />
-                <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-                <Tooltip contentStyle={tooltipStyle} />
-                <Bar dataKey="value" fill="#3b82f6" radius={[0, 4, 4, 0]} maxBarSize={18} name="Threats" cursor="pointer"
-                  onClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'topEndpoint', value: data.fullName, title: `Threats on ${data.fullName}` } })} />
-              </BarChart>
+                <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--muted)' }} tickFormatter={(v) => v.slice(5)} />
+                <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+                <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'var(--card-bg)' }} />
+                <Line type="monotone" dataKey="count" stroke="#3b82f6" strokeWidth={2} dot={false} name="Threats"
+                  onClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'threatTrend', value: data.date, title: `Threats on ${data.date}` } })} />
+              </LineChart>
             </ResponsiveContainer>
-          }
-        </ChartCard>
-        <ChartCard title="SentinelOne Health Score" subtitle="Threat count per machine" height={300}>
-          <S1Mttr total={kpis.total} mitigated={kpis.mitigated}/>
+          )}
         </ChartCard>
 
+        {/* S1 mitigation-rate gauge — fed from the threats already loaded on
+            this page so it reflects the current filter/date range, rather than
+            re-fetching via S1Mttr's own internal API call. */}
+        <ChartCard title="Mitigation Rate" subtitle="Mitigated / total threats" height="auto">
+          <S1Mttr total={kpis.total} mitigated={kpis.mitigated} />
+        </ChartCard>
       </div>
 
       {/* MITRE ATT&CK Matrix */}
@@ -607,60 +686,126 @@ export default function Threats() {
         />
       </ChartCard>
 
-      {/* Classification + Fileless + Mitigation Outcomes */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* MTTD + MTTM trends — side by side, Line/Area compare current vs
+          previous month, Daily shows the per-day average. */}
+      {/* <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <ChartCard
+          title="MTTD Trend (Time to Detect)"
+          subtitle={mttdView === 'line' || mttdView === 'area'
+            ? `${mttdComparison.currentLabel} vs ${mttdComparison.previousLabel}`
+            : 'Daily average minutes to detect'}
+          height={260}
+          controls={<>
+            <TrendViewDropdown value={mttdView} onChange={setMttdView} />
+            <DateFilter from={mttdFilter.from} to={mttdFilter.to} onFromChange={mttdFilter.setFrom} onToChange={mttdFilter.setTo} onClear={mttdFilter.clear} />
+          </>}>
+          {mttdView === 'line' || mttdView === 'area' ? (
+            <ComparisonChart comparison={mttdComparison} type={mttdView} unit={(v) => formatDuration(v)} />
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={mttdTrend} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+                <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--muted)' }} tickFormatter={(v) => v.slice(5)} />
+                <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} tickFormatter={(v) => formatDuration(v)} />
+                <Tooltip contentStyle={tooltipStyle} formatter={(v) => [formatDuration(v)]} cursor={{ fill: 'var(--card-bg)' }} />
+                <Line type="monotone" dataKey="avg" stroke="#8b5cf6" strokeWidth={2} dot={false} name="MTTD (min)" />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </ChartCard>
+
+        <ChartCard
+          title="MTTM Trend (Time to Mitigate)"
+          subtitle={mttmView === 'line' || mttmView === 'area'
+            ? `${mttmComparison.currentLabel} vs ${mttmComparison.previousLabel}`
+            : 'Daily average minutes to mitigate'}
+          height={260}
+          controls={<>
+            <TrendViewDropdown value={mttmView} onChange={setMttmView} />
+            <DateFilter from={mttmFilter.from} to={mttmFilter.to} onFromChange={mttmFilter.setFrom} onToChange={mttmFilter.setTo} onClear={mttmFilter.clear} />
+          </>}>
+          {mttmView === 'line' || mttmView === 'area' ? (
+            <ComparisonChart comparison={mttmComparison} type={mttmView} unit={(v) => formatDuration(v)} />
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={mttmTrend} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+                <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--muted)' }} tickFormatter={(v) => v.slice(5)} />
+                <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} tickFormatter={(v) => formatDuration(v)} />
+                <Tooltip contentStyle={tooltipStyle} formatter={(v) => [formatDuration(v)]} cursor={{ fill: 'var(--card-bg)' }} />
+                <Line type="monotone" dataKey="avg" stroke="#06b6d4" strokeWidth={2} dot={false} name="MTTM (min)" />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </ChartCard>
+      </div> */}
+
+      {/* Classification + Fileless + Mitigation Outcomes — three-up */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
         <ChartCard title="Classification" height={280}
-          controls={<DateFilter from={classFilter.from} to={classFilter.to} onFromChange={classFilter.setFrom} onToChange={classFilter.setTo} onClear={classFilter.clear} />}>
-          <SideLegendDonut
+          controls={<>
+            <ChartViewDropdown value={classView} onChange={setClassView} compact />
+            <DateFilter from={classFilter.from} to={classFilter.to} onFromChange={classFilter.setFrom} onToChange={classFilter.setTo} onClear={classFilter.clear} />
+          </>}>
+          <MultiViewChart
             data={classificationData}
-            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'classification', value: data.name, title: `${data.name} Threats` } })}
+            viewType={classView}
+            onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'classification', value: data.name, title: `${data.name} Threats` } })}
           />
         </ChartCard>
 
         <ChartCard title="Fileless vs File-based" height={280}
-          controls={<DateFilter from={filelessFilter.from} to={filelessFilter.to} onFromChange={filelessFilter.setFrom} onToChange={filelessFilter.setTo} onClear={filelessFilter.clear} />}>
-          <SideLegendDonut
+          controls={<>
+            <ChartViewDropdown value={filelessView} onChange={setFilelessView} compact />
+            <DateFilter from={filelessFilter.from} to={filelessFilter.to} onFromChange={filelessFilter.setFrom} onToChange={filelessFilter.setTo} onClear={filelessFilter.clear} />
+          </>}>
+          <MultiViewChart
             data={filelessData}
-            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: data.name === 'Fileless' ? 'fileless' : 'fileless_type', value: data.name === 'Fileless' ? 'true' : 'false', title: `${data.name} Threats` } })}
+            viewType={filelessView}
+            onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: data.name === 'Fileless' ? 'fileless' : 'fileless_type', value: data.name === 'Fileless' ? 'true' : 'false', title: `${data.name} Threats` } })}
           />
         </ChartCard>
 
         <ChartCard title="Mitigation Outcomes" height={280}
-          controls={<DateFilter from={mitigFilter.from} to={mitigFilter.to} onFromChange={mitigFilter.setFrom} onToChange={mitigFilter.setTo} onClear={mitigFilter.clear} />}>
-          {mitigationRateData.length === 0
-            ? <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No mitigation data</p></div>
-            : <SideLegendDonut
-                data={mitigationRateData}
-                onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mitigationStatusArray', value: data.name, title: `Threats with ${data.name} status` } })}
-              />
-          }
+          controls={<>
+            <ChartViewDropdown value={mitigView} onChange={setMitigView} compact />
+            <DateFilter from={mitigFilter.from} to={mitigFilter.to} onFromChange={mitigFilter.setFrom} onToChange={mitigFilter.setTo} onClear={mitigFilter.clear} />
+          </>}>
+          <MultiViewChart
+            data={mitigationRateData}
+            viewType={mitigView}
+            emptyLabel="No mitigation data"
+            onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mitigationStatusArray', value: data.name, title: `Threats with ${data.name} status` } })}
+          />
         </ChartCard>
+
       </div>
 
       {/* Top Users + Severity */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ChartCard title="Top Users by Threat Count" height={280}
-          controls={<DateFilter from={usersFilter.from} to={usersFilter.to} onFromChange={usersFilter.setFrom} onToChange={usersFilter.setTo} onClear={usersFilter.clear} />}>
-          {topUsersData.length === 0
-            ? <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No user data</p></div>
-            : <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={topUsersData} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={110} />
-                <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-                <Tooltip contentStyle={tooltipStyle} />
-                <Bar dataKey="value" fill="#f59e0b" radius={[0, 4, 4, 0]} maxBarSize={18} name="Threats" cursor="pointer"
-                  onClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'processUser', value: data.name, title: `Threats by user ${data.name}` } })} />
-              </BarChart>
-            </ResponsiveContainer>
-          }
+          controls={<>
+            <ChartViewDropdown value={usersView} onChange={setUsersView} />
+            <DateFilter from={usersFilter.from} to={usersFilter.to} onFromChange={usersFilter.setFrom} onToChange={usersFilter.setTo} onClear={usersFilter.clear} />
+          </>}>
+          <MultiViewChart
+            data={topUsersData}
+            viewType={usersView}
+            barColor="#f59e0b"
+            emptyLabel="No user data"
+            onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'processUser', value: data.name, title: `Threats by user ${data.name}` } })}
+          />
         </ChartCard>
 
         <ChartCard title="Severity / Confidence Distribution" height={280}
-          controls={<DateFilter from={severityFilter.from} to={severityFilter.to} onFromChange={severityFilter.setFrom} onToChange={severityFilter.setTo} onClear={severityFilter.clear} />}>
-          <SideLegendDonut
+          controls={<>
+            <ChartViewDropdown value={severityView} onChange={setSeverityView} />
+            <DateFilter from={severityFilter.from} to={severityFilter.to} onFromChange={severityFilter.setFrom} onToChange={severityFilter.setTo} onClear={severityFilter.clear} />
+          </>}>
+          <MultiViewChart
             data={severityData}
-            onSliceClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'confidenceLevel', value: data.name, title: `Threats with ${data.name} confidence` } })}
+            viewType={severityView}
+            onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'confidenceLevel', value: data.name, title: `Threats with ${data.name} confidence` } })}
           />
         </ChartCard>
       </div>
@@ -668,37 +813,31 @@ export default function Threats() {
       {/* By Site + By Group */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ChartCard title="Threats by Site" height={280}
-          controls={<DateFilter from={siteFilter.from} to={siteFilter.to} onFromChange={siteFilter.setFrom} onToChange={siteFilter.setTo} onClear={siteFilter.clear} />}>
-          {bySiteData.length === 0
-            ? <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No site data</p></div>
-            : <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={bySiteData} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={110} />
-                <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-                <Tooltip contentStyle={tooltipStyle} />
-                <Bar dataKey="value" fill="#10b981" radius={[0, 4, 4, 0]} maxBarSize={18} name="Threats" cursor="pointer"
-                  onClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'site', value: data.name, title: `Threats in site ${data.name}` } })} />
-              </BarChart>
-            </ResponsiveContainer>
-          }
+          controls={<>
+            <ChartViewDropdown value={siteView} onChange={setSiteView} />
+            <DateFilter from={siteFilter.from} to={siteFilter.to} onFromChange={siteFilter.setFrom} onToChange={siteFilter.setTo} onClear={siteFilter.clear} />
+          </>}>
+          <MultiViewChart
+            data={bySiteData}
+            viewType={siteView}
+            barColor="#10b981"
+            emptyLabel="No site data"
+            onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'site', value: data.name, title: `Threats in site ${data.name}` } })}
+          />
         </ChartCard>
 
         <ChartCard title="Threats by Group" height={280}
-          controls={<DateFilter from={groupFilter.from} to={groupFilter.to} onFromChange={groupFilter.setFrom} onToChange={groupFilter.setTo} onClear={groupFilter.clear} />}>
-          {byGroupData.length === 0
-            ? <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No group data</p></div>
-            : <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={byGroupData} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={110} />
-                <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-                <Tooltip contentStyle={tooltipStyle} />
-                <Bar dataKey="value" fill="#ec4899" radius={[0, 4, 4, 0]} maxBarSize={18} name="Threats" cursor="pointer"
-                  onClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'group', value: data.name, title: `Threats in group ${data.name}` } })} />
-              </BarChart>
-            </ResponsiveContainer>
-          }
+          controls={<>
+            <ChartViewDropdown value={groupView} onChange={setGroupView} />
+            <DateFilter from={groupFilter.from} to={groupFilter.to} onFromChange={groupFilter.setFrom} onToChange={groupFilter.setTo} onClear={groupFilter.clear} />
+          </>}>
+          <MultiViewChart
+            data={byGroupData}
+            viewType={groupView}
+            barColor="#ec4899"
+            emptyLabel="No group data"
+            onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'group', value: data.name, title: `Threats in group ${data.name}` } })}
+          />
         </ChartCard>
       </div>
 
