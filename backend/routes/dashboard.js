@@ -59,6 +59,12 @@ router.get('/aggregate', async (req, res) => {
       pool.query('SELECT * FROM firewall_widgets ORDER BY created_at ASC'),
     ]);
 
+    // ── All-tools snapshot with current vs previous month comparison ──────────
+    // Each tool exposes `current` (records synced this month) and `previous`
+    // (records synced during the previous calendar month). The bubble chart on
+    // the dashboard uses this to render a delta badge per tool.
+    const allTools = await buildAllToolsSnapshot(pool);
+
     res.json({
       layout: layoutRows.rows[0]?.layout ?? null,
       sentinelone: {
@@ -75,11 +81,59 @@ router.get('/aggregate', async (req, res) => {
       firewall: {
         widgets: fwWidgetsRows.rows,
       },
+      allTools,
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
+
+// Build per-tool current vs previous-month counts using each table's
+// `synced_at` column when present. Tools without that column fall back to
+// the total count for both buckets (delta == 0).
+async function buildAllToolsSnapshot(pool) {
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+
+  const TOOLS = [
+    { key: 'security',     label: 'EDR',       table: 's1_threats' },
+    { key: 'agent',        label: 'Agents',    table: 's1_agents' },
+    { key: 'checkpoint',   label: 'Email',     table: 'checkpoint_events' },
+    { key: 'nvd',          label: 'NVD',       table: 'nvd' },
+    { key: 'paloalto',     label: 'Firewall',  table: 'firewall_widgets' },
+    { key: 'mdm',          label: 'MDM',       table: 'hexnode_devices' },
+    { key: 'microsoft365', label: 'M365',      table: 'microsoft365' },
+    { key: 'zoho',         label: 'Ticketing', table: 'zohotable' },
+    { key: 'analytics',    label: 'OSINT',     table: 'analytics_events' },
+  ];
+
+  const results = await Promise.all(TOOLS.map(async (t) => {
+    try {
+      // Try synced_at split first; fall back to a single COUNT(*).
+      const split = await pool.query(
+        `SELECT
+            COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE synced_at >= $1)::int AS current,
+            COUNT(*) FILTER (WHERE synced_at >= $2 AND synced_at < $1)::int AS previous
+         FROM ${t.table}`,
+        [monthStart.toISOString(), prevMonthStart.toISOString()]
+      );
+      const row = split.rows[0] || { total: 0, current: 0, previous: 0 };
+      return { key: t.key, label: t.label, current: row.current, previous: row.previous, total: row.total };
+    } catch {
+      try {
+        const r = await pool.query(`SELECT COUNT(*)::int AS c FROM ${t.table}`);
+        const total = r.rows[0]?.c ?? 0;
+        return { key: t.key, label: t.label, current: total, previous: total, total };
+      } catch {
+        return { key: t.key, label: t.label, current: 0, previous: 0, total: 0 };
+      }
+    }
+  }));
+
+  return { tools: results, monthStart: monthStart.toISOString() };
+}
 
 // ─── Compliance Health Scores ──────────────────────────────────────────────────
 // Keeps one "latest" health-score snapshot per org.

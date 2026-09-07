@@ -10,6 +10,7 @@ import {
 import {
   tooltipStyle, truncateLabel,
   MultiViewChart, ChartViewDropdown, useViewState,
+  rangeComparison, CompareRangeSelector, withinRange,
 } from './widgetViews.jsx';
 
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
@@ -61,59 +62,66 @@ function topN(counts, n) {
     .map(([name, value]) => ({ name, value }));
 }
 
-// Builds a current-vs-previous-month comparison, aligned by day-of-month,
-// from any daily series shaped [{ date, value }].  The reference is the
-// `to` of the date filter (else today); previous = the calendar month before.
-// If the reference month turns out to have no data, we fall back to the
-// latest month present in the series so the chart never renders empty.
-function monthComparison(series, refDate) {
-  const ref = refDate || new Date();
-  let refY = ref.getFullYear();
-  let refM = ref.getMonth();
-  const days = new Date(refY, refM + 1, 0).getDate();
+// Builds a current-vs-previous N-day rolling comparison from any daily series
+// shaped [{ date, value }].  `days` is the window length; the "current" series
+// is the last `days` days before `refDate` (the date filter's `to`, else
+// today) and "previous" is the `days` days immediately before that, aligned by
+// day-offset so current[i] lines up with previous[i].  If the current window
+// turns out to have no data we fall back to the latest day in the series so
+// the chart never renders empty.
+function monthComparison(series, refDate, days = 30) {
+  const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-  // Does the given year+month have at least one data point?
-  const hasData = (y, m) => series.some((p) => {
-    const d = p.date ? parseDate(p.date) : null;
-    return d && d.getFullYear() === y && d.getMonth() === m;
+  let ref = refDate || new Date();
+  let curStart = new Date(ref);
+  curStart.setDate(curStart.getDate() - days);
+  let prevStart = new Date(curStart);
+  prevStart.setDate(prevStart.getDate() - days);
+
+  // If the current window has no data, shift back to the latest dated row so
+  // the comparison has data to show.
+  const curKeys = Array.from({ length: days }, (_, i) => {
+    const d = new Date(curStart); d.setDate(d.getDate() + i + 1); return dayKey(d);
   });
-
-  // If the requested reference month is empty, shift back to the latest
-  // populated month in the series so the comparison has data to show.
-  if (!hasData(refY, refM)) {
+  const hasAnyInCurWindow = series.some((p) => {
+    const d = p.date ? parseDate(p.date) : null;
+    return d && curKeys.includes(dayKey(d));
+  });
+  if (!hasAnyInCurWindow) {
     const latest = series
       .map((p) => p.date ? parseDate(p.date) : null)
       .filter(Boolean)
       .sort((a, b) => b - a)[0];
     if (latest) {
-      refY = latest.getFullYear();
-      refM = latest.getMonth();
+      ref = latest;
+      curStart = new Date(ref);
+      curStart.setDate(curStart.getDate() - days);
+      prevStart = new Date(curStart);
+      prevStart.setDate(prevStart.getDate() - days);
     }
   }
 
-  // Sums daily values into index day-1, filtering to a given year+month.
-  const byDay = (y, m) => {
-    const arr = new Array(days).fill(null);
-    series.forEach((p) => {
-      const d = p.date ? parseDate(p.date) : null;
-      if (!d) return;
-      if (d.getFullYear() === y && d.getMonth() === m && d.getDate() <= days) {
-        const idx = d.getDate() - 1;
-        arr[idx] = (arr[idx] || 0) + (p.value || 0);
-      }
-    });
-    return arr.map((v) => v == null ? 0 : v);
-  };
+  // Build per-day bucketed arrays, aligned by day-offset (index i).
+  const current = new Array(days).fill(0);
+  const previous = new Array(days).fill(0);
+  series.forEach((p) => {
+    const d = p.date ? parseDate(p.date) : null;
+    if (!d) return;
+    const dk = dayKey(d);
+    for (let i = 0; i < days; i++) {
+      const c = new Date(curStart); c.setDate(c.getDate() + i + 1);
+      if (dayKey(c) === dk) { current[i] += p.value || 0; return; }
+      const q = new Date(prevStart); q.setDate(q.getDate() + i + 1);
+      if (dayKey(q) === dk) { previous[i] += p.value || 0; return; }
+    }
+  });
 
-  const prevY = refM === 0 ? refY - 1 : refY;
-  const prevM = refM === 0 ? 11 : refM - 1;
-  const current = byDay(refY, refM);
-  const previous = byDay(prevY, prevM);
-
+  const fmt = (d) => `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const curEnd = new Date(ref); curEnd.setDate(curEnd.getDate() - 1);
   return {
     data: Array.from({ length: days }, (_, i) => ({ day: i + 1, current: current[i], previous: previous[i] })),
-    currentLabel: ref.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
-    previousLabel: new Date(prevY, prevM, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
+    currentLabel: `Last ${days} days (${fmt(curStart)} – ${fmt(curEnd)})`,
+    previousLabel: `${days} days before`,
   };
 }
 
@@ -305,6 +313,16 @@ export default function Threats() {
   const [siteView, setSiteView] = useViewState('site', 'bar');
   const [groupView, setGroupView] = useViewState('group', 'bar');
 
+  // Rolling comparison window (days) for the Line/Area/Comparison views.
+  const [trendDays, setTrendDays] = useState(30);
+  const [classDays, setClassDays] = useState(30);
+  const [filelessDays, setFilelessDays] = useState(30);
+  const [mitigDays, setMitigDays] = useState(30);
+  const [usersDays, setUsersDays] = useState(30);
+  const [severityDays, setSeverityDays] = useState(30);
+  const [siteDays, setSiteDays] = useState(30);
+  const [groupDays, setGroupDays] = useState(30);
+
   useEffect(() => {
     setLoading(true);
     api.get('/sentinelone/db/threats')
@@ -325,6 +343,10 @@ export default function Threats() {
       return true;
     });
   }, [threats, dateFrom, dateTo]);
+
+  // Maps a threat to its creation date (Date or null) for the rolling
+  // Line/Area/Comparison views.
+  const dateOf = useMemo(() => (t) => parseDate(t.threatInfo?.createdAt), []);
 
   const kpis = useMemo(() => {
     const total = filteredThreats.length;
@@ -367,21 +389,21 @@ export default function Threats() {
 
   const filteredThreatTrend = useMemo(() => {
     const counts = {};
-    trendFilter.filtered.forEach((t) => {
+    withinRange(trendFilter.filtered, dateOf, trendDays).forEach((t) => {
       const d = parseDate(t.threatInfo?.createdAt);
       if (!d) return;
       const key = d.toISOString().slice(0, 10);
       counts[key] = (counts[key] || 0) + 1;
     });
     return Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)).map(([date, count]) => ({ date, count }));
-  }, [trendFilter.filtered]);
+  }, [trendFilter.filtered, dateOf, trendDays]);
 
   // Current month vs previous month — aligned by day-of-month so the two
   // series share an X axis. The "reference" month is the filter's `to` date
-  // (if set) else today; the previous month is the calendar month before it.
+  // (if set) else today; the previous window is the same length before it.
   const threatComparison = useMemo(() =>
-    monthComparison(filteredThreatTrend.map((d) => ({ date: d.date, value: d.count })), trendFilter.to ? parseDate(trendFilter.to) : null),
-    [filteredThreatTrend, trendFilter.to]);
+    monthComparison(filteredThreatTrend.map((d) => ({ date: d.date, value: d.count })), trendFilter.to ? parseDate(trendFilter.to) : null, trendDays),
+    [filteredThreatTrend, trendFilter.to, trendDays]);
 
   const topEndpoints = useMemo(() => {
     const c = {};
@@ -459,43 +481,44 @@ export default function Threats() {
 
   const classificationData = useMemo(() => {
     const c = {};
-    classFilter.filtered.forEach((t) => { const k = t.threatInfo?.classification || 'Unknown'; c[k] = (c[k] || 0) + 1; });
+    withinRange(classFilter.filtered, dateOf, classDays).forEach((t) => { const k = t.threatInfo?.classification || 'Unknown'; c[k] = (c[k] || 0) + 1; });
     return Object.entries(c).map(([name, value], i) => ({ name, value, fill: CHART_COLORS[i % CHART_COLORS.length] }));
-  }, [classFilter.filtered]);
+  }, [classFilter.filtered, dateOf, classDays]);
 
   const filelessData = useMemo(() => {
-    const f = filelessFilter.filtered.filter((t) => t.threatInfo?.isFileless).length;
+    const rows = withinRange(filelessFilter.filtered, dateOf, filelessDays);
+    const f = rows.filter((t) => t.threatInfo?.isFileless).length;
     return [
       { name: 'Fileless', value: f, fill: '#ef4444' },
-      { name: 'File-based', value: filelessFilter.filtered.length - f, fill: '#3b82f6' },
+      { name: 'File-based', value: rows.length - f, fill: '#3b82f6' },
     ];
-  }, [filelessFilter.filtered]);
+  }, [filelessFilter.filtered, dateOf, filelessDays]);
 
   const mitigationRateData = useMemo(() => {
     const c = {};
-    mitigFilter.filtered.forEach((t) => {
+    withinRange(mitigFilter.filtered, dateOf, mitigDays).forEach((t) => {
       (t.mitigationStatus || []).forEach((s) => { if (s.status) c[s.status] = (c[s.status] || 0) + 1; });
     });
     return Object.entries(c).map(([name, value], i) => ({ name, value, fill: CHART_COLORS[i % CHART_COLORS.length] }));
-  }, [mitigFilter.filtered]);
+  }, [mitigFilter.filtered, dateOf, mitigDays]);
 
   const topUsersData = useMemo(() => {
     const c = {};
-    usersFilter.filtered.forEach((t) => {
+    withinRange(usersFilter.filtered, dateOf, usersDays).forEach((t) => {
       const k = t.threatInfo?.initiatingUsername || t.threatInfo?.processUser || t.agentDetectionInfo?.agentLastLoggedInUserName || '';
       if (k) c[k] = (c[k] || 0) + 1;
     });
     return topN(c, 10).map((x) => ({ ...x, name: truncateLabel(x.name) }));
-  }, [usersFilter.filtered]);
+  }, [usersFilter.filtered, dateOf, usersDays]);
 
   const severityData = useMemo(() => {
     const c = {};
-    severityFilter.filtered.forEach((t) => {
+    withinRange(severityFilter.filtered, dateOf, severityDays).forEach((t) => {
       const k = t.threatInfo?.confidenceLevel || t.threatInfo?.classification || 'Unknown';
       c[k] = (c[k] || 0) + 1;
     });
     return Object.entries(c).map(([name, value], i) => ({ name, value, fill: CHART_COLORS[i % CHART_COLORS.length] }));
-  }, [severityFilter.filtered]);
+  }, [severityFilter.filtered, dateOf, severityDays]);
 
   const mttdTrend = useMemo(() => {
     const byDay = {};
@@ -540,21 +563,60 @@ export default function Threats() {
 
   const bySiteData = useMemo(() => {
     const c = {};
-    siteFilter.filtered.forEach((t) => {
+    withinRange(siteFilter.filtered, dateOf, siteDays).forEach((t) => {
       const k = t.agentRealtimeInfo?.siteName || t.siteName || t.agentDetectionInfo?.siteName || 'Unknown';
       c[k] = (c[k] || 0) + 1;
     });
     return topN(c, 10).map((x, i) => ({ ...x, name: truncateLabel(x.name), fill: CHART_COLORS[i % CHART_COLORS.length] }));
-  }, [siteFilter.filtered]);
+  }, [siteFilter.filtered, dateOf, siteDays]);
 
   const byGroupData = useMemo(() => {
     const c = {};
-    groupFilter.filtered.forEach((t) => {
+    withinRange(groupFilter.filtered, dateOf, groupDays).forEach((t) => {
       const k = t.agentRealtimeInfo?.groupName || t.group_name || t.agentDetectionInfo?.groupName || 'Unknown';
       c[k] = (c[k] || 0) + 1;
     });
     return topN(c, 10).map((x, i) => ({ ...x, name: truncateLabel(x.name), fill: CHART_COLORS[i % CHART_COLORS.length] }));
-  }, [groupFilter.filtered]);
+  }, [groupFilter.filtered, dateOf, groupDays]);
+
+  // Per-category current-vs-previous-month series for the Line/Area views
+  // of the distribution cards (classification, fileless, mitigation,
+  // users, severity, site, group).
+  const classRange = useMemo(() => rangeComparison(classFilter.filtered, {
+    keyOf: (t) => t.threatInfo?.classification || 'Unknown',
+    dateOf, days: classDays,
+  }), [classFilter.filtered, dateOf, classDays]);
+
+  const filelessRange = useMemo(() => {
+    const f = (t) => t.threatInfo?.isFileless ? 'Fileless' : 'File-based';
+    return rangeComparison(filelessFilter.filtered, { keyOf: f, dateOf, days: filelessDays });
+  }, [filelessFilter.filtered, dateOf, filelessDays]);
+
+  const mitigRange = useMemo(() => {
+    // Each threat can have several mitigation statuses; use the first.
+    const st = (t) => (t.mitigationStatus?.[0]?.status) || 'Unknown';
+    return rangeComparison(mitigFilter.filtered, { keyOf: st, dateOf, days: mitigDays });
+  }, [mitigFilter.filtered, dateOf, mitigDays]);
+
+  const usersRange = useMemo(() => rangeComparison(usersFilter.filtered, {
+    keyOf: (t) => t.threatInfo?.initiatingUsername || t.threatInfo?.processUser || t.agentDetectionInfo?.agentLastLoggedInUserName || '',
+    dateOf, days: usersDays,
+  }), [usersFilter.filtered, dateOf, usersDays]);
+
+  const severityRange = useMemo(() => rangeComparison(severityFilter.filtered, {
+    keyOf: (t) => t.threatInfo?.confidenceLevel || t.threatInfo?.classification || 'Unknown',
+    dateOf, days: severityDays,
+  }), [severityFilter.filtered, dateOf, severityDays]);
+
+  const siteRange = useMemo(() => rangeComparison(siteFilter.filtered, {
+    keyOf: (t) => t.agentRealtimeInfo?.siteName || t.siteName || t.agentDetectionInfo?.siteName || 'Unknown',
+    dateOf, days: siteDays,
+  }), [siteFilter.filtered, dateOf, siteDays]);
+
+  const groupRange = useMemo(() => rangeComparison(groupFilter.filtered, {
+    keyOf: (t) => t.agentRealtimeInfo?.groupName || t.group_name || t.agentDetectionInfo?.groupName || 'Unknown',
+    dateOf, days: groupDays,
+  }), [groupFilter.filtered, dateOf, groupDays]);
 
   if (loading) {
     return (
@@ -650,6 +712,7 @@ export default function Threats() {
           height={260}
           controls={<>
             <TrendViewDropdown value={trendView} onChange={setTrendView} />
+            <CompareRangeSelector value={trendDays} onChange={setTrendDays} />
             <DateFilter from={trendFilter.from} to={trendFilter.to} onFromChange={trendFilter.setFrom} onToChange={trendFilter.setTo} onClear={trendFilter.clear} />
           </>}>
           {trendView === 'line' || trendView === 'area' ? (
@@ -745,11 +808,13 @@ export default function Threats() {
         <ChartCard title="Classification" height={280}
           controls={<>
             <ChartViewDropdown value={classView} onChange={setClassView} compact />
+            <CompareRangeSelector value={classDays} onChange={setClassDays} />
             <DateFilter from={classFilter.from} to={classFilter.to} onFromChange={classFilter.setFrom} onToChange={classFilter.setTo} onClear={classFilter.clear} />
           </>}>
           <MultiViewChart
             data={classificationData}
             viewType={classView}
+            monthlyData={(classView === 'line' || classView === 'area' || classView === 'comparison') ? classRange : undefined}
             onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'classification', value: data.name, title: `${data.name} Threats` } })}
           />
         </ChartCard>
@@ -757,11 +822,13 @@ export default function Threats() {
         <ChartCard title="Fileless vs File-based" height={280}
           controls={<>
             <ChartViewDropdown value={filelessView} onChange={setFilelessView} compact />
+            <CompareRangeSelector value={filelessDays} onChange={setFilelessDays} />
             <DateFilter from={filelessFilter.from} to={filelessFilter.to} onFromChange={filelessFilter.setFrom} onToChange={filelessFilter.setTo} onClear={filelessFilter.clear} />
           </>}>
           <MultiViewChart
             data={filelessData}
             viewType={filelessView}
+            monthlyData={(filelessView === 'line' || filelessView === 'area' || filelessView === 'comparison') ? filelessRange : undefined}
             onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: data.name === 'Fileless' ? 'fileless' : 'fileless_type', value: data.name === 'Fileless' ? 'true' : 'false', title: `${data.name} Threats` } })}
           />
         </ChartCard>
@@ -769,11 +836,13 @@ export default function Threats() {
         <ChartCard title="Mitigation Outcomes" height={280}
           controls={<>
             <ChartViewDropdown value={mitigView} onChange={setMitigView} compact />
+            <CompareRangeSelector value={mitigDays} onChange={setMitigDays} />
             <DateFilter from={mitigFilter.from} to={mitigFilter.to} onFromChange={mitigFilter.setFrom} onToChange={mitigFilter.setTo} onClear={mitigFilter.clear} />
           </>}>
           <MultiViewChart
             data={mitigationRateData}
             viewType={mitigView}
+            monthlyData={(mitigView === 'line' || mitigView === 'area' || mitigView === 'comparison') ? mitigRange : undefined}
             emptyLabel="No mitigation data"
             onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mitigationStatusArray', value: data.name, title: `Threats with ${data.name} status` } })}
           />
@@ -786,11 +855,13 @@ export default function Threats() {
         <ChartCard title="Top Users by Threat Count" height={280}
           controls={<>
             <ChartViewDropdown value={usersView} onChange={setUsersView} />
+            <CompareRangeSelector value={usersDays} onChange={setUsersDays} />
             <DateFilter from={usersFilter.from} to={usersFilter.to} onFromChange={usersFilter.setFrom} onToChange={usersFilter.setTo} onClear={usersFilter.clear} />
           </>}>
           <MultiViewChart
             data={topUsersData}
             viewType={usersView}
+            monthlyData={(usersView === 'line' || usersView === 'area' || usersView === 'comparison') ? usersRange : undefined}
             barColor="#f59e0b"
             emptyLabel="No user data"
             onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'processUser', value: data.name, title: `Threats by user ${data.name}` } })}
@@ -800,11 +871,13 @@ export default function Threats() {
         <ChartCard title="Severity / Confidence Distribution" height={280}
           controls={<>
             <ChartViewDropdown value={severityView} onChange={setSeverityView} />
+            <CompareRangeSelector value={severityDays} onChange={setSeverityDays} />
             <DateFilter from={severityFilter.from} to={severityFilter.to} onFromChange={severityFilter.setFrom} onToChange={severityFilter.setTo} onClear={severityFilter.clear} />
           </>}>
           <MultiViewChart
             data={severityData}
             viewType={severityView}
+            monthlyData={(severityView === 'line' || severityView === 'area' || severityView === 'comparison') ? severityRange : undefined}
             onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'confidenceLevel', value: data.name, title: `Threats with ${data.name} confidence` } })}
           />
         </ChartCard>
@@ -815,11 +888,13 @@ export default function Threats() {
         <ChartCard title="Threats by Site" height={280}
           controls={<>
             <ChartViewDropdown value={siteView} onChange={setSiteView} />
+            <CompareRangeSelector value={siteDays} onChange={setSiteDays} />
             <DateFilter from={siteFilter.from} to={siteFilter.to} onFromChange={siteFilter.setFrom} onToChange={siteFilter.setTo} onClear={siteFilter.clear} />
           </>}>
           <MultiViewChart
             data={bySiteData}
             viewType={siteView}
+            monthlyData={(siteView === 'line' || siteView === 'area' || siteView === 'comparison') ? siteRange : undefined}
             barColor="#10b981"
             emptyLabel="No site data"
             onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'site', value: data.name, title: `Threats in site ${data.name}` } })}
@@ -829,11 +904,13 @@ export default function Threats() {
         <ChartCard title="Threats by Group" height={280}
           controls={<>
             <ChartViewDropdown value={groupView} onChange={setGroupView} />
+            <CompareRangeSelector value={groupDays} onChange={setGroupDays} />
             <DateFilter from={groupFilter.from} to={groupFilter.to} onFromChange={groupFilter.setFrom} onToChange={groupFilter.setTo} onClear={groupFilter.clear} />
           </>}>
           <MultiViewChart
             data={byGroupData}
             viewType={groupView}
+            monthlyData={(groupView === 'line' || groupView === 'area' || groupView === 'comparison') ? groupRange : undefined}
             barColor="#ec4899"
             emptyLabel="No group data"
             onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'group', value: data.name, title: `Threats in group ${data.name}` } })}

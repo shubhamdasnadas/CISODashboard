@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../api.js';
 import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 import {
-  MultiViewChart, ChartViewDropdown, useViewState,
+  MultiViewChart, ChartViewDropdown, useViewState, rangeComparison, CompareRangeSelector, withinRange,
 } from './widgetViews.jsx';
 
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
@@ -18,6 +18,7 @@ function parseDate(v) {
   const d = new Date(v);
   return isNaN(d.getTime()) ? null : d;
 }
+
 
 function StatCard({ title, value, color, onClick }) {
   const cls = {
@@ -77,6 +78,14 @@ export default function S1Cve() {
   const [impactView, setImpactView]     = useViewState('cveImpact', 'column');
   const [vendorView, setVendorView]     = useViewState('cveVendor', 'bar');
 
+  // Rolling comparison window (days) for the Line/Area/Comparison views.
+  const [severityDays, setSeverityDays] = useState(30);
+  const [scoreDays, setScoreDays]       = useState(30);
+  const [riskyDays, setRiskyDays]       = useState(30);
+  const [agingDays, setAgingDays]       = useState(30);
+  const [impactDays, setImpactDays]     = useState(30);
+  const [vendorDays, setVendorDays]     = useState(30);
+
   useEffect(() => {
     api.get('/sentinelone/db/application-cve')
       .then((r) => {
@@ -115,6 +124,49 @@ export default function S1Cve() {
       return true;
     });
   }, [apps, dateFrom, dateTo, hasDateFilter]);
+
+  const dateOfCve = (r) => parseDate(r.detectionDate);
+
+  // Per-card day-window slices so the day selector filters the base chart
+  // data (not just the comparison series) for every comparison-capable card.
+  const cveByWindow = useMemo(() => ({
+    severity: withinRange(filteredApps, dateOfCve, severityDays),
+    score: withinRange(filteredApps, dateOfCve, scoreDays),
+    risky: withinRange(filteredApps, dateOfCve, riskyDays),
+    aging: withinRange(filteredApps, dateOfCve, agingDays),
+    impact: withinRange(filteredApps, dateOfCve, impactDays),
+    vendor: withinRange(filteredApps, dateOfCve, vendorDays),
+  }), [filteredApps, severityDays, scoreDays, riskyDays, agingDays, impactDays, vendorDays]);
+
+  // Build a per-application aggregate (same shape as `dashboardData`'s appMap)
+  // from a raw slice of CVE rows.
+  const aggregateApps = (rows) => {
+    const appMap = {};
+    rows.forEach((r) => {
+      const key = r.applicationName || r.application || 'Unknown';
+      if (!appMap[key]) appMap[key] = {
+        name: key, vendor: r.applicationVendor || '',
+        cves: new Set(), endpoints: new Set(), severities: [], scores: [],
+        daysDetected: r.daysDetected || 0,
+      };
+      const a = appMap[key];
+      if (r.cveId) a.cves.add(r.cveId);
+      if (r.endpointId || r.endpointName) a.endpoints.add(r.endpointId || r.endpointName);
+      if (r.severity) a.severities.push((r.severity || '').toUpperCase());
+      const s = parseFloat(r.baseScore) || 0;
+      if (!isNaN(s)) a.scores.push(s);
+      a.daysDetected = Math.max(a.daysDetected, r.daysDetected || 0);
+    });
+    const SEVER_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN'];
+    return Object.values(appMap).map((a) => ({
+      name: a.name, vendor: a.vendor,
+      cveCount: a.cves.size,
+      endpointCount: a.endpoints.size,
+      highestSeverity: SEVER_ORDER.find((s) => a.severities.includes(s)) || 'UNKNOWN',
+      highestNvdBaseScore: a.scores.length ? Math.max(...a.scores) : 0,
+      daysDetected: a.daysDetected,
+    }));
+  };
 
   const dashboardData = useMemo(() => {
     // Raw records: one row per CVE per endpoint
@@ -167,7 +219,7 @@ export default function S1Cve() {
 
       
     const severityMap = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 };
-    apps.forEach((r) => {
+    cveByWindow.severity.forEach((r) => {
       const s = (r.severity || 'UNKNOWN').toUpperCase();
       if (s in severityMap) severityMap[s]++; else severityMap.UNKNOWN++;
     });
@@ -175,13 +227,14 @@ export default function S1Cve() {
       .filter(([, v]) => v > 0)
       .map(([name, value]) => ({ name, value, fill: COLORS[name] }));
 
-    const topRiskyApps = [...appList]
+    const severityAppList = aggregateApps(cveByWindow.severity);
+    const topRiskyApps = [...severityAppList]
       .sort((a, b) => b.cveCount - a.cveCount)
       .slice(0, 10)
       .map((a) => ({ name: shortName(a.name), fullName: a.name, cves: a.cveCount, score: a.highestNvdBaseScore }));
 
     const agingBuckets = { '0-30': 0, '31-90': 0, '91-180': 0, '180+': 0 };
-    apps.forEach((r) => {
+    cveByWindow.aging.forEach((r) => {
       const d = parseInt(r.daysDetected, 10) || 0;
       if (d <= 30)  agingBuckets['0-30']++;
       else if (d <= 90)  agingBuckets['31-90']++;
@@ -190,7 +243,8 @@ export default function S1Cve() {
     });
     const cveAging = Object.entries(agingBuckets).map(([name, count]) => ({ name, count }));
 
-    const endpointImpact = [...appList]
+    const impactAppList = aggregateApps(cveByWindow.impact);
+    const endpointImpact = [...impactAppList]
       .sort((a, b) => b.endpointCount - a.endpointCount)
       .slice(0, 10)
       .map((a) => ({ name: shortName(a.name), fullName: a.name, endpoints: a.endpointCount }));
@@ -201,7 +255,7 @@ export default function S1Cve() {
       { name: 'High (7-8.9)', fill: '#ef4444', count: 0 },
       { name: 'Crit (9-10)',  fill: '#a855f7', count: 0 },
     ];
-    apps.forEach((r) => {
+    cveByWindow.score.forEach((r) => {
       const s = sc(r);
       if (s < 4)      scoreRangeBuckets[0].count++;
       else if (s < 7) scoreRangeBuckets[1].count++;
@@ -211,7 +265,7 @@ export default function S1Cve() {
     const scoreRange = scoreRangeBuckets.filter((b) => b.count > 0).map((b) => ({ name: b.name, value: b.count, fill: b.fill }));
 
     const vendorCounts = {};
-    apps.forEach((r) => {
+    cveByWindow.vendor.forEach((r) => {
       const v = r.applicationVendor || '';
       if (v) vendorCounts[v] = (vendorCounts[v] || 0) + 1;
     });
@@ -248,7 +302,32 @@ export default function S1Cve() {
       vendorPieData,
       agingPieData,
     };
-  }, [filteredApps]);
+  }, [filteredApps, cveByWindow]);
+
+  // Current-vs-previous-month series per distribution card, so Line/Area
+  // views can show the two months in different colours on the same graph.
+  const raw = filteredApps; // one row per CVE record
+  const rangeBucket = (s) => s < 4 ? 'Low (0-3.9)' : s < 7 ? 'Med (4-6.9)' : s < 9 ? 'High (7-8.9)' : 'Crit (9-10)';
+  const agingBucket = (d) => d <= 30 ? '0-30' : d <= 90 ? '31-90' : d <= 180 ? '91-180' : '180+';
+
+  const severityRange = useMemo(() => rangeComparison(raw, {
+    keyOf: (r) => (r.severity || 'UNKNOWN').toUpperCase(), dateOf: (r) => parseDate(r.detectionDate), days: severityDays,
+  }), [raw, severityDays]);
+  const scoreBucketRange = useMemo(() => rangeComparison(raw, {
+    keyOf: (r) => rangeBucket(parseFloat(r.baseScore) || 0), dateOf: (r) => parseDate(r.detectionDate), days: scoreDays,
+  }), [raw, scoreDays]);
+  const riskyRange = useMemo(() => rangeComparison(raw, {
+    keyOf: (r) => r.applicationName || r.application || 'Unknown', dateOf: (r) => parseDate(r.detectionDate), days: riskyDays,
+  }), [raw, riskyDays]);
+  const agingRange = useMemo(() => rangeComparison(raw, {
+    keyOf: (r) => agingBucket(parseInt(r.daysDetected, 10) || 0), dateOf: (r) => parseDate(r.detectionDate), days: agingDays,
+  }), [raw, agingDays]);
+  const impactRange = useMemo(() => rangeComparison(raw, {
+    keyOf: (r) => r.applicationName || r.application || 'Unknown', dateOf: (r) => parseDate(r.detectionDate), days: impactDays,
+  }), [raw, impactDays]);
+  const vendorRange = useMemo(() => rangeComparison(raw, {
+    keyOf: (r) => r.applicationVendor || '', dateOf: (r) => parseDate(r.detectionDate), days: vendorDays,
+  }), [raw, vendorDays]);
 
   if (loading) {
     return (
@@ -336,11 +415,12 @@ export default function S1Cve() {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
 
         {/* Severity Distribution */}
-        <ChartCard title="Severity Distribution" controls={<ChartViewDropdown value={severityView} onChange={setSeverityView} />}>
+        <ChartCard title="Severity Distribution" controls={<><ChartViewDropdown value={severityView} onChange={setSeverityView} /><CompareRangeSelector value={severityDays} onChange={setSeverityDays} /></>}>
           <div style={{ height: 280 }}>
             <MultiViewChart
               data={severityPieData}
               viewType={severityView}
+              monthlyData={(severityView === 'line' || severityView === 'area' || severityView === 'comparison') ? severityRange : undefined}
               emptyLabel="No severity data"
               onItemClick={(data) => goToDetail({ dataset: 'cve', filterId: 'severity', value: data.name, title: `${data.name} Severity CVEs` })}
             />
@@ -348,11 +428,12 @@ export default function S1Cve() {
         </ChartCard>
 
         {/* Base Score Range */}
-        <ChartCard title="Base Score Range" controls={<ChartViewDropdown value={scoreView} onChange={setScoreView} />}>
+        <ChartCard title="Base Score Range" controls={<><ChartViewDropdown value={scoreView} onChange={setScoreView} /><CompareRangeSelector value={scoreDays} onChange={setScoreDays} /></>}>
           <div style={{ height: 280 }}>
             <MultiViewChart
               data={scoreRangePieData}
               viewType={scoreView}
+              monthlyData={(scoreView === 'line' || scoreView === 'area' || scoreView === 'comparison') ? scoreBucketRange : undefined}
               emptyLabel="No score data"
               onItemClick={(data) => goToDetail({ dataset: 'cve', filterId: 'scoreRange', value: data.name, title: `CVEs in ${data.name} score range` })}
             />
@@ -360,11 +441,12 @@ export default function S1Cve() {
         </ChartCard>
 
         {/* Top 10 Risky Applications */}
-        <ChartCard title="Top 10 Risky Applications" controls={<ChartViewDropdown value={riskyView} onChange={setRiskyView} />}>
+        <ChartCard title="Top 10 Risky Applications" controls={<><ChartViewDropdown value={riskyView} onChange={setRiskyView} /><CompareRangeSelector value={riskyDays} onChange={setRiskyDays} /></>}>
           <div style={{ height: 300 }}>
             <MultiViewChart
               data={topRiskyApps.map((a) => ({ name: a.name, fullName: a.fullName, value: a.cves, fill: '#ef4444' }))}
               viewType={riskyView}
+              monthlyData={(riskyView === 'line' || riskyView === 'area' || riskyView === 'comparison') ? riskyRange : undefined}
               barColor="#ef4444"
               emptyLabel="No application data"
               onItemClick={(data) => goToDetail({ dataset: 'cve', filterId: 'topRiskyApp', value: data.fullName || data.name, title: `CVEs for ${data.fullName || data.name}` })}
@@ -373,11 +455,12 @@ export default function S1Cve() {
         </ChartCard>
 
         {/* CVE Aging */}
-        <ChartCard title="CVE Aging (Days Detected)" controls={<ChartViewDropdown value={agingView} onChange={setAgingView} />}>
+        <ChartCard title="CVE Aging (Days Detected)" controls={<><ChartViewDropdown value={agingView} onChange={setAgingView} /><CompareRangeSelector value={agingDays} onChange={setAgingDays} /></>}>
           <div style={{ height: 300 }}>
             <MultiViewChart
               data={cveAging.map((a, i) => ({ name: a.name, value: a.count, fill: CHART_COLORS[i % CHART_COLORS.length] }))}
               viewType={agingView}
+              monthlyData={(agingView === 'line' || agingView === 'area' || agingView === 'comparison') ? agingRange : undefined}
               barColor="#38bdf8"
               emptyLabel="No aging data"
               onItemClick={(data) => goToDetail({ dataset: 'cve', filterId: 'cveAgingBucket', value: data.name, title: `CVEs in ${data.name} days aging bucket` })}
@@ -386,11 +469,12 @@ export default function S1Cve() {
         </ChartCard>
 
         {/* Endpoint Impact */}
-        <ChartCard title="Endpoint Impact (Top 10)" controls={<ChartViewDropdown value={impactView} onChange={setImpactView} />}>
+        <ChartCard title="Endpoint Impact (Top 10)" controls={<><ChartViewDropdown value={impactView} onChange={setImpactView} /><CompareRangeSelector value={impactDays} onChange={setImpactDays} /></>}>
           <div style={{ height: 300 }}>
             <MultiViewChart
               data={endpointImpact.map((a) => ({ name: a.name, fullName: a.fullName, value: a.endpoints, fill: '#22c55e' }))}
               viewType={impactView}
+              monthlyData={(impactView === 'line' || impactView === 'area' || impactView === 'comparison') ? impactRange : undefined}
               barColor="#22c55e"
               emptyLabel="No endpoint data"
               onItemClick={(data) => goToDetail({ dataset: 'cve', filterId: 'endpointImpact', value: data.fullName || data.name, title: `CVEs for ${data.fullName || data.name}` })}
@@ -399,11 +483,12 @@ export default function S1Cve() {
         </ChartCard>
 
         {/* Vendor Risk */}
-        <ChartCard title="Vendor Risk (CVEs by Vendor)" controls={<ChartViewDropdown value={vendorView} onChange={setVendorView} />}>
+        <ChartCard title="Vendor Risk (CVEs by Vendor)" controls={<><ChartViewDropdown value={vendorView} onChange={setVendorView} /><CompareRangeSelector value={vendorDays} onChange={setVendorDays} /></>}>
           <div style={{ height: 300 }}>
             <MultiViewChart
               data={vendorRisk.map((v) => ({ name: v.name, fullName: v.fullName, value: v.cves, fill: v.fill }))}
               viewType={vendorView}
+              monthlyData={(vendorView === 'line' || vendorView === 'area' || vendorView === 'comparison') ? vendorRange : undefined}
               barColor="#f97316"
               emptyLabel="No vendor data"
               onItemClick={(data) => goToDetail({ dataset: 'cve', filterId: 'CVEs', value: data.fullName || data.name, title: `CVEs for vendor ${data.fullName || data.name}` })}

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 import api from '../../api.js';
 import {
-  MultiViewChart, ChartViewDropdown, useViewState,
+  MultiViewChart, ChartViewDropdown, useViewState, rangeComparison, CompareRangeSelector, withinRange,
 } from './widgetViews.jsx';
 
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
@@ -133,6 +133,15 @@ export default function S1Agent() {
   const [netView, setNetView] = useViewState('agentNetwork', 'column');
   const [scanView, setScanView] = useViewState('agentScan', 'column');
 
+  // Rolling comparison window (days) for the Line/Area/Comparison views.
+  const [osDays, setOsDays] = useState(30);
+  const [activeDays, setActiveDays] = useState(30);
+  const [fwDays, setFwDays] = useState(30);
+  const [versionDays, setVersionDays] = useState(30);
+  const [siteDays, setSiteDays] = useState(30);
+  const [netDays, setNetDays] = useState(30);
+  const [scanDays, setScanDays] = useState(30);
+
   useEffect(() => {
     api.get('/sentinelone/db/agents')
       .then((r) => setAgents(r.data?.agents || r.data?.data || []))
@@ -257,20 +266,21 @@ export default function S1Agent() {
     , [riskyFilter.filtered]);
 
   // Pie chart data computations
+  const dateOfAgent = (a) => parseDate(a.lastActiveDate);
   const osDistribution = useMemo(() => {
     const map = {};
-    filteredAgents.forEach((a) => {
+    withinRange(filteredAgents, dateOfAgent, osDays).forEach((a) => {
       const os = a.osName || 'Unknown';
       map[os] = (map[os] || 0) + 1;
     });
     return Object.entries(map)
       .sort((a, b) => b[1] - a[1])
       .map(([name, value], i) => ({ name, value, fill: CHART_COLORS[i % CHART_COLORS.length] }));
-  }, [filteredAgents]);
+  }, [filteredAgents, osDays]);
 
   const siteDistribution = useMemo(() => {
     const map = {};
-    filteredAgents.forEach((a) => {
+    withinRange(filteredAgents, dateOfAgent, siteDays).forEach((a) => {
       const site = a.siteName || 'Unknown';
       map[site] = (map[site] || 0) + 1;
     });
@@ -278,56 +288,84 @@ export default function S1Agent() {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 8)
       .map(([name, value], i) => ({ name, value, fill: CHART_COLORS[i % CHART_COLORS.length] }));
-  }, [filteredAgents]);
+  }, [filteredAgents, siteDays]);
 
   const activeStatusDistribution = useMemo(() => {
-    const active = filteredAgents.filter((a) => a.isActive).length;
-    const inactive = filteredAgents.length - active;
+    const rows = withinRange(filteredAgents, dateOfAgent, activeDays);
+    const active = rows.filter((a) => a.isActive).length;
+    const inactive = rows.length - active;
     return [
       { name: 'Active', value: active, fill: '#10b981' },
       { name: 'Inactive', value: inactive, fill: '#ef4444' },
     ].filter((d) => d.value > 0);
-  }, [filteredAgents]);
+  }, [filteredAgents, activeDays]);
 
   const firewallStatusDistribution = useMemo(() => {
-    const enabled = filteredAgents.filter((a) => a.firewallEnabled).length;
-    const disabled = filteredAgents.length - enabled;
+    const rows = withinRange(filteredAgents, dateOfAgent, fwDays);
+    const enabled = rows.filter((a) => a.firewallEnabled).length;
+    const disabled = rows.length - enabled;
     return [
       { name: 'Enabled', value: enabled, fill: '#3b82f6' },
       { name: 'Disabled', value: disabled, fill: '#f59e0b' },
     ].filter((d) => d.value > 0);
-  }, [filteredAgents]);
+  }, [filteredAgents, fwDays]);
 
   const agentVersionStatus = useMemo(() => {
-    const upToDate = filteredAgents.filter((a) => a.isUpToDate).length;
-    const outdated = filteredAgents.length - upToDate;
+    const rows = withinRange(filteredAgents, dateOfAgent, versionDays);
+    const upToDate = rows.filter((a) => a.isUpToDate).length;
+    const outdated = rows.length - upToDate;
     return [
       { name: 'Up to Date', value: upToDate, fill: '#10b981' },
       { name: 'Outdated', value: outdated, fill: '#ef4444' },
     ].filter((d) => d.value > 0);
-  }, [filteredAgents]);
+  }, [filteredAgents, versionDays]);
 
   const networkStatusDistribution = useMemo(() => {
     const map = {};
-    filteredAgents.forEach((a) => {
+    withinRange(filteredAgents, dateOfAgent, netDays).forEach((a) => {
       const s = a.networkStatus || 'Unknown';
       map[s] = (map[s] || 0) + 1;
     });
     return Object.entries(map)
       .sort((a, b) => b[1] - a[1])
       .map(([name, value], i) => ({ name, value, fill: CHART_COLORS[i % CHART_COLORS.length] }));
-  }, [filteredAgents]);
+  }, [filteredAgents, netDays]);
 
   const scanStatusDistribution = useMemo(() => {
     const map = {};
-    filteredAgents.forEach((a) => {
+    withinRange(filteredAgents, dateOfAgent, scanDays).forEach((a) => {
       const s = a.scanStatus || 'Unknown';
       map[s] = (map[s] || 0) + 1;
     });
     return Object.entries(map)
       .sort((a, b) => b[1] - a[1])
       .map(([name, value], i) => ({ name, value, fill: CHART_COLORS[i % CHART_COLORS.length] }));
-  }, [filteredAgents]);
+  }, [filteredAgents, scanDays]);
+
+  // Current-vs-previous-month series per distribution card, so Line/Area
+  // views can show the two months in different colours on the same graph.
+  // The reference month is the agent's last-active month.
+  const osRange = useMemo(() => rangeComparison(filteredAgents, {
+    keyOf: (a) => a.osName || 'Unknown', dateOf: (a) => parseDate(a.lastActiveDate), days: osDays,
+  }), [filteredAgents, osDays]);
+  const activeRange = useMemo(() => rangeComparison(filteredAgents, {
+    keyOf: (a) => a.isActive ? 'Active' : 'Inactive', dateOf: (a) => parseDate(a.lastActiveDate), days: activeDays,
+  }), [filteredAgents, activeDays]);
+  const fwRange = useMemo(() => rangeComparison(filteredAgents, {
+    keyOf: (a) => a.firewallEnabled ? 'Enabled' : 'Disabled', dateOf: (a) => parseDate(a.lastActiveDate), days: fwDays,
+  }), [filteredAgents, fwDays]);
+  const versionRange = useMemo(() => rangeComparison(filteredAgents, {
+    keyOf: (a) => a.isUpToDate ? 'Up to Date' : 'Outdated', dateOf: (a) => parseDate(a.lastActiveDate), days: versionDays,
+  }), [filteredAgents, versionDays]);
+  const siteRange = useMemo(() => rangeComparison(filteredAgents, {
+    keyOf: (a) => a.siteName || 'Unknown', dateOf: (a) => parseDate(a.lastActiveDate), days: siteDays,
+  }), [filteredAgents, siteDays]);
+  const netRange = useMemo(() => rangeComparison(filteredAgents, {
+    keyOf: (a) => a.networkStatus || 'unknown', dateOf: (a) => parseDate(a.lastActiveDate), days: netDays,
+  }), [filteredAgents, netDays]);
+  const scanRange = useMemo(() => rangeComparison(filteredAgents, {
+    keyOf: (a) => a.scanStatus || 'Unknown', dateOf: (a) => parseDate(a.lastActiveDate), days: scanDays,
+  }), [filteredAgents, scanDays]);
 
   if (loading) {
     return (
@@ -403,33 +441,36 @@ export default function S1Agent() {
       {/* Pie Chart Overview */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <SectionCard title="OS Distribution" count={osDistribution.length}
-          controls={<ChartViewDropdown value={osView} onChange={setOsView} />}>
+          controls={<><ChartViewDropdown value={osView} onChange={setOsView} /><CompareRangeSelector value={osDays} onChange={setOsDays} /></>}>
           <div style={{ height: 280 }}>
             <MultiViewChart
               data={osDistribution}
               viewType={osView}
+              monthlyData={(osView === 'line' || osView === 'area' || osView === 'comparison') ? osRange : undefined}
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'osName', value: data.name, title: `Agents with OS: ${data.name}` } })}
             />
           </div>
         </SectionCard>
 
         <SectionCard title="Active Status" count={activeStatusDistribution.length}
-          controls={<ChartViewDropdown value={activeView} onChange={setActiveView} />}>
+          controls={<><ChartViewDropdown value={activeView} onChange={setActiveView} /><CompareRangeSelector value={activeDays} onChange={setActiveDays} /></>}>
           <div style={{ height: 280 }}>
             <MultiViewChart
               data={activeStatusDistribution}
               viewType={activeView}
+              monthlyData={(activeView === 'line' || activeView === 'area' || activeView === 'comparison') ? activeRange : undefined}
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'isActive', value: data.name === 'Active' ? 'true' : 'false', title: `${data.name} Agents` } })}
             />
           </div>
         </SectionCard>
 
         <SectionCard title="Firewall Status" count={firewallStatusDistribution.length}
-          controls={<ChartViewDropdown value={fwView} onChange={setFwView} />}>
+          controls={<><ChartViewDropdown value={fwView} onChange={setFwView} /><CompareRangeSelector value={fwDays} onChange={setFwDays} /></>}>
           <div style={{ height: 280 }}>
             <MultiViewChart
               data={firewallStatusDistribution}
               viewType={fwView}
+              monthlyData={(fwView === 'line' || fwView === 'area' || fwView === 'comparison') ? fwRange : undefined}
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'firewallEnabled', value: data.name === 'Enabled' ? 'true' : 'false', title: `Firewall ${data.name}` } })}
             />
           </div>
@@ -438,43 +479,47 @@ export default function S1Agent() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
         <SectionCard title="Agent Version" count={agentVersionStatus.length}
-          controls={<ChartViewDropdown value={versionView} onChange={setVersionView} />}>
+          controls={<><ChartViewDropdown value={versionView} onChange={setVersionView} /><CompareRangeSelector value={versionDays} onChange={setVersionDays} /></>}>
           <div style={{ height: 280 }}>
             <MultiViewChart
               data={agentVersionStatus}
               viewType={versionView}
+              monthlyData={(versionView === 'line' || versionView === 'area' || versionView === 'comparison') ? versionRange : undefined}
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'isUpToDate', value: data.name === 'Up to Date' ? 'true' : 'false', title: `${data.name} Agents` } })}
             />
           </div>
         </SectionCard>
         <SectionCard title="Site Distribution" count={siteDistribution.length}
-          controls={<ChartViewDropdown value={siteView} onChange={setSiteView} />}>
+          controls={<><ChartViewDropdown value={siteView} onChange={setSiteView} /><CompareRangeSelector value={siteDays} onChange={setSiteDays} /></>}>
           <div style={{ height: 280 }}>
             <MultiViewChart
               data={siteDistribution}
               viewType={siteView}
+              monthlyData={(siteView === 'line' || siteView === 'area' || siteView === 'comparison') ? siteRange : undefined}
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'agentSite', value: data.name, title: `Agents in Site: ${data.name}` } })}
             />
           </div>
         </SectionCard>
 
         <SectionCard title="Network Status" count={networkStatusDistribution.length}
-          controls={<ChartViewDropdown value={netView} onChange={setNetView} />}>
+          controls={<><ChartViewDropdown value={netView} onChange={setNetView} /><CompareRangeSelector value={netDays} onChange={setNetDays} /></>}>
           <div style={{ height: 280 }}>
             <MultiViewChart
               data={networkStatusDistribution}
               viewType={netView}
+              monthlyData={(netView === 'line' || netView === 'area' || netView === 'comparison') ? netRange : undefined}
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'networkStatus', value: data.name, title: `Network Status: ${data.name}` } })}
             />
           </div>
         </SectionCard>
 
         <SectionCard title="Scan Status" count={scanStatusDistribution.length}
-          controls={<ChartViewDropdown value={scanView} onChange={setScanView} />}>
+          controls={<><ChartViewDropdown value={scanView} onChange={setScanView} /><CompareRangeSelector value={scanDays} onChange={setScanDays} /></>}>
           <div style={{ height: 280 }}>
             <MultiViewChart
               data={scanStatusDistribution}
               viewType={scanView}
+              monthlyData={(scanView === 'line' || scanView === 'area' || scanView === 'comparison') ? scanRange : undefined}
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'scanStatus', value: data.name, title: `Scan Status: ${data.name}` } })}
             />
           </div>

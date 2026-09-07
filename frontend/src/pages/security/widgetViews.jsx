@@ -24,6 +24,148 @@ export function truncateLabel(label, maxLen = 22) {
   return label.length > maxLen ? label.slice(0, maxLen) + '…' : label;
 }
 
+const MONTH_COMPARE_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
+
+// Builds a current-vs-previous-month per-category series for the Line/Area
+// views of distribution charts. `keyOf` maps an item to its category and
+// `monthOf` maps an item to its month key (e.g. '2026-08'). Returns
+// [{ name, current, previous }] aligned by category — set `fill` per row if
+// you want heatmap/pie colours, otherwise the shared palette is applied by
+// the chart's non-line/area branches automatically.
+export function monthlyComparison(rows, { keyOf, monthOf }) {
+  const current = {};
+  const previous = {};
+  const keys = new Set();
+  const ref = new Date();
+  const refY = ref.getFullYear();
+  const refM = ref.getMonth();
+  const prevY = refM === 0 ? refY - 1 : refY;
+  const prevM = refM === 0 ? 11 : refM - 1;
+  const curKey = `${refY}-${String(refM + 1).padStart(2, '0')}`;
+  const prevKey = `${prevY}-${String(prevM + 1).padStart(2, '0')}`;
+
+  // If the reference (current) month has no data, fall back to the latest
+  // observed month so the comparison never renders flat/empty.
+  let activeCurKey = curKey;
+  let activePrevKey = prevKey;
+  const months = new Set(rows.map((r) => monthOf(r)).filter(Boolean));
+  if (!months.has(curKey) && months.size > 0) {
+    const sorted = [...months].sort();
+    activeCurKey = sorted[sorted.length - 1];
+    const [y, m] = activeCurKey.split('-').map(Number);
+    const py = m === 1 ? y - 1 : y;
+    const pm = m === 1 ? 12 : m - 1;
+    activePrevKey = `${py}-${String(pm).padStart(2, '0')}`;
+  }
+
+  rows.forEach((r) => {
+    const k = keyOf(r);
+    if (!k) return;
+    keys.add(k);
+    const mk = monthOf(r);
+    if (mk === activeCurKey) current[k] = (current[k] || 0) + 1;
+    if (mk === activePrevKey) previous[k] = (previous[k] || 0) + 1;
+  });
+
+  return [...keys].map((name, i) => ({
+    name: truncateLabel(name, 22),
+    current: current[name] || 0,
+    previous: previous[name] || 0,
+    fill: MONTH_COMPARE_COLORS[i % MONTH_COMPARE_COLORS.length],
+  }));
+}
+
+// Builds a current-vs-previous per-category series over a rolling N-day
+// window. `days` is the window length: the "current" bucket is the last
+// `days` days before `refDate` (default now), "previous" is the `days` days
+// immediately before that. `dateOf(r)` returns a Date (or null) per row;
+// `keyOf(r)` maps a row to its category. Rows are bucketed by calendar-day
+// key (never raw ms offset) so DST never shifts a day. If the current window
+// has no dated rows it falls back to the latest observed date as the ref so
+// the comparison never renders all-zero. Returns [{ name, current, previous,
+// fill }] with currentLabel/previousLabel attached for the chart legend.
+export function rangeComparison(rows, { keyOf, dateOf, days = 30, refDate }) {
+  const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const daySetFrom = (start, n) => {
+    const set = new Set();
+    for (let i = 1; i <= n; i++) {
+      const d = new Date(start);
+      d.setDate(d.getDate() + i);
+      set.add(dayKey(d));
+    }
+    return set;
+  };
+
+  let ref = refDate || new Date();
+  let curStart = new Date(ref);
+  curStart.setDate(curStart.getDate() - days);
+  const prevStart = new Date(curStart);
+  prevStart.setDate(prevStart.getDate() - days);
+
+  // Fall back to the latest observed date when the current window is empty.
+  const dates = rows
+    .map((r) => { const d = dateOf(r); return d && !isNaN(d.getTime()) ? d : null; })
+    .filter(Boolean);
+  if (dates.length > 0) {
+    const has = (start) => {
+      const keys = daySetFrom(start, days);
+      return dates.some((d) => keys.has(dayKey(d)));
+    };
+    if (!has(curStart)) {
+      ref = new Date(Math.max(...dates.map((d) => d.getTime())));
+      curStart = new Date(ref);
+      curStart.setDate(curStart.getDate() - days);
+    }
+  }
+
+  const curKeys = daySetFrom(curStart, days);
+  const prevKeys = daySetFrom(new Date(curStart).setDate(curStart.getDate() - days), days);
+
+  const current = {};
+  const previous = {};
+  const keys = new Set();
+  rows.forEach((r) => {
+    const k = keyOf(r);
+    if (!k) return;
+    const d = dateOf(r);
+    if (!d || isNaN(d.getTime())) return;
+    const dk = dayKey(d);
+    keys.add(k);
+    if (curKeys.has(dk)) current[k] = (current[k] || 0) + 1;
+    else if (prevKeys.has(dk)) previous[k] = (previous[k] || 0) + 1;
+  });
+
+  const fmtEnd = (d) => `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}-${d.getFullYear()}`;
+  // `ref` is exclusive of the window, so the last included day is ref - 1 day.
+  const curEnd = new Date(ref);
+  curEnd.setDate(curEnd.getDate() - 1);
+  const out = [...keys].map((name, i) => ({
+    name: truncateLabel(name, 22),
+    current: current[name] || 0,
+    previous: previous[name] || 0,
+    fill: MONTH_COMPARE_COLORS[i % MONTH_COMPARE_COLORS.length],
+  }));
+  out.currentLabel = `Last ${days} days (${fmtEnd(curStart)} – ${fmtEnd(curEnd)})`;
+  out.previousLabel = `${days} days before`;
+  return out;
+}
+
+// Filters rows to those whose `dateOf(row)` falls within the last `days`
+// calendar days (relative to `refDate`, default now). Used to keep each
+// card's base chart data in sync with the day selector — without this, the
+// donut/bar/column views would ignore the selected window and only the
+// comparison series would shift. Returns a new array.
+export function withinRange(rows, dateOf, days = 30, refDate) {
+  const ref = refDate || new Date();
+  const start = new Date(ref);
+  start.setDate(start.getDate() - days);
+  return rows.filter((r) => {
+    const d = dateOf(r);
+    if (!d || isNaN(d.getTime())) return false;
+    return d >= start && d <= ref;
+  });
+}
+
 // Donut chart with its legend split left/right of the ring (rather than
 // below it). Each entry needs { name, value, fill }. onSliceClick receives
 // the clicked entry's data, same as recharts' native Pie onClick.
@@ -88,6 +230,8 @@ export const VIEW_GROUPS = [
       { value: 'waterfall', label: 'Waterfall Chart' },
       { value: 'pareto', label: 'Pareto Chart' },
       { value: 'lollipop', label: 'Lollipop Chart' },
+      { value: 'hbar', label: 'Labeled Bar Chart' },
+      { value: 'stacked-bar', label: 'Grouped Bar Chart' },
     ],
   },
   {
@@ -102,6 +246,7 @@ export const VIEW_GROUPS = [
     options: [
       { value: 'line', label: 'Line Chart' },
       { value: 'area', label: 'Area Chart' },
+      { value: 'comparison', label: 'Comparison Chart' },
     ],
   },
   {
@@ -152,6 +297,53 @@ export function ChartViewDropdown({ value, onChange, groups = VIEW_GROUPS, compa
   );
 }
 
+// Common rolling-window presets offered by CompareRangeSelector.
+export const RANGE_PRESETS = [7, 14, 30, 90];
+
+// Lets the user pick the comparison window for the current-vs-previous views:
+// a preset dropdown (1 week / 14 / 30 / 90 days) plus a "Custom…" option that
+// reveals a small numeric input for arbitrary lengths (e.g. 12 days). Styled
+// to match ChartViewDropdown so it slots into the same card `controls` row.
+export function CompareRangeSelector({ value, onChange, presets = RANGE_PRESETS }) {
+  const [draft, setDraft] = useState(value ? String(value) : '');
+  const isPreset = presets.includes(Number(value));
+  const selectCls = 'rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] text-[11px] pl-2 pr-6 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer';
+  const inputCls = 'rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] text-[11px] px-1.5 py-1 w-14 focus:outline-none focus:ring-2 focus:ring-indigo-400';
+  return (
+    <div className="flex items-center gap-1">
+      <select
+        value={isPreset ? String(value) : 'custom'}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === 'custom') {
+            const n = parseInt(draft, 10);
+            if (n > 0) onChange(n);
+          } else {
+            onChange(Number(v));
+          }
+        }}
+        aria-label="Comparison range"
+        className={selectCls}
+      >
+        {presets.map((d) => <option key={d} value={d}>{d} days</option>)}
+        <option value="custom">Custom…</option>
+      </select>
+      {!isPreset && (
+        <input
+          type="number" min={1} value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            const n = parseInt(e.target.value, 10);
+            if (n > 0) onChange(n);
+          }}
+          className={inputCls}
+          title="Number of days"
+        />
+      )}
+    </div>
+  );
+}
+
 // Persists a widget's selected chart view to localStorage so it survives
 // a page refresh. Falls back gracefully (in-memory only) if storage is
 // unavailable — e.g. private browsing.
@@ -183,7 +375,7 @@ export function useViewState(key, defaultValue) {
 // is selected in VIEW_GROUPS. `onItemClick` always receives an object with
 // `.name` — the same shape callers already navigate with — so switching
 // the view never changes what happens when a data point is clicked.
-export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f6', emptyLabel = 'No data' }) {
+export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f6', emptyLabel = 'No data', monthlyData }) {
   if (!data || data.length === 0) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -231,6 +423,47 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
     );
   }
 
+  if (viewType === 'hbar') {
+    return (
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={coloredData} layout="vertical" margin={{ top: 8, right: 24, left: 8, bottom: 8 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+          <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={110} />
+          <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+          <Tooltip contentStyle={tooltipStyle} />
+          <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={20} name="Count" cursor="pointer"
+            onClick={(d) => onItemClick(d)}>
+            {coloredData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+            <LabelList dataKey="value" position="right" style={{ fontSize: 10, fill: 'var(--foreground)', fontWeight: 600 }} />
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  }
+
+  if (viewType === 'stacked-bar') {
+    return (
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={coloredData} margin={{ top: 10, right: 16, left: 8, bottom: 8 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+          <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={0} angle={-20} textAnchor="end" height={45} />
+          <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+          <Tooltip contentStyle={tooltipStyle} />
+          <Legend wrapperStyle={{ fontSize: 11 }} />
+          {coloredData.map((entry, i) => (
+            <Bar key={i} dataKey="value" stackId="stack" fill={entry.fill} name={entry.name}
+              radius={i === coloredData.length - 1 ? [4, 4, 0, 0] : 0} cursor="pointer"
+              onClick={() => onItemClick(entry)}>
+              {i === coloredData.length - 1 && (
+                <LabelList dataKey="value" position="top" style={{ fontSize: 10, fill: 'var(--muted)' }} />
+              )}
+            </Bar>
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  }
+
   if (viewType === 'stacked') {
     // A single 100%-width bar made of every category stacked as its own
     // segment — click a segment the same way you'd click a slice/bar.
@@ -271,16 +504,31 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
   }
 
   if (viewType === 'line') {
+    // When a monthly (current vs previous) dataset is supplied, plot both
+    // series on the same axis — current in the accent colour, previous in
+    // muted grey.
+    const chartData = monthlyData && monthlyData.length ? monthlyData : coloredData;
+    const isMonthly = viewType === 'line' && monthlyData && monthlyData.length;
     return (
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={coloredData} margin={{ top: 10, right: 16, left: 0, bottom: 8 }}>
+        <LineChart data={chartData} margin={{ top: 10, right: 16, left: 0, bottom: 8 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
           <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={0} angle={-20} textAnchor="end" height={45} />
           <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
           <Tooltip contentStyle={tooltipStyle} />
-          <Line type="monotone" dataKey="value" stroke={barColor} strokeWidth={2}
-            dot={{ r: 4, fill: barColor, cursor: 'pointer' }} activeDot={{ r: 6, cursor: 'pointer' }}
-            name="Count" onClick={(d) => onItemClick(d)} />
+          {isMonthly ? (
+            <>
+              <Legend iconType="plainline" wrapperStyle={{ fontSize: 11 }} />
+              <Line type="monotone" dataKey="current" name={monthlyData?.currentLabel || 'Current'} stroke={barColor} strokeWidth={2.5}
+                dot={{ r: 4, fill: barColor, cursor: 'pointer' }} activeDot={{ r: 6, cursor: 'pointer' }} />
+              <Line type="monotone" dataKey="previous" name={monthlyData?.previousLabel || 'Previous'} stroke="#9ca3af" strokeWidth={2}
+                strokeDasharray="4 3" dot={{ r: 3, fill: '#9ca3af' }} />
+            </>
+          ) : (
+            <Line type="monotone" dataKey="value" stroke={barColor} strokeWidth={2}
+              dot={{ r: 4, fill: barColor, cursor: 'pointer' }} activeDot={{ r: 6, cursor: 'pointer' }}
+              name="Count" onClick={(d) => onItemClick(d)} />
+          )}
         </LineChart>
       </ResponsiveContainer>
     );
@@ -288,23 +536,75 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
 
   if (viewType === 'area') {
     const gradientId = `areaFill-${barColor.replace('#', '')}`;
+    const isMonthly = monthlyData && monthlyData.length;
+    const chartData = isMonthly ? monthlyData : coloredData;
     return (
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={coloredData} margin={{ top: 10, right: 16, left: 0, bottom: 8 }}>
+        <AreaChart data={chartData} margin={{ top: 10, right: 16, left: 0, bottom: 8 }}>
           <defs>
             <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
               <stop offset="5%" stopColor={barColor} stopOpacity={0.5} />
               <stop offset="95%" stopColor={barColor} stopOpacity={0.05} />
+            </linearGradient>
+            <linearGradient id="areaPrevious" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="#9ca3af" stopOpacity={0.4} />
+              <stop offset="95%" stopColor="#9ca3af" stopOpacity={0.05} />
             </linearGradient>
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
           <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={0} angle={-20} textAnchor="end" height={45} />
           <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
           <Tooltip contentStyle={tooltipStyle} />
-          <Area type="monotone" dataKey="value" stroke={barColor} strokeWidth={2} fill={`url(#${gradientId})`}
-            dot={{ r: 3, fill: barColor, cursor: 'pointer' }} activeDot={{ r: 6, cursor: 'pointer' }}
-            name="Count" onClick={(d) => onItemClick(d)} />
+          {isMonthly ? (
+            <>
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Area type="monotone" dataKey="current" name={monthlyData?.currentLabel || 'Current'} stroke={barColor} strokeWidth={2}
+                fill={`url(#${gradientId})`} dot={{ r: 3, fill: barColor, cursor: 'pointer' }} activeDot={{ r: 6, cursor: 'pointer' }} />
+              <Area type="monotone" dataKey="previous" name={monthlyData?.previousLabel || 'Previous'} stroke="#9ca3af" strokeWidth={2}
+                strokeDasharray="4 3" fill="url(#areaPrevious)" dot={{ r: 3, fill: '#9ca3af' }} />
+            </>
+          ) : (
+            <Area type="monotone" dataKey="value" stroke={barColor} strokeWidth={2} fill={`url(#${gradientId})`}
+              dot={{ r: 3, fill: barColor, cursor: 'pointer' }} activeDot={{ r: 6, cursor: 'pointer' }}
+              name="Count" onClick={(d) => onItemClick(d)} />
+          )}
         </AreaChart>
+      </ResponsiveContainer>
+    );
+  }
+
+  if (viewType === 'comparison') {
+    // Current-vs-previous grouped comparison. Honors monthlyData when present
+    // (two grouped bars per category — current accent, previous grey), falling
+    // back to the normal single-series data otherwise.
+    const isMonthly = monthlyData && monthlyData.length;
+    const chartData = isMonthly ? monthlyData : coloredData;
+    return (
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={chartData} margin={{ top: 10, right: 16, left: 8, bottom: 8 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+          <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={0} angle={-20} textAnchor="end" height={45} />
+          <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+          <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'rgba(127,127,127,0.08)' }} />
+          <Legend wrapperStyle={{ fontSize: 11 }} />
+          {isMonthly ? (
+            <>
+              <Bar dataKey="current" name={monthlyData?.currentLabel || 'Current'} fill={barColor} radius={[3, 3, 0, 0]}
+                maxBarSize={28} cursor="pointer">
+                {chartData.map((_, i) => <Cell key={i} fill={barColor} />)}
+              </Bar>
+              <Bar dataKey="previous" name={monthlyData?.previousLabel || 'Previous'} fill="#9ca3af" radius={[3, 3, 0, 0]}
+                maxBarSize={28} cursor="pointer">
+                {chartData.map((_, i) => <Cell key={i} fill="#9ca3af" />)}
+              </Bar>
+            </>
+          ) : (
+            <Bar dataKey="value" fill={barColor} radius={[4, 4, 0, 0]} maxBarSize={36} name="Count"
+              cursor="pointer" onClick={(d) => onItemClick(d)}>
+              {chartData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+            </Bar>
+          )}
+        </BarChart>
       </ResponsiveContainer>
     );
   }
@@ -506,7 +806,8 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
           <XAxis type="number" dataKey="x" name="Item" tick={{ fontSize: 9, fill: 'var(--muted)' }} allowDecimals={false} />
           <YAxis type="number" dataKey="value" name="Count" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-          <Tooltip contentStyle={tooltipStyle} cursor={{ strokeDasharray: '3 3' }} />
+          <Tooltip contentStyle={tooltipStyle} cursor={{ strokeDasharray: '3 3' }}
+            formatter={(val, _key, item) => [val, item?.payload?.name || 'Count']} />
           <Scatter name="Count" cursor="pointer" onClick={(d) => onItemClick(d)}>
             {scatterData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
           </Scatter>
@@ -526,7 +827,8 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
           <XAxis type="number" dataKey="x" name="Item" tick={{ fontSize: 9, fill: 'var(--muted)' }} allowDecimals={false} />
           <YAxis type="number" dataKey="value" name="Count" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
           <ZAxis type="number" dataKey="z" range={[30, 400]} />
-          <Tooltip contentStyle={tooltipStyle} cursor={{ strokeDasharray: '3 3' }} />
+          <Tooltip contentStyle={tooltipStyle} cursor={{ strokeDasharray: '3 3' }}
+            formatter={(val, _key, item) => [val, item?.payload?.name || 'Count']} />
           <Scatter name="Count" cursor="pointer" onClick={(d) => onItemClick(d)}>
             {bubbleData.map((entry, i) => <Cell key={i} fill={entry.fill} fillOpacity={0.7} />)}
           </Scatter>

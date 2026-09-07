@@ -140,6 +140,10 @@ async function fetchDashboardAggregate(orgSlug) {
     pool.query('SELECT * FROM checkpoint_events ORDER BY synced_at DESC'),
     pool.query('SELECT * FROM firewall_widgets ORDER BY created_at ASC'),
   ]);
+
+  // Per-tool current vs previous-month counts (delta drives the badge).
+  const allTools = await buildAllToolsSnapshot(pool);
+
   // NOTE: the per-user dashboard_layout is intentionally excluded here — it is
   // user-specific and fetched live from the DB on the client, not cached
   // org-wide. Everything else (shared widget data) is cached.
@@ -155,8 +159,54 @@ async function fetchDashboardAggregate(orgSlug) {
     },
     harmony: { events: harmonyRows.rows },
     firewall: { widgets: fwWidgetsRows.rows },
+    allTools,
     syncedAt: new Date().toISOString(),
   };
+}
+
+// Same shape as the route's helper — used by the cache fetcher so the
+// dashboard-aggregate snapshot always carries current vs previous month counts.
+async function buildAllToolsSnapshot(pool) {
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+
+  const TOOLS = [
+    { key: 'security',     label: 'EDR',       table: 's1_threats' },
+    { key: 'agent',        label: 'Agents',    table: 's1_agents' },
+    { key: 'checkpoint',   label: 'Email',     table: 'checkpoint_events' },
+    { key: 'nvd',          label: 'NVD',       table: 'nvd' },
+    { key: 'paloalto',     label: 'Firewall',  table: 'firewall_widgets' },
+    { key: 'mdm',          label: 'MDM',       table: 'hexnode_devices' },
+    { key: 'microsoft365', label: 'M365',      table: 'microsoft365' },
+    { key: 'zoho',         label: 'Ticketing', table: 'zohotable' },
+    { key: 'analytics',    label: 'OSINT',     table: 'analytics_events' },
+  ];
+
+  const results = await Promise.all(TOOLS.map(async (t) => {
+    try {
+      const split = await pool.query(
+        `SELECT
+            COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE synced_at >= $1)::int AS current,
+            COUNT(*) FILTER (WHERE synced_at >= $2 AND synced_at < $1)::int AS previous
+         FROM ${t.table}`,
+        [monthStart.toISOString(), prevMonthStart.toISOString()]
+      );
+      const row = split.rows[0] || { total: 0, current: 0, previous: 0 };
+      return { key: t.key, label: t.label, current: row.current, previous: row.previous, total: row.total };
+    } catch {
+      try {
+        const r = await pool.query(`SELECT COUNT(*)::int AS c FROM ${t.table}`);
+        const total = r.rows[0]?.c ?? 0;
+        return { key: t.key, label: t.label, current: total, previous: total, total };
+      } catch {
+        return { key: t.key, label: t.label, current: 0, previous: 0, total: 0 };
+      }
+    }
+  }));
+
+  return { tools: results, monthStart: monthStart.toISOString() };
 }
 
 // News sections — reads the latest stored articles per query term. The news

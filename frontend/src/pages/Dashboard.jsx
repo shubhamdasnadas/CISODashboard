@@ -26,6 +26,7 @@ import SentinelOneWidgetPicker from './dashboard/SentinelOneWidgetPicker.jsx';
 import ZohoTicketMatrix from './zoho/ZohoTicketMatrix.jsx';
 import CacheCard from '../components/CacheCard.jsx';
 import AllCommonmttr from './CyberHygen/AllCommonmttr.jsx';
+import FrameworkScore from './dashboard/FrameworkScore.jsx';
 
 // ── Small UI helpers ────────────────────────────────────────────────────────────
 function Err({ msg }) {
@@ -81,13 +82,13 @@ function DateRangeMini({ from, to, onChange }) {
 // ── Per-widget search filter ───────────────────────────────────────────────────
 // Renders a search icon that expands into an inline input on click. Typing updates
 // `value` (controlled by the parent), so only that widget's rows get filtered.
-function WidgetSearch({ value, onChange, placeholder = 'Filter…' }) {
+function WidgetSearch({ value, onChange, placeholder = 'Filter…', inputWidth = 'w-32' }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
       {open ? (
-        <div className="flex items-center gap-1.5 pl-1.5 border border-[var(--card-border)] rounded-lg bg-[var(--card-bg)] focus-within:ring-1 focus-within:ring-indigo-400">
-          <svg className="w-3 h-3 text-[var(--muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 10a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+        <div className="flex items-center min-w-0 gap-1 pl-1.5 pr-1 border border-[var(--card-border)] rounded-lg bg-[var(--card-bg)] focus-within:ring-1 focus-within:ring-indigo-400">
+          <svg className="w-3 h-3 flex-shrink-0 text-[var(--muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 10a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
           <input
             autoFocus
             type="text"
@@ -95,9 +96,9 @@ function WidgetSearch({ value, onChange, placeholder = 'Filter…' }) {
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Escape') { onChange(''); setOpen(false); } }}
             placeholder={placeholder}
-            className="bg-transparent outline-none text-xs text-[var(--foreground)] placeholder:text-[var(--muted)] w-32"
+            className={`min-w-0 flex-1 bg-transparent outline-none text-xs text-[var(--foreground)] placeholder:text-[var(--muted)] ${inputWidth}`}
           />
-          <button onClick={() => { onChange(''); setOpen(false); }} className="p-1 rounded text-[var(--muted)] hover:text-red-500" title="Clear & close">
+          <button onClick={() => { onChange(''); setOpen(false); }} className="flex-shrink-0 p-1 rounded text-[var(--muted)] hover:text-red-500" title="Clear & close">
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
@@ -138,6 +139,17 @@ function guessDateValue(obj) {
 }
 
 const tooltipStyle = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8 };
+
+const COMPACT_S1_WIDGET_IDS = new Set(['s1-mitigation', 's1-severity', 's1-threats', 's1-agents']);
+const COMPACT_S1_WIDGET_HEIGHT = 22;
+
+function compactLegacyS1WidgetHeights(items) {
+  return items.map((item) => (
+    COMPACT_S1_WIDGET_IDS.has(item.i) && item.h === 33
+      ? { ...item, h: COMPACT_S1_WIDGET_HEIGHT }
+      : item
+  ));
+}
 
 function mapCpEvent(e) {
   return {
@@ -214,7 +226,7 @@ export default function Dashboard() {
   }, []);
 
   // ── Grid layout ──────────────────────────────────────────────────────────────
-  const [boxes, setBoxes] = useState(DEFAULT_BOXES);
+  const [boxes, setBoxes] = useState(() => compactLegacyS1WidgetHeights(DEFAULT_BOXES));
   const [layoutLoaded, setLayoutLoaded] = useState(false);
   const [activeGridBreakpoint, setActiveGridBreakpoint] = useState('lg');
   const [saving, setSaving] = useState(false);
@@ -311,7 +323,7 @@ export default function Dashboard() {
         // Layout
         if (agg.layout) {
           const saved = Array.isArray(agg.layout?.pgboxes) ? agg.layout.pgboxes : [];
-          setBoxes(normalizeSavedBoxes(saved));
+          setBoxes(compactLegacyS1WidgetHeights(normalizeSavedBoxes(saved)));
           const savedOrder = agg.layout?.sectionOrder;
           if (Array.isArray(savedOrder) && savedOrder.length === 3) {
             setSectionOrder(savedOrder);
@@ -367,6 +379,7 @@ export default function Dashboard() {
       });
   }, [currentOrg?.id]);
 
+  
   // Layout is per-user, so it is fetched live (not from the org-wide cache).
   useEffect(() => {
     if (!currentOrg) return;
@@ -375,7 +388,7 @@ export default function Dashboard() {
         const layout = r.data?.layout;
         if (layout) {
           const saved = Array.isArray(layout?.pgboxes) ? layout.pgboxes : [];
-          setBoxes(normalizeSavedBoxes(saved));
+          setBoxes(compactLegacyS1WidgetHeights(normalizeSavedBoxes(saved)));
           const savedOrder = layout?.sectionOrder;
           if (Array.isArray(savedOrder) && savedOrder.length === 3) {
             setSectionOrder(savedOrder); sectionOrderRef.current = savedOrder;
@@ -1220,7 +1233,7 @@ export default function Dashboard() {
                         <span className="text-[9px] font-semibold text-[var(--muted)] uppercase tracking-wider">Date range</span>
                         <div className="flex items-center gap-1.5">
                           <DateRangeMini from={threatsRange.from} to={threatsRange.to} onChange={(v) => setRange('s1-threats', v)} />
-                          <WidgetSearch value={widgetSearch['s1-threats'] || ''} onChange={(v) => setWidgetSearchTerm('s1-threats', v)} placeholder="Search threats…" />
+                          <WidgetSearch value={widgetSearch['s1-threats'] || ''} onChange={(v) => setWidgetSearchTerm('s1-threats', v)} placeholder="Search threats…" inputWidth="w-16" />
                         </div>
                       </div>
                       <div className="flex-1 min-h-0 overflow-auto">
@@ -1291,7 +1304,7 @@ export default function Dashboard() {
                         <span className="text-[9px] font-semibold text-[var(--muted)] uppercase tracking-wider">Date range</span>
                         <div className="flex items-center gap-1.5">
                           <DateRangeMini from={agentsRange.from} to={agentsRange.to} onChange={(v) => setRange('s1-agents', v)} />
-                          <WidgetSearch value={widgetSearch['s1-agents'] || ''} onChange={(v) => setWidgetSearchTerm('s1-agents', v)} placeholder="Search agents…" />
+                          <WidgetSearch value={widgetSearch['s1-agents'] || ''} onChange={(v) => setWidgetSearchTerm('s1-agents', v)} placeholder="Search agents…" inputWidth="w-16" />
                         </div>
                       </div>
                       <div className="flex-1 min-h-0 overflow-auto">
@@ -1411,7 +1424,7 @@ export default function Dashboard() {
                         <span className="text-[9px] font-semibold text-[var(--muted)] uppercase tracking-wider">Date range</span>
                         <div className="flex items-center gap-1.5">
                           <DateRangeMini from={rssRange.from} to={rssRange.to} onChange={(v) => setRange('s1-rss', v)} />
-                          <WidgetSearch value={widgetSearch['s1-rss'] || ''} onChange={(v) => setWidgetSearchTerm('s1-rss', v)} placeholder="Search feed…" />
+                          <WidgetSearch value={widgetSearch['s1-rss'] || ''} onChange={(v) => setWidgetSearchTerm('s1-rss', v)} placeholder="Search feed…" inputWidth="w-16" />
                         </div>
                       </div>
                       <div className="flex-1 min-h-0 overflow-auto">
@@ -1534,20 +1547,39 @@ export default function Dashboard() {
         })}
       </div>
 
-      {/* ── MTTR Summary Card ───────────────────────────────────────────────── */}
-      <div className="mt-10 mb-2 w-1/2">
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center flex-shrink-0 shadow-sm shadow-sky-500/20">
-            <svg className="w-4.5 h-4.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+      {/* ── Framework Score + Health Score (side by side) ───────────────────── */}
+      <div className="mt-10 mb-2 flex flex-col lg:flex-row gap-6">
+        {/* NIST CSF radar: previous-month target vs current score */}
+        <div className="lg:w-1/2">
+          <div className="flex items-center gap-2 mb-4">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-sky-600 flex items-center justify-center flex-shrink-0 shadow-sm shadow-cyan-500/20">
+              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16M4 12h16M4 17h10" /></svg>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold text-cyan-500 uppercase tracking-widest leading-none">Security Framework</p>
+              <h2 className="text-base font-bold text-[var(--foreground)] leading-tight">Target vs Current Score</h2>
+            </div>
           </div>
-          <div>
-            <p className="text-[10px] font-bold text-sky-500 uppercase tracking-widest leading-none">Security Posture</p>
-            <h2 className="text-base font-bold text-[var(--foreground)] leading-tight">Health Score</h2>
+          <div className="card-surface rounded-2xl overflow-hidden">
+            <FrameworkScore threats={s1Data} agents={agentData} cves={appCveData} />
           </div>
         </div>
-        <div className="card-surface rounded-2xl overflow-hidden">
-          <AllCommonmttr />
+        {/* Health Score */}
+        <div className="lg:w-1/2">
+          <div className="flex items-center gap-2 mb-4">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center flex-shrink-0 shadow-sm shadow-sky-500/20">
+              <svg className="w-4.5 h-4.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold text-sky-500 uppercase tracking-widest leading-none">Security Posture</p>
+              <h2 className="text-base font-bold text-[var(--foreground)] leading-tight">Health Score</h2>
+            </div>
+          </div>
+          <div className="card-surface rounded-2xl overflow-hidden">
+            <AllCommonmttr />
+          </div>
         </div>
+
       </div>
 
       {/* ── Zoho Ticket Matrix ──────────────────────────────────────────────── */}
