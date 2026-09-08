@@ -1,12 +1,137 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import AnalyticsLaunchButton from '../components/AnalyticsLaunchButton.jsx';
 import WidgetSkeleton from './dashboard/WidgetSkeleton.jsx';
-import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, AreaChart, Area } from 'recharts';
+import { CompareRangeSelector, ChartViewDropdown, useViewState, withinRange, MultiViewChart } from './security/widgetViews.jsx';
 
 const tooltipStyle = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12 };
 const COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
+const CATEGORY_COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1', '#14b8a6', '#f97316'];
+
+// ── Category Time Series Chart (for multi-line/area views) ─────────────────────
+
+function CategoryTimeSeriesChart({ timeSeriesData, type = 'line', storageKey = 'chart' }) {
+  const { data, categories, colors } = timeSeriesData;
+  if (!data || data.length === 0 || categories.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full min-h-[80px] px-4 text-center">
+        <p className="text-sm text-[var(--muted)]">No data available</p>
+      </div>
+    );
+  }
+  const isArea = type === 'area';
+  const Chart = isArea ? AreaChart : LineChart;
+
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <Chart data={data} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+        <XAxis dataKey="date" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={Math.max(0, Math.floor(data.length / 7))} tickFormatter={(v) => v.slice(5)} />
+        <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+        <Tooltip contentStyle={tooltipStyle} />
+        <Legend wrapperStyle={{ fontSize: 10 }} />
+        {categories.map((cat, i) => {
+          const color = colors[i] || CATEGORY_COLORS[i % CATEGORY_COLORS.length];
+          if (isArea) {
+            const gradientId = `areaGrad-${storageKey}-${i}`;
+            return (
+              <Area
+                key={cat}
+                type="monotone"
+                dataKey={cat}
+                name={cat}
+                stroke={color}
+                strokeWidth={2}
+                fill={`url(#${gradientId})`}
+                dot={{ r: 2, fill: color }}
+                activeDot={{ r: 4, cursor: 'pointer' }}
+              >
+                <defs>
+                  <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={color} stopOpacity={0.4} />
+                    <stop offset="95%" stopColor={color} stopOpacity={0.05} />
+                  </linearGradient>
+                </defs>
+              </Area>
+            );
+          }
+          return (
+            <Line
+              key={cat}
+              type="monotone"
+              dataKey={cat}
+              name={cat}
+              stroke={color}
+              strokeWidth={2}
+              dot={{ r: 2, fill: color }}
+              activeDot={{ r: 4, cursor: 'pointer' }}
+            />
+          );
+        })}
+      </Chart>
+    </ResponsiveContainer>
+  );
+}
+
+// Builds per-category time series data for multi-line/area charts.
+function categoryTimeSeries(items, { keyOf, dateOf, days = 30, refDate }) {
+  const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  let ref = refDate || new Date();
+  let start = new Date(ref);
+  start.setDate(start.getDate() - days);
+
+  // Fall back to latest observed date if current window is empty
+  const dates = items
+    .map((item) => { const d = dateOf(item); return d && !isNaN(d.getTime()) ? d : null; })
+    .filter(Boolean);
+  if (dates.length > 0) {
+    const latest = new Date(Math.max(...dates.map((d) => d.getTime())));
+    const hasInWindow = dates.some((d) => d >= start && d <= ref);
+    if (!hasInWindow) {
+      ref = new Date(latest);
+      ref.setDate(ref.getDate() + 1);
+      start = new Date(ref);
+      start.setDate(start.getDate() - days);
+    }
+  }
+
+  // Collect all categories and build per-day buckets
+  const categories = new Set();
+  const dayBuckets = {};
+
+  items.forEach((item) => {
+    const k = keyOf(item);
+    if (!k) return;
+    const d = dateOf(item);
+    if (!d || isNaN(d.getTime())) return;
+    if (d < start || d > ref) return;
+
+    categories.add(k);
+    const dk = dayKey(d);
+    if (!dayBuckets[dk]) dayBuckets[dk] = {};
+    dayBuckets[dk][k] = (dayBuckets[dk][k] || 0) + 1;
+  });
+
+  const catList = [...categories];
+  const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1', '#14b8a6', '#f97316'];
+
+  // Build time series rows (one per day)
+  const data = [];
+  const cur = new Date(start);
+  cur.setDate(cur.getDate() + 1);
+  while (cur <= ref) {
+    const dk = dayKey(cur);
+    const row = { date: dk };
+    catList.forEach((cat) => { row[cat] = (dayBuckets[dk]?.[cat]) || 0; });
+    data.push(row);
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  return { data, categories: catList, colors: colors.slice(0, catList.length) };
+}
 
 const fmt = (d) => d ? new Date(d).toLocaleString() : '—';
 
@@ -18,12 +143,20 @@ function Empty({ msg }) {
   );
 }
 
-function CardShell({ title, description, children, className = '' }) {
+function CardShell({ title, description, children, className = '', days, onDaysChange, view, onViewChange }) {
   return (
     <div className={`bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl overflow-hidden shadow-sm flex flex-col ${className}`}>
       <div className="px-5 py-3.5 border-b border-[var(--card-border)] bg-[var(--muted-bg)]">
-        <h3 className="text-sm font-bold text-[var(--foreground)]">{title}</h3>
-        {description && <p className="text-xs text-[var(--muted)] mt-0.5">{description}</p>}
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="text-sm font-bold text-[var(--foreground)]">{title}</h3>
+            {description && <p className="text-xs text-[var(--muted)] mt-0.5">{description}</p>}
+          </div>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {onViewChange && <ChartViewDropdown value={view} onChange={onViewChange} compact />}
+            {onDaysChange && <CompareRangeSelector value={days} onChange={onDaysChange} />}
+          </div>
+        </div>
       </div>
       <div className="flex-1 min-h-0">{children}</div>
     </div>
@@ -59,6 +192,18 @@ export default function Microsoft365() {
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState(null);
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
+
+  // Days filter state for each chart
+  const [riskDetectionsDays, setRiskDetectionsDays] = useState(30);
+  const [signInTrendDays, setSignInTrendDays] = useState(30);
+  const [alertSeverityDays, setAlertSeverityDays] = useState(30);
+  const [complianceStateDays, setComplianceStateDays] = useState(30);
+
+  // View type state for each chart
+  const [riskDetectionsView, setRiskDetectionsView] = useViewState('microsoft365:riskDetections', 'donut');
+  const [signInTrendView, setSignInTrendView] = useViewState('microsoft365:signInTrend', 'bar');
+  const [alertSeverityView, setAlertSeverityView] = useViewState('microsoft365:alertSeverity', 'donut');
+  const [complianceStateView, setComplianceStateView] = useViewState('microsoft365:complianceState', 'donut');
 
   const loadData = () => {
     setLoading(true);
@@ -105,15 +250,31 @@ export default function Microsoft365() {
   const users = arr('users');
   const riskyUsers = arr('riskyUsers');
   const riskDetections = arr('riskDetections');
-  const riskEventTypeData = bucket(riskDetections, (r) => r.riskEventType, 'unknown');
+
+  // Helper to filter items by days based on a date field
+  const filterByDays = (items, dateField, days) => {
+    if (!items || items.length === 0) return [];
+    const now = new Date();
+    const start = new Date(now);
+    start.setDate(start.getDate() - days);
+    return items.filter((item) => {
+      const d = item[dateField] ? new Date(item[dateField]) : null;
+      return d && !isNaN(d.getTime()) && d >= start && d <= now;
+    });
+  };
+
+  // Filtered data by days
+  const filteredRiskDetections = useMemo(() => filterByDays(riskDetections, 'detectedDateTime', riskDetectionsDays), [riskDetections, riskDetectionsDays]);
+  const riskEventTypeData = bucket(filteredRiskDetections, (r) => r.riskEventType, 'unknown');
 
   // ── Sign-in & Audit Activity ─────────────────────────────────────────────────
   const signIns = arr('auditSignIns');
-  const failedSignIns = signIns.filter((s) => s.status?.errorCode !== 0);
+  const filteredSignIns = useMemo(() => filterByDays(signIns, 'createdDateTime', signInTrendDays), [signIns, signInTrendDays]);
+  const failedSignIns = filteredSignIns.filter((s) => s.status?.errorCode !== 0);
   const directoryAudits = arr('auditDirectory');
   const signInTrend = (() => {
     const map = {};
-    signIns.forEach((s) => {
+    filteredSignIns.forEach((s) => {
       const day = s.createdDateTime ? s.createdDateTime.slice(0, 10) : null;
       if (!day) return;
       if (!map[day]) map[day] = { date: day, success: 0, failure: 0 };
@@ -126,11 +287,13 @@ export default function Microsoft365() {
   const secureScore = arr('secureScores')[0] || null;
   const securityIncidents = arr('securityIncidents');
   const securityAlerts = arr('securityAlerts');
-  const alertSeverityData = bucket(securityAlerts, (a) => a.severity, 'unknown');
+  const filteredAlerts = useMemo(() => filterByDays(securityAlerts, 'createdDateTime', alertSeverityDays), [securityAlerts, alertSeverityDays]);
+  const alertSeverityData = bucket(filteredAlerts, (a) => a.severity, 'unknown');
 
   // ── Intune Device Management ─────────────────────────────────────────────────
   const managedDevices = arr('managedDevices');
-  const complianceStateData = bucket(managedDevices, (d) => d.complianceState, 'unknown');
+  const filteredManagedDevices = useMemo(() => filterByDays(managedDevices, 'lastSyncDateTime', complianceStateDays), [managedDevices, complianceStateDays]);
+  const complianceStateData = bucket(filteredManagedDevices, (d) => d.complianceState, 'unknown');
   const compliancePolicies = arr('compliancePolicies');
 
   // ── Applications & Service Principals ────────────────────────────────────────
@@ -140,6 +303,43 @@ export default function Microsoft365() {
   // ── Service Health ───────────────────────────────────────────────────────────
   const serviceHealth = arr('serviceHealth');
   const serviceIssues = arr('serviceIssues');
+
+  // Category time series data for Line/Area views
+  const riskDetectionsTimeSeries = useMemo(() => {
+    if (!riskDetections || riskDetections.length === 0) return null;
+    return categoryTimeSeries(riskDetections, {
+      keyOf: (r) => r.riskEventType || 'unknown',
+      dateOf: (r) => r.detectedDateTime ? new Date(r.detectedDateTime) : null,
+      days: riskDetectionsDays,
+    });
+  }, [riskDetections, riskDetectionsDays]);
+
+  const signInTrendTimeSeries = useMemo(() => {
+    if (!signIns || signIns.length === 0) return null;
+    return categoryTimeSeries(signIns, {
+      keyOf: (s) => s.status?.errorCode === 0 ? 'Success' : 'Failure',
+      dateOf: (s) => s.createdDateTime ? new Date(s.createdDateTime) : null,
+      days: signInTrendDays,
+    });
+  }, [signIns, signInTrendDays]);
+
+  const alertSeverityTimeSeries = useMemo(() => {
+    if (!securityAlerts || securityAlerts.length === 0) return null;
+    return categoryTimeSeries(securityAlerts, {
+      keyOf: (a) => a.severity || 'unknown',
+      dateOf: (a) => a.createdDateTime ? new Date(a.createdDateTime) : null,
+      days: alertSeverityDays,
+    });
+  }, [securityAlerts, alertSeverityDays]);
+
+  const complianceStateTimeSeries = useMemo(() => {
+    if (!managedDevices || managedDevices.length === 0) return null;
+    return categoryTimeSeries(managedDevices, {
+      keyOf: (d) => d.complianceState || 'unknown',
+      dateOf: (d) => d.lastSyncDateTime ? new Date(d.lastSyncDateTime) : null,
+      days: complianceStateDays,
+    });
+  }, [managedDevices, complianceStateDays]);
 
   return (
     <div className="p-6 lg:p-8 space-y-6">
@@ -244,19 +444,20 @@ export default function Microsoft365() {
               </div>
             </CardShell>
 
-            <CardShell title="Risk Detections by Type" className="h-[380px]">
+            <CardShell title="Risk Detections by Type" className="h-[380px]"
+              days={riskDetectionsDays} onDaysChange={setRiskDetectionsDays} view={riskDetectionsView} onViewChange={setRiskDetectionsView}>
               <div className="h-full p-3">
                 {riskEventTypeData.length === 0 ? <Empty msg="No risk detections" /> : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={riskEventTypeData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="50%" outerRadius="70%" paddingAngle={2} cursor="pointer"
-                        onClick={(d) => goToDetail('riskDetections', 'riskEventType', d.name, `Risk Detections — ${d.name}`)}>
-                        {riskEventTypeData.map((d, i) => <Cell key={i} fill={d.fill} />)}
-                      </Pie>
-                      <Tooltip contentStyle={tooltipStyle} />
-                      <Legend iconSize={9} wrapperStyle={{ fontSize: 11, color: 'var(--muted)' }} />
-                    </PieChart>
-                  </ResponsiveContainer>
+                  (riskDetectionsView === 'line' || riskDetectionsView === 'area') && riskDetectionsTimeSeries ? (
+                    <CategoryTimeSeriesChart timeSeriesData={riskDetectionsTimeSeries} type={riskDetectionsView} storageKey="riskDetections" />
+                  ) : (
+                    <MultiViewChart
+                      data={riskEventTypeData}
+                      viewType={riskDetectionsView}
+                      onItemClick={(d) => goToDetail('riskDetections', 'riskEventType', d.name, `Risk Detections — ${d.name}`)}
+                      barColor="#3b82f6"
+                    />
+                  )
                 )}
               </div>
             </CardShell>
@@ -265,20 +466,25 @@ export default function Microsoft365() {
           {/* ── Sign-in & Audit Activity ───────────────────────────────────── */}
           <SectionHeader sublabel="Entra ID" label="Sign-in & Audit Activity" />
           <div className="grid grid-cols-1 gap-4">
-            <CardShell title="Sign-in Trend" className="h-[280px]">
+            <CardShell title="Sign-in Trend" className="h-[280px]"
+              days={signInTrendDays} onDaysChange={setSignInTrendDays} view={signInTrendView} onViewChange={setSignInTrendView}>
               <div className="h-full p-3">
                 {signInTrend.length === 0 ? <Empty msg="No sign-in data found" /> : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={signInTrend} margin={{ top: 8, right: 8, left: -10, bottom: 20 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                      <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--muted)' }} angle={-20} textAnchor="end" />
-                      <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-                      <Tooltip contentStyle={tooltipStyle} />
-                      <Legend iconSize={9} wrapperStyle={{ fontSize: 11 }} />
-                      <Bar dataKey="success" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} />
-                      <Bar dataKey="failure" stackId="a" fill="#ef4444" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
+                  (signInTrendView === 'line' || signInTrendView === 'area') && signInTrendTimeSeries ? (
+                    <CategoryTimeSeriesChart timeSeriesData={signInTrendTimeSeries} type={signInTrendView} storageKey="signInTrend" />
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={signInTrend} margin={{ top: 8, right: 8, left: -10, bottom: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+                        <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--muted)' }} angle={-20} textAnchor="end" />
+                        <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+                        <Tooltip contentStyle={tooltipStyle} />
+                        <Legend iconSize={9} wrapperStyle={{ fontSize: 11 }} />
+                        <Bar dataKey="success" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} />
+                        <Bar dataKey="failure" stackId="a" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )
                 )}
               </div>
             </CardShell>
@@ -379,19 +585,20 @@ export default function Microsoft365() {
               </div>
             </CardShell>
 
-            <CardShell title="Alerts by Severity" className="h-[340px]">
+            <CardShell title="Alerts by Severity" className="h-[340px]"
+              days={alertSeverityDays} onDaysChange={setAlertSeverityDays} view={alertSeverityView} onViewChange={setAlertSeverityView}>
               <div className="h-full p-3">
                 {alertSeverityData.length === 0 ? <Empty msg="No security alerts found" /> : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={alertSeverityData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="50%" outerRadius="70%" paddingAngle={2} cursor="pointer"
-                        onClick={(d) => goToDetail('securityAlerts', 'severity', d.name, `Alerts — ${d.name}`)}>
-                        {alertSeverityData.map((d, i) => <Cell key={i} fill={d.fill} />)}
-                      </Pie>
-                      <Tooltip contentStyle={tooltipStyle} />
-                      <Legend iconSize={9} wrapperStyle={{ fontSize: 11, color: 'var(--muted)' }} />
-                    </PieChart>
-                  </ResponsiveContainer>
+                  (alertSeverityView === 'line' || alertSeverityView === 'area') && alertSeverityTimeSeries ? (
+                    <CategoryTimeSeriesChart timeSeriesData={alertSeverityTimeSeries} type={alertSeverityView} storageKey="alertSeverity" />
+                  ) : (
+                    <MultiViewChart
+                      data={alertSeverityData}
+                      viewType={alertSeverityView}
+                      onItemClick={(d) => goToDetail('securityAlerts', 'severity', d.name, `Alerts — ${d.name}`)}
+                      barColor="#3b82f6"
+                    />
+                  )
                 )}
               </div>
             </CardShell>
@@ -431,19 +638,20 @@ export default function Microsoft365() {
               </div>
             </CardShell>
 
-            <CardShell title="Compliance State" className="h-[380px]">
+            <CardShell title="Compliance State" className="h-[380px]"
+              days={complianceStateDays} onDaysChange={setComplianceStateDays} view={complianceStateView} onViewChange={setComplianceStateView}>
               <div className="h-full p-3">
                 {complianceStateData.length === 0 ? <Empty msg="No device data" /> : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={complianceStateData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="50%" outerRadius="70%" paddingAngle={2} cursor="pointer"
-                        onClick={(d) => goToDetail('managedDevices', 'complianceState', d.name, `Devices — ${d.name}`)}>
-                        {complianceStateData.map((d, i) => <Cell key={i} fill={d.fill} />)}
-                      </Pie>
-                      <Tooltip contentStyle={tooltipStyle} />
-                      <Legend iconSize={9} wrapperStyle={{ fontSize: 11, color: 'var(--muted)' }} />
-                    </PieChart>
-                  </ResponsiveContainer>
+                  (complianceStateView === 'line' || complianceStateView === 'area') && complianceStateTimeSeries ? (
+                    <CategoryTimeSeriesChart timeSeriesData={complianceStateTimeSeries} type={complianceStateView} storageKey="complianceState" />
+                  ) : (
+                    <MultiViewChart
+                      data={complianceStateData}
+                      viewType={complianceStateView}
+                      onItemClick={(d) => goToDetail('managedDevices', 'complianceState', d.name, `Devices — ${d.name}`)}
+                      barColor="#3b82f6"
+                    />
+                  )
                 )}
               </div>
             </CardShell>

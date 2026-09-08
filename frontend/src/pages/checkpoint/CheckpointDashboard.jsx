@@ -5,6 +5,9 @@ import {
   MultiViewChart,
   useViewState,
   VIEW_GROUPS,
+  CompareRangeSelector,
+  withinRange,
+  tooltipStyle,
 } from '../security/widgetViews.jsx';
 
 const CHART_COLORS = ['#6366f1', '#f97316', '#22c55e', '#ef4444', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6'];
@@ -50,24 +53,100 @@ function WidgetCard({ title, children, control, onClick }) {
   );
 }
 
-function AnalyticsCard({ title, storageKey, data, onItemClick, defaultView = 'donut', summary, onClick, groups = VIEW_GROUPS, barColor }) {
+import {
+  LineChart, Line, AreaChart, Area,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+} from 'recharts';
+
+const CATEGORY_COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1', '#14b8a6', '#f97316'];
+
+function CategoryTimeSeriesChart({ timeSeriesData, type = 'line', storageKey = 'chart' }) {
+  const { data, categories, colors } = timeSeriesData;
+  if (!data || data.length === 0 || categories.length === 0) {
+    return <EmptyState />;
+  }
+  const isArea = type === 'area';
+  const Chart = isArea ? AreaChart : LineChart;
+
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <Chart data={data} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+        <XAxis dataKey="date" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={Math.max(0, Math.floor(data.length / 7))} tickFormatter={(v) => v.slice(5)} />
+        <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+        <Tooltip contentStyle={tooltipStyle} />
+        <Legend wrapperStyle={{ fontSize: 10 }} />
+        {categories.map((cat, i) => {
+          const color = colors[i] || CATEGORY_COLORS[i % CATEGORY_COLORS.length];
+          if (isArea) {
+            const gradientId = `areaGrad-${storageKey}-${i}`;
+            return (
+              <Area
+                key={cat}
+                type="monotone"
+                dataKey={cat}
+                name={cat}
+                stroke={color}
+                strokeWidth={2}
+                fill={`url(#${gradientId})`}
+                dot={{ r: 2, fill: color }}
+                activeDot={{ r: 4, cursor: 'pointer' }}
+              >
+                <defs>
+                  <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={color} stopOpacity={0.4} />
+                    <stop offset="95%" stopColor={color} stopOpacity={0.05} />
+                  </linearGradient>
+                </defs>
+              </Area>
+            );
+          }
+          return (
+            <Line
+              key={cat}
+              type="monotone"
+              dataKey={cat}
+              name={cat}
+              stroke={color}
+              strokeWidth={2}
+              dot={{ r: 2, fill: color }}
+              activeDot={{ r: 4, cursor: 'pointer' }}
+            />
+          );
+        })}
+      </Chart>
+    </ResponsiveContainer>
+  );
+}
+
+function AnalyticsCard({ title, storageKey, data, onItemClick, defaultView = 'donut', summary, onClick, groups = VIEW_GROUPS, barColor, timeSeriesData, days, onDaysChange }) {
   const [view, setView] = useViewState(`checkpoint:${storageKey}`, defaultView);
   const showingSummary = view === 'summary';
+  const isTimeSeriesView = view === 'line' || view === 'area';
 
   return (
     <WidgetCard
       title={title}
       onClick={onClick}
-      control={<ChartViewDropdown value={view} onChange={setView} groups={groups} compact />}
+      control={
+        <div className="flex items-center gap-1.5">
+          <ChartViewDropdown value={view} onChange={setView} groups={groups} compact />
+          {onDaysChange && <CompareRangeSelector value={days} onChange={onDaysChange} />}
+        </div>
+      }
     >
       {showingSummary ? summary : data.length === 0 ? <EmptyState /> : (
         <div className="h-72" onClick={(event) => event.stopPropagation()}>
-          <MultiViewChart
-            data={data}
-            viewType={view}
-            onItemClick={onItemClick}
-            barColor={barColor}
-          />
+          {isTimeSeriesView && timeSeriesData ? (
+            <CategoryTimeSeriesChart timeSeriesData={timeSeriesData} type={view} storageKey={storageKey} />
+          ) : (
+            <MultiViewChart
+              data={data}
+              viewType={view}
+              onItemClick={onItemClick}
+              barColor={barColor}
+            />
+          )}
         </div>
       )}
     </WidgetCard>
@@ -84,68 +163,145 @@ function countBy(events, keyOf, mapItem) {
   return Object.entries(counts).map(([key, value], index) => mapItem(key, value, index));
 }
 
-function SeverityDistribution({ events, goToDetail }) {
+// Builds per-category time series data for multi-line/area charts.
+// Returns { data: [{ date, ...categories }], categories: [name, ...], colors: [hex, ...] }
+// Each row has the date as x-axis and one key per category with its count.
+function categoryTimeSeries(events, { keyOf, dateOf, days = 30, refDate }) {
+  const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  let ref = refDate || new Date();
+  let start = new Date(ref);
+  start.setDate(start.getDate() - days);
+
+  // Fall back to latest observed date if current window is empty
+  const dates = events
+    .map((e) => { const d = dateOf(e); return d && !isNaN(d.getTime()) ? d : null; })
+    .filter(Boolean);
+  if (dates.length > 0) {
+    const latest = new Date(Math.max(...dates.map((d) => d.getTime())));
+    const hasInWindow = dates.some((d) => d >= start && d <= ref);
+    if (!hasInWindow) {
+      ref = new Date(latest);
+      ref.setDate(ref.getDate() + 1);
+      start = new Date(ref);
+      start.setDate(start.getDate() - days);
+    }
+  }
+
+  // Collect all categories and build per-day buckets
+  const categories = new Set();
+  const dayBuckets = {};
+
+  events.forEach((event) => {
+    const k = keyOf(event);
+    if (!k) return;
+    const d = dateOf(event);
+    if (!d || isNaN(d.getTime())) return;
+    if (d < start || d > ref) return;
+
+    categories.add(k);
+    const dk = dayKey(d);
+    if (!dayBuckets[dk]) dayBuckets[dk] = {};
+    dayBuckets[dk][k] = (dayBuckets[dk][k] || 0) + 1;
+  });
+
+  const catList = [...categories];
+  const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1', '#14b8a6', '#f97316'];
+
+  // Build time series rows (one per day)
+  const data = [];
+  const cur = new Date(start);
+  cur.setDate(cur.getDate() + 1);
+  while (cur <= ref) {
+    const dk = dayKey(cur);
+    const row = { date: dk };
+    catList.forEach((cat) => { row[cat] = (dayBuckets[dk]?.[cat]) || 0; });
+    data.push(row);
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  return { data, categories: catList, colors: colors.slice(0, catList.length) };
+}
+
+function SeverityDistribution({ events, goToDetail, timeSeriesData, days, onDaysChange }) {
+  const dateOfEvent = (event) => parseDate(event.eventCreated);
+  const filteredEvents = useMemo(() => withinRange(events, dateOfEvent, days), [events, days]);
   const data = useMemo(() => countBy(
-    events,
+    filteredEvents,
     (event) => String(event.severity ?? '?'),
     (code, value) => ({ name: SEVERITY_LABELS[code] ?? `Sev ${code}`, code, value, fill: SEVERITY_COLORS[Number(code) % SEVERITY_COLORS.length] ?? CHART_COLORS[0] }),
-  ).sort((a, b) => Number(a.code) - Number(b.code)), [events]);
+  ).sort((a, b) => Number(a.code) - Number(b.code)), [filteredEvents]);
 
   return <AnalyticsCard title="Severity Distribution" storageKey="severity" data={data} defaultView="donut"
-    onItemClick={(item) => goToDetail('checkpointSeverity', item.code, `${item.name} Severity Events`)} />;
+    onItemClick={(item) => goToDetail('checkpointSeverity', item.code, `${item.name} Severity Events`)}
+    timeSeriesData={timeSeriesData} days={days} onDaysChange={onDaysChange} />;
 }
 
-function StateBreakdown({ events, goToDetail }) {
+function StateBreakdown({ events, goToDetail, timeSeriesData, days, onDaysChange }) {
+  const dateOfEvent = (event) => parseDate(event.eventCreated);
+  const filteredEvents = useMemo(() => withinRange(events, dateOfEvent, days), [events, days]);
   const data = useMemo(() => countBy(
-    events,
+    filteredEvents,
     (event) => event.state ?? 'unknown',
     (name, value, index) => ({ name, value, fill: STATE_COLORS[name] ?? CHART_COLORS[index % CHART_COLORS.length] }),
-  ), [events]);
+  ), [filteredEvents]);
 
   return <AnalyticsCard title="Event State Breakdown" storageKey="state" data={data} defaultView="donut"
-    onItemClick={(item) => goToDetail('checkpointState', item.name, `"${item.name}" State Events`)} />;
+    onItemClick={(item) => goToDetail('checkpointState', item.name, `"${item.name}" State Events`)}
+    timeSeriesData={timeSeriesData} days={days} onDaysChange={onDaysChange} />;
 }
 
-function ConfidenceIndicator({ events, goToDetail }) {
+function ConfidenceIndicator({ events, goToDetail, timeSeriesData, days, onDaysChange }) {
+  const dateOfEvent = (event) => parseDate(event.eventCreated);
+  const filteredEvents = useMemo(() => withinRange(events, dateOfEvent, days), [events, days]);
   const data = useMemo(() => countBy(
-    events,
+    filteredEvents,
     (event) => String(event.confidenceIndicator ?? 'unknown').toLowerCase(),
     (name, value, index) => ({ name, value, fill: CONFIDENCE_COLORS[name] ?? CHART_COLORS[index % CHART_COLORS.length] }),
-  ), [events]);
+  ), [filteredEvents]);
 
   return <AnalyticsCard title="Confidence Indicator" storageKey="confidence" data={data} defaultView="donut"
-    onItemClick={(item) => goToDetail('checkpointConfidence', item.name, `"${item.name}" Confidence Events`)} />;
+    onItemClick={(item) => goToDetail('checkpointConfidence', item.name, `"${item.name}" Confidence Events`)}
+    timeSeriesData={timeSeriesData} days={days} onDaysChange={onDaysChange} />;
 }
 
-function SenderDomains({ events, goToDetail }) {
+function SenderDomains({ events, goToDetail, timeSeriesData, days, onDaysChange }) {
+  const dateOfEvent = (event) => parseDate(event.eventCreated);
+  const filteredEvents = useMemo(() => withinRange(events, dateOfEvent, days), [events, days]);
   const data = useMemo(() => countBy(
-    events,
+    filteredEvents,
     (event) => {
       const parts = String(event.senderAddress || '').split('@');
       return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : '';
     },
     (name, value, index) => ({ name, value, fill: CHART_COLORS[index % CHART_COLORS.length] }),
-  ).sort((a, b) => b.value - a.value).slice(0, 10), [events]);
+  ).sort((a, b) => b.value - a.value).slice(0, 10), [filteredEvents]);
 
   return <AnalyticsCard title="Top Sender Domains" storageKey="sender-domains" data={data} defaultView="bar"
-    onItemClick={(item) => goToDetail('senderDomain', item.name, `Events from ${item.name}`)} />;
+    onItemClick={(item) => goToDetail('senderDomain', item.name, `Events from ${item.name}`)}
+    timeSeriesData={timeSeriesData} days={days} onDaysChange={onDaysChange} />;
 }
 
-function IndividualSenders({ events, goToDetail }) {
+function IndividualSenders({ events, goToDetail, timeSeriesData, days, onDaysChange }) {
+  const dateOfEvent = (event) => parseDate(event.eventCreated);
+  const filteredEvents = useMemo(() => withinRange(events, dateOfEvent, days), [events, days]);
   const data = useMemo(() => countBy(
-    events,
+    filteredEvents,
     (event) => String(event.senderAddress || '').toLowerCase(),
     (name, value, index) => ({ name, value, fill: CHART_COLORS[index % CHART_COLORS.length] }),
-  ).sort((a, b) => b.value - a.value).slice(0, 10), [events]);
+  ).sort((a, b) => b.value - a.value).slice(0, 10), [filteredEvents]);
 
   return <AnalyticsCard title="Top Individual Senders" storageKey="senders" data={data} defaultView="bar"
-    onItemClick={(item) => goToDetail('sender', item.name, `Events from ${item.name}`)} />;
+    onItemClick={(item) => goToDetail('sender', item.name, `Events from ${item.name}`)}
+    timeSeriesData={timeSeriesData} days={days} onDaysChange={onDaysChange} />;
 }
 
-function TargetedMailboxes({ events, goToDetail }) {
+function TargetedMailboxes({ events, goToDetail, timeSeriesData, days, onDaysChange }) {
+  const dateOfEvent = (event) => parseDate(event.eventCreated);
+  const filteredEvents = useMemo(() => withinRange(events, dateOfEvent, days), [events, days]);
   const data = useMemo(() => {
     const counts = {};
-    events.forEach((event) => {
+    filteredEvents.forEach((event) => {
       const matches = String(event.description || '').match(EMAIL_RE);
       const sender = String(event.senderAddress || '').toLowerCase();
       matches?.forEach((email) => {
@@ -157,20 +313,24 @@ function TargetedMailboxes({ events, goToDetail }) {
       .map(([name, value], index) => ({ name, value, fill: CHART_COLORS[index % CHART_COLORS.length] }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 10);
-  }, [events]);
+  }, [filteredEvents]);
 
   return <AnalyticsCard title="Most Targeted Mailboxes" storageKey="targeted-mailboxes" data={data} defaultView="bar"
-    onItemClick={(item) => goToDetail('targetedMailbox', item.name, `Events targeting ${item.name}`)} />;
+    onItemClick={(item) => goToDetail('targetedMailbox', item.name, `Events targeting ${item.name}`)}
+    timeSeriesData={timeSeriesData} days={days} onDaysChange={onDaysChange} />;
 }
 
-function SaasPlatformDistribution({ events }) {
+function SaasPlatformDistribution({ events, timeSeriesData, days, onDaysChange }) {
+  const dateOfEvent = (event) => parseDate(event.eventCreated);
+  const filteredEvents = useMemo(() => withinRange(events, dateOfEvent, days), [events, days]);
   const data = useMemo(() => countBy(
-    events,
+    filteredEvents,
     (event) => event.saas ?? 'Unknown',
     (name, value, index) => ({ name, value, fill: CHART_COLORS[index % CHART_COLORS.length] }),
-  ).sort((a, b) => b.value - a.value), [events]);
+  ).sort((a, b) => b.value - a.value), [filteredEvents]);
 
-  return <AnalyticsCard title="SaaS Platform Distribution" storageKey="saas-platform" data={data} defaultView="donut" onItemClick={() => {}} />;
+  return <AnalyticsCard title="SaaS Platform Distribution" storageKey="saas-platform" data={data} defaultView="donut" onItemClick={() => {}}
+    timeSeriesData={timeSeriesData} days={days} onDaysChange={onDaysChange} />;
 }
 
 function LastSevenDays({ events, goToDetail, dateFrom, dateTo }) {
@@ -244,6 +404,15 @@ export default function CheckpointDashboard({ events }) {
   const [dateTo, setDateTo] = useState('');
   const hasDateFilter = Boolean(dateFrom || dateTo);
 
+  // Rolling comparison window (days) for the Line/Area/Comparison views.
+  const [severityDays, setSeverityDays] = useState(30);
+  const [stateDays, setStateDays] = useState(30);
+  const [confidenceDays, setConfidenceDays] = useState(30);
+  const [senderDomainDays, setSenderDomainDays] = useState(30);
+  const [senderDays, setSenderDays] = useState(30);
+  const [mailboxDays, setMailboxDays] = useState(30);
+  const [saasDays, setSaasDays] = useState(30);
+
   const goToDetail = (filterId, value, title, overrideDateFrom, overrideDateTo) => navigate('/checkpoint/detail', {
     state: {
       dataset: 'checkpoint',
@@ -265,6 +434,112 @@ export default function CheckpointDashboard({ events }) {
       return (!dateFrom || key >= dateFrom) && (!dateTo || key <= dateTo);
     });
   }, [events, dateFrom, dateTo, hasDateFilter]);
+
+  // Helper to extract date from event
+  const dateOfEvent = (event) => parseDate(event.eventCreated);
+
+  // Category time series data for Line/Area views (each category as separate line)
+  const severityTimeSeries = useMemo(() => categoryTimeSeries(filteredEvents, {
+    keyOf: (event) => SEVERITY_LABELS[String(event.severity ?? '?')] ?? `Sev ${event.severity}`,
+    dateOf: dateOfEvent,
+    days: severityDays,
+  }), [filteredEvents, severityDays]);
+
+  const stateTimeSeries = useMemo(() => categoryTimeSeries(filteredEvents, {
+    keyOf: (event) => event.state ?? 'unknown',
+    dateOf: dateOfEvent,
+    days: stateDays,
+  }), [filteredEvents, stateDays]);
+
+  const confidenceTimeSeries = useMemo(() => categoryTimeSeries(filteredEvents, {
+    keyOf: (event) => String(event.confidenceIndicator ?? 'unknown').toLowerCase(),
+    dateOf: dateOfEvent,
+    days: confidenceDays,
+  }), [filteredEvents, confidenceDays]);
+
+  const senderDomainTimeSeries = useMemo(() => {
+    const ts = categoryTimeSeries(filteredEvents, {
+      keyOf: (event) => {
+        const parts = String(event.senderAddress || '').split('@');
+        return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : '';
+      },
+      dateOf: dateOfEvent,
+      days: senderDomainDays,
+    });
+    // Limit to top 10 domains by total count
+    const totals = {};
+    ts.data.forEach((row) => { ts.categories.forEach((cat) => { totals[cat] = (totals[cat] || 0) + (row[cat] || 0); }); });
+    const top10 = Object.entries(totals).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([k]) => k);
+    return {
+      ...ts,
+      categories: top10,
+      data: ts.data.map((row) => {
+        const filtered = { date: row.date };
+        top10.forEach((cat) => { filtered[cat] = row[cat] || 0; });
+        return filtered;
+      }),
+    };
+  }, [filteredEvents, senderDomainDays]);
+
+  const senderTimeSeries = useMemo(() => {
+    const ts = categoryTimeSeries(filteredEvents, {
+      keyOf: (event) => String(event.senderAddress || '').toLowerCase(),
+      dateOf: dateOfEvent,
+      days: senderDays,
+    });
+    const totals = {};
+    ts.data.forEach((row) => { ts.categories.forEach((cat) => { totals[cat] = (totals[cat] || 0) + (row[cat] || 0); }); });
+    const top10 = Object.entries(totals).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([k]) => k);
+    return {
+      ...ts,
+      categories: top10,
+      data: ts.data.map((row) => {
+        const filtered = { date: row.date };
+        top10.forEach((cat) => { filtered[cat] = row[cat] || 0; });
+        return filtered;
+      }),
+    };
+  }, [filteredEvents, senderDays]);
+
+  const mailboxTimeSeries = useMemo(() => {
+    const counts = {};
+    filteredEvents.forEach((event) => {
+      const matches = String(event.description || '').match(EMAIL_RE);
+      const sender = String(event.senderAddress || '').toLowerCase();
+      matches?.forEach((email) => {
+        const mailbox = email.toLowerCase();
+        if (mailbox !== sender) counts[mailbox] = (counts[mailbox] || 0) + 1;
+      });
+    });
+    const topMailboxes = Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([name]) => name);
+
+    const relevantEvents = filteredEvents.filter((event) => {
+      const matches = String(event.description || '').match(EMAIL_RE);
+      const sender = String(event.senderAddress || '').toLowerCase();
+      const mailboxes = matches?.map((e) => e.toLowerCase()).filter((m) => m !== sender) || [];
+      return mailboxes.some((m) => topMailboxes.includes(m));
+    });
+
+    return categoryTimeSeries(relevantEvents, {
+      keyOf: (event) => {
+        const matches = String(event.description || '').match(EMAIL_RE);
+        const sender = String(event.senderAddress || '').toLowerCase();
+        const mailboxes = matches?.map((e) => e.toLowerCase()).filter((m) => m !== sender) || [];
+        return mailboxes.find((m) => topMailboxes.includes(m)) || '';
+      },
+      dateOf: dateOfEvent,
+      days: mailboxDays,
+    });
+  }, [filteredEvents, mailboxDays]);
+
+  const saasTimeSeries = useMemo(() => categoryTimeSeries(filteredEvents, {
+    keyOf: (event) => event.saas ?? 'Unknown',
+    dateOf: dateOfEvent,
+    days: saasDays,
+  }), [filteredEvents, saasDays]);
 
   if (!events || events.length === 0) return null;
 
@@ -292,19 +567,26 @@ export default function CheckpointDashboard({ events }) {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <SeverityDistribution events={filteredEvents} goToDetail={goToDetail} />
-        <StateBreakdown events={filteredEvents} goToDetail={goToDetail} />
-        <ConfidenceIndicator events={filteredEvents} goToDetail={goToDetail} />
+        <SeverityDistribution events={filteredEvents} goToDetail={goToDetail}
+          timeSeriesData={severityTimeSeries} days={severityDays} onDaysChange={setSeverityDays} />
+        <StateBreakdown events={filteredEvents} goToDetail={goToDetail}
+          timeSeriesData={stateTimeSeries} days={stateDays} onDaysChange={setStateDays} />
+        <ConfidenceIndicator events={filteredEvents} goToDetail={goToDetail}
+          timeSeriesData={confidenceTimeSeries} days={confidenceDays} onDaysChange={setConfidenceDays} />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <SenderDomains events={filteredEvents} goToDetail={goToDetail} />
-        <IndividualSenders events={filteredEvents} goToDetail={goToDetail} />
+        <SenderDomains events={filteredEvents} goToDetail={goToDetail}
+          timeSeriesData={senderDomainTimeSeries} days={senderDomainDays} onDaysChange={setSenderDomainDays} />
+        <IndividualSenders events={filteredEvents} goToDetail={goToDetail}
+          timeSeriesData={senderTimeSeries} days={senderDays} onDaysChange={setSenderDays} />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <TargetedMailboxes events={filteredEvents} goToDetail={goToDetail} />
-        <SaasPlatformDistribution events={filteredEvents} />
+        <TargetedMailboxes events={filteredEvents} goToDetail={goToDetail}
+          timeSeriesData={mailboxTimeSeries} days={mailboxDays} onDaysChange={setMailboxDays} />
+        <SaasPlatformDistribution events={filteredEvents}
+          timeSeriesData={saasTimeSeries} days={saasDays} onDaysChange={setSaasDays} />
       </div>
     </section>
   );

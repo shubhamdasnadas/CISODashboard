@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../../api';
 import { useProviders } from '../../../context/ProviderContext.jsx';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend, Line, LineChart, Area, AreaChart } from 'recharts';
 import AnalyticsLaunchButton from '../../../components/AnalyticsLaunchButton.jsx';
 import WidgetSkeleton from '../../dashboard/WidgetSkeleton.jsx';
 import TicketVolcanoGraph from './TicketVolcanoGraph';
@@ -13,6 +13,7 @@ import Hourbasedset from './Hourbasedset';
 import Zohoticketcount from './Zohoticketcount';
 import Topperformance from './Topperformance';
 import Ticketingmttr from '../../CyberHygen/Ticketingmttr.jsx';
+import { CompareRangeSelector, ChartViewDropdown, useViewState, withinRange, MultiViewChart } from '../../security/widgetViews.jsx';
 
 const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const agingBuckets = ['<1h', '1-4h', '4-24h', '1-3d', '3+d'];
@@ -97,6 +98,96 @@ const DONUT_PROPS = {
   outerRadius: '80%',
   cornerRadius: 10,
   paddingAngle: 2,
+};
+
+// ── Multi-View Helpers ────────────────────────────────────────────────────────
+
+const filterByDays = (items, dateField, days) => {
+  if (!items || items.length === 0) return [];
+  const now = new Date();
+  const start = new Date(now);
+  start.setDate(start.getDate() - days);
+  return items.filter((item) => {
+    const d = item[dateField] ? new Date(item[dateField]) : null;
+    return d && !isNaN(d.getTime()) && d >= start && d <= now;
+  });
+};
+
+const categoryTimeSeries = (items, dateField, categories, categoryNameFn) => {
+  const now = new Date();
+  const start = new Date(now);
+  start.setDate(start.getDate() - 30);
+  const seriesMap = {};
+  categories.forEach((cat) => {
+    seriesMap[cat] = {};
+  });
+  items.forEach((item) => {
+    const d = item[dateField] ? new Date(item[dateField]) : null;
+    if (!d || isNaN(d.getTime()) || d < start) return;
+    const cat = categoryNameFn(item);
+    if (!seriesMap[cat]) seriesMap[cat] = {};
+    const dayKey = d.toISOString().slice(0, 10);
+    seriesMap[cat][dayKey] = (seriesMap[cat][dayKey] || 0) + 1;
+  });
+  const days = [];
+  const cur = new Date(start);
+  while (cur <= now) {
+    days.push(cur.toISOString().slice(0, 10));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return days.map((day) => {
+    const row = { date: day };
+    categories.forEach((cat) => {
+      row[cat] = seriesMap[cat][day] || 0;
+    });
+    return row;
+  });
+};
+
+const CategoryTimeSeriesChart = ({ timeSeriesData, type, storageKey }) => {
+  const [view, setView] = useState('area');
+  useEffect(() => {
+    const stored = localStorage.getItem(storageKey);
+    if (stored) setView(stored);
+  }, [storageKey]);
+  const save = (v) => { setView(v); localStorage.setItem(storageKey, v); };
+  const categories = Object.keys(timeSeriesData[0] || {}).filter(k => k !== 'date');
+  const colors = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#0891b2', '#db2777', '#14b8a6'];
+  const isArea = type === 'area';
+  return (
+    <div className="space-y-3">
+      <div className="flex justify-end gap-2">
+        {['area', 'line'].map((t) => (
+          <button key={t} onClick={() => save(t)} className={`px-3 py-1 rounded-md text-xs font-semibold ${view === t ? 'bg-indigo-600 text-white' : 'border border-[var(--card-border)] text-[var(--muted)]'}`}>
+            {t === 'area' ? 'Area' : 'Line'}
+          </button>
+        ))}
+      </div>
+      <ResponsiveContainer width="100%" height={260}>
+        {isArea ? (
+          <AreaChart data={timeSeriesData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+            <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--muted)' }} tickFormatter={(v) => v.slice(5)} />
+            <YAxis tick={{ fontSize: 11, fill: 'var(--muted)' }} />
+            <Tooltip contentStyle={tooltipStyle} />
+            {categories.map((cat, i) => (
+              <Area key={cat} type="monotone" dataKey={cat} stroke={colors[i % colors.length]} fill={colors[i % colors.length]} fillOpacity={0.15} strokeWidth={2} />
+            ))}
+          </AreaChart>
+        ) : (
+          <LineChart data={timeSeriesData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+            <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--muted)' }} tickFormatter={(v) => v.slice(5)} />
+            <YAxis tick={{ fontSize: 11, fill: 'var(--muted)' }} />
+            <Tooltip contentStyle={tooltipStyle} />
+            {categories.map((cat, i) => (
+              <Line key={cat} type="monotone" dataKey={cat} stroke={colors[i % colors.length]} strokeWidth={2} dot={false} />
+            ))}
+          </LineChart>
+        )}
+      </ResponsiveContainer>
+    </div>
+  );
 };
 
 // Legend item component (side-by-side legend for improved donuts)
@@ -712,6 +803,14 @@ export default function Zohoone() {
   const [overviewPage, setOverviewPage] = useState(1);
   const overviewPageSize = 10;
 
+  // Days filter and view selectors
+  const [statusDays, setStatusDays] = useState(30);
+  const [priorityDays, setPriorityDays] = useState(30);
+  const [departmentDays, setDepartmentDays] = useState(30);
+  const [statusView, setStatusView] = useState('donut');
+  const [priorityView, setPriorityView] = useState('column');
+  const [departmentView, setDepartmentView] = useState('bar');
+
   const fetchTickets = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -807,6 +906,52 @@ export default function Zohoone() {
     .filter(p => p === 1 || p === overviewPageCount || Math.abs(p - overviewSafePage) <= 1);
   const goToOverviewPage = (p) => setOverviewPage(Math.min(Math.max(p, 1), overviewPageCount));
 
+  // Filtered data by days
+  const filteredStatusTickets = useMemo(() => filterByDays(tickets, 'created_at', statusDays), [tickets, statusDays]);
+  const filteredPriorityTickets = useMemo(() => filterByDays(tickets, 'created_at', priorityDays), [tickets, priorityDays]);
+  const filteredDepartmentTickets = useMemo(() => filterByDays(tickets, 'created_at', departmentDays), [tickets, departmentDays]);
+
+  // Filtered chart data
+  const filteredStatusCounts = useMemo(() => Object.entries(
+    filteredStatusTickets.reduce((acc, t) => {
+      const s = t.status || 'Unknown';
+      acc[s] = (acc[s] || 0) + 1;
+      return acc;
+    }, {})
+  ).map(([name, value]) => ({ name, value, fill: STATUS_COLORS[name] || '#6366f1' })).sort((a, b) => b.value - a.value), [filteredStatusTickets]);
+
+  const filteredPriorityCounts = useMemo(() => Object.entries(
+    filteredPriorityTickets.reduce((acc, t) => {
+      const p = t.priority || 'Unknown';
+      acc[p] = (acc[p] || 0) + 1;
+      return acc;
+    }, {})
+  ).map(([name, value]) => ({ name, value })), [filteredPriorityTickets]);
+
+  const filteredDepartmentCounts = useMemo(() => Object.entries(
+    filteredDepartmentTickets.reduce((acc, t) => {
+      const d = getDeptName(t);
+      acc[d] = (acc[d] || 0) + 1;
+      return acc;
+    }, {})
+  ).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 8), [filteredDepartmentTickets]);
+
+  // Category time series data
+  const statusTimeSeriesData = useMemo(() => {
+    const statuses = [...new Set(tickets.map(t => t.status || 'Unknown'))];
+    return categoryTimeSeries(tickets, 'created_at', statuses, (t) => t.status || 'Unknown');
+  }, [tickets]);
+
+  const priorityTimeSeriesData = useMemo(() => {
+    const priorities = [...new Set(tickets.map(t => t.priority || 'Unknown'))];
+    return categoryTimeSeries(tickets, 'created_at', priorities, (t) => t.priority || 'Unknown');
+  }, [tickets]);
+
+  const departmentTimeSeriesData = useMemo(() => {
+    const departments = [...new Set(tickets.map(t => getDeptName(t)))];
+    return categoryTimeSeries(tickets, 'created_at', departments.slice(0, 8), (t) => getDeptName(t));
+  }, [tickets]);
+
 
 
   return (
@@ -879,38 +1024,48 @@ export default function Zohoone() {
         </div>
 
         <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-6">
-          <h3 className="font-semibold text-[var(--foreground)] mb-4">By Status</h3>
-          <ImprovedDonut data={statusCounts} onSliceClick={(data) => goToDetail('zohoStatus', data.name, `Zoho Tickets with "${data.name}" status`)} />
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-[var(--foreground)]">By Status</h3>
+            <div className="flex items-center gap-2">
+              <CompareRangeSelector value={statusDays} onChange={setStatusDays} />
+              <ChartViewDropdown view={statusView} onViewChange={setStatusView} />
+            </div>
+          </div>
+          {(statusView === 'line' || statusView === 'area') ? (
+            <CategoryTimeSeriesChart timeSeriesData={statusTimeSeriesData} type={statusView} storageKey="zoho-status-view" />
+          ) : (
+            <MultiViewChart data={filteredStatusCounts} viewType={statusView} onItemClick={(data) => goToDetail('zohoStatus', data.name, `Zoho Tickets with "${data.name}" status`)} barColor="#3b82f6" />
+          )}
         </div>
 
         <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-6">
-          <h3 className="font-semibold text-[var(--foreground)] mb-4">By Priority</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={priorityCounts}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-              <XAxis dataKey="name" tick={{ fontSize: 12, fill: 'var(--muted)' }} />
-              <YAxis tick={{ fontSize: 12, fill: 'var(--muted)' }} />
-              <Tooltip contentStyle={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8 }} />
-              <Bar dataKey="value" radius={[4, 4, 0, 0]} cursor="pointer"
-                onClick={(data) => goToDetail('zohoPriority', data.name, `Zoho Tickets with "${data.name}" priority`)}>
-                {priorityCounts.map(e => <Cell key={e.name} fill={PRIORITY_COLORS[e.name] || '#6b7280'} />)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-[var(--foreground)]">By Priority</h3>
+            <div className="flex items-center gap-2">
+              <CompareRangeSelector value={priorityDays} onChange={setPriorityDays} />
+              <ChartViewDropdown view={priorityView} onViewChange={setPriorityView} />
+            </div>
+          </div>
+          {(priorityView === 'line' || priorityView === 'area') ? (
+            <CategoryTimeSeriesChart timeSeriesData={priorityTimeSeriesData} type={priorityView} storageKey="zoho-priority-view" />
+          ) : (
+            <MultiViewChart data={filteredPriorityCounts} viewType={priorityView} onItemClick={(data) => goToDetail('zohoPriority', data.name, `Zoho Tickets with "${data.name}" priority`)} barColor="#ef4444" />
+          )}
         </div>
 
         <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-6">
-          <h3 className="font-semibold text-[var(--foreground)] mb-4">By Department</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={departmentCounts} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-              <XAxis type="number" tick={{ fontSize: 11, fill: 'var(--muted)' }} />
-              <YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 10, fill: 'var(--muted)' }} />
-              <Tooltip contentStyle={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8 }} />
-              <Bar dataKey="value" fill="#6366f1" radius={[0, 4, 4, 0]} cursor="pointer"
-                onClick={(data) => goToDetail('zohoDepartment', data.name, `Zoho Tickets in "${data.name}" department`)} />
-            </BarChart>
-          </ResponsiveContainer>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-[var(--foreground)]">By Department</h3>
+            <div className="flex items-center gap-2">
+              <CompareRangeSelector value={departmentDays} onChange={setDepartmentDays} />
+              <ChartViewDropdown view={departmentView} onViewChange={setDepartmentView} />
+            </div>
+          </div>
+          {(departmentView === 'line' || departmentView === 'area') ? (
+            <CategoryTimeSeriesChart timeSeriesData={departmentTimeSeriesData} type={departmentView} storageKey="zoho-department-view" />
+          ) : (
+            <MultiViewChart data={filteredDepartmentCounts} viewType={departmentView} onItemClick={(data) => goToDetail('zohoDepartment', data.name, `Zoho Tickets in "${data.name}" department`)} barColor="#6366f1" />
+          )}
         </div>
       </div>
 

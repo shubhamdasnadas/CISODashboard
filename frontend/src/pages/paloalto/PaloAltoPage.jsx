@@ -6,10 +6,136 @@ import AnalyticsLaunchButton from '../../components/AnalyticsLaunchButton.jsx';
 import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
-  ComposedChart, Line, PieChart, Pie,
+  ComposedChart, Line, PieChart, Pie, AreaChart, Area, Legend,
 } from 'recharts';
+import { CompareRangeSelector, ChartViewDropdown, useViewState, withinRange, MultiViewChart } from '../security/widgetViews.jsx';
 
 const COLORS = ['#3b82f6','#f59e0b','#10b981','#ef4444','#8b5cf6','#06b6d4','#ec4899','#84cc16','#f97316','#6366f1'];
+const CATEGORY_COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1', '#14b8a6', '#f97316'];
+
+// ── Category Time Series Chart (for multi-line/area views) ─────────────────────
+
+function CategoryTimeSeriesChart({ timeSeriesData, type = 'line', storageKey = 'chart' }) {
+  const { data, categories, colors } = timeSeriesData;
+  if (!data || data.length === 0 || categories.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <p className="text-sm text-[var(--muted)]">No data available</p>
+      </div>
+    );
+  }
+  const isArea = type === 'area';
+  const Chart = isArea ? AreaChart : LineChart;
+
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <Chart data={data} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+        <XAxis dataKey="date" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={Math.max(0, Math.floor(data.length / 7))} tickFormatter={(v) => v.slice(5)} />
+        <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+        <Tooltip contentStyle={TOOLTIP_STYLE} />
+        <Legend wrapperStyle={{ fontSize: 10 }} />
+        {categories.map((cat, i) => {
+          const color = colors[i] || CATEGORY_COLORS[i % CATEGORY_COLORS.length];
+          if (isArea) {
+            const gradientId = `areaGrad-${storageKey}-${i}`;
+            return (
+              <Area
+                key={cat}
+                type="monotone"
+                dataKey={cat}
+                name={cat}
+                stroke={color}
+                strokeWidth={2}
+                fill={`url(#${gradientId})`}
+                dot={{ r: 2, fill: color }}
+                activeDot={{ r: 4, cursor: 'pointer' }}
+              >
+                <defs>
+                  <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={color} stopOpacity={0.4} />
+                    <stop offset="95%" stopColor={color} stopOpacity={0.05} />
+                  </linearGradient>
+                </defs>
+              </Area>
+            );
+          }
+          return (
+            <Line
+              key={cat}
+              type="monotone"
+              dataKey={cat}
+              name={cat}
+              stroke={color}
+              strokeWidth={2}
+              dot={{ r: 2, fill: color }}
+              activeDot={{ r: 4, cursor: 'pointer' }}
+            />
+          );
+        })}
+      </Chart>
+    </ResponsiveContainer>
+  );
+}
+
+// Builds per-category time series data for multi-line/area charts.
+// Returns { data: [{ date, ...categories }], categories: [name, ...], colors: [hex, ...] }
+function categoryTimeSeries(rows, { keyOf, dateOf, days = 30, refDate }) {
+  const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  let ref = refDate || new Date();
+  let start = new Date(ref);
+  start.setDate(start.getDate() - days);
+
+  // Fall back to latest observed date if current window is empty
+  const dates = rows
+    .map((r) => { const d = dateOf(r); return d && !isNaN(d.getTime()) ? d : null; })
+    .filter(Boolean);
+  if (dates.length > 0) {
+    const latest = new Date(Math.max(...dates.map((d) => d.getTime())));
+    const hasInWindow = dates.some((d) => d >= start && d <= ref);
+    if (!hasInWindow) {
+      ref = new Date(latest);
+      ref.setDate(ref.getDate() + 1);
+      start = new Date(ref);
+      start.setDate(start.getDate() - days);
+    }
+  }
+
+  // Collect all categories and build per-day buckets
+  const categories = new Set();
+  const dayBuckets = {};
+
+  rows.forEach((row) => {
+    const k = keyOf(row);
+    if (!k) return;
+    const d = dateOf(row);
+    if (!d || isNaN(d.getTime())) return;
+    if (d < start || d > ref) return;
+
+    categories.add(k);
+    const dk = dayKey(d);
+    if (!dayBuckets[dk]) dayBuckets[dk] = {};
+    dayBuckets[dk][k] = (dayBuckets[dk][k] || 0) + 1;
+  });
+
+  const catList = [...categories];
+  const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1', '#14b8a6', '#f97316'];
+
+  // Build time series rows (one per day)
+  const data = [];
+  const cur = new Date(start);
+  cur.setDate(cur.getDate() + 1);
+  while (cur <= ref) {
+    const dk = dayKey(cur);
+    const row = { date: dk };
+    catList.forEach((cat) => { row[cat] = (dayBuckets[dk]?.[cat]) || 0; });
+    data.push(row);
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  return { data, categories: catList, colors: colors.slice(0, catList.length) };
+}
 const RISK_COLORS = { '1':'#22c55e','2':'#84cc16','3':'#f59e0b','4':'#f97316','5':'#ef4444' };
 
 const REPORTS_TO_FETCH = [
@@ -332,16 +458,25 @@ function DateFilterInput({ label, value, onChange, min, max }) {
   );
 }
 
-function ChartCard({ title, subtitle, children, dateRange, onDateChange }) {
+function ChartCard({ title, subtitle, children, dateRange, onDateChange, days, onDaysChange, view, onViewChange, timeSeriesData, storageKey }) {
   const hasFilter = !!(dateRange.from || dateRange.to);
+  const isTimeSeriesView = view === 'line' || view === 'area';
   return (
     <div className="rounded-2xl border p-4 sm:p-5 bg-[var(--card-bg)] border-[var(--card-border)]">
       <div className="mb-4">
-        <h3 className="text-base font-extrabold sm:text-lg text-[var(--foreground)]">{title}</h3>
-        <p className="mb-3 text-sm text-[var(--muted)]">{subtitle}</p>
+        <div className="flex items-start justify-between gap-2 flex-wrap">
+          <div className="min-w-0">
+            <h3 className="text-base font-extrabold sm:text-lg text-[var(--foreground)]">{title}</h3>
+            <p className="text-sm text-[var(--muted)]">{subtitle}</p>
+          </div>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {onViewChange && <ChartViewDropdown value={view} onChange={onViewChange} compact />}
+            {onDaysChange && <CompareRangeSelector value={days} onChange={onDaysChange} />}
+          </div>
+        </div>
 
         {/* Date Filter */}
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap mt-3">
           <DateFilterInput
             label="From"
             value={dateRange.from}
@@ -404,6 +539,22 @@ export default function PaloAltoPage() {
     topDeniedDestinations: { from: '', to: '' },
     topConnections: { from: '', to: '' },
   });
+
+  // Days filter state for each chart
+  const [riskTrendDays, setRiskTrendDays] = useState(30);
+  const [riskDistDays, setRiskDistDays] = useState(30);
+  const [topAttacksDays, setTopAttacksDays] = useState(30);
+  const [topSourcesDays, setTopSourcesDays] = useState(30);
+  const [topDeniedDays, setTopDeniedDays] = useState(30);
+  const [topConnectionsDays, setTopConnectionsDays] = useState(30);
+
+  // View type state for each chart
+  const [riskTrendView, setRiskTrendView] = useViewState('firewall:riskTrend', 'composed');
+  const [riskDistView, setRiskDistView] = useViewState('firewall:riskDist', 'donut');
+  const [topAttacksView, setTopAttacksView] = useViewState('firewall:topAttacks', 'bar');
+  const [topSourcesView, setTopSourcesView] = useViewState('firewall:topSources', 'bar');
+  const [topDeniedView, setTopDeniedView] = useViewState('firewall:topDenied', 'bar');
+  const [topConnectionsView, setTopConnectionsView] = useViewState('firewall:topConnections', 'bar');
   
   const [allReports, setAllReports] = useState([]);
   const [loading, setLoading]       = useState(true);
@@ -557,6 +708,67 @@ export default function PaloAltoPage() {
     };
   }, [allReports, allRows, kpiRows, kpiDateRange, componentDateRanges]);
 
+  // Category time series data for Line/Area views
+  const riskTrendTimeSeries = useMemo(() => {
+    const rows = dashboard.riskTrendData;
+    if (!rows || rows.length === 0) return null;
+    return categoryTimeSeries(rows, {
+      keyOf: (r) => r.sessions > 0 ? 'Sessions' : null,
+      dateOf: (r) => r.date ? new Date(r.date) : null,
+      days: riskTrendDays,
+    });
+  }, [dashboard.riskTrendData, riskTrendDays]);
+
+  const riskDistTimeSeries = useMemo(() => {
+    const rows = dashboard.riskDistributionRows;
+    if (!rows || rows.length === 0) return null;
+    return categoryTimeSeries(rows, {
+      keyOf: (r) => String(getFirstValue(r, ['risk','severity','name'], null)),
+      dateOf: (r) => getRowDate(r),
+      days: riskDistDays,
+    });
+  }, [dashboard.riskDistributionRows, riskDistDays]);
+
+  const topAttacksTimeSeries = useMemo(() => {
+    const rows = dashboard.topAttacksRows;
+    if (!rows || rows.length === 0) return null;
+    return categoryTimeSeries(rows, {
+      keyOf: (r) => String(getFirstValue(r, ['threatid','threat','name','category'], '')).trim() || null,
+      dateOf: (r) => getRowDate(r),
+      days: topAttacksDays,
+    });
+  }, [dashboard.topAttacksRows, topAttacksDays]);
+
+  const topSourcesTimeSeries = useMemo(() => {
+    const rows = dashboard.topSourcesRows;
+    if (!rows || rows.length === 0) return null;
+    return categoryTimeSeries(rows, {
+      keyOf: (r) => String(getFirstValue(r, ['src','source','source_ip','name'], '')).trim() || null,
+      dateOf: (r) => getRowDate(r),
+      days: topSourcesDays,
+    });
+  }, [dashboard.topSourcesRows, topSourcesDays]);
+
+  const topDeniedTimeSeries = useMemo(() => {
+    const rows = dashboard.topDeniedDestinationsRows;
+    if (!rows || rows.length === 0) return null;
+    return categoryTimeSeries(rows, {
+      keyOf: (r) => String(getFirstValue(r, ['dst','destination','destination_ip','name'], '')).trim() || null,
+      dateOf: (r) => getRowDate(r),
+      days: topDeniedDays,
+    });
+  }, [dashboard.topDeniedDestinationsRows, topDeniedDays]);
+
+  const topConnectionsTimeSeries = useMemo(() => {
+    const rows = dashboard.topConnectionsRows;
+    if (!rows || rows.length === 0) return null;
+    return categoryTimeSeries(rows, {
+      keyOf: (r) => String(getFirstValue(r, ['name','src','source','dst','destination'], '')).trim() || null,
+      dateOf: (r) => getRowDate(r),
+      days: topConnectionsDays,
+    });
+  }, [dashboard.topConnectionsRows, topConnectionsDays]);
+
   const scoreStatus = getSecurityScoreStatus(dashboard.securityScore);
 
   return (
@@ -639,10 +851,18 @@ export default function PaloAltoPage() {
               subtitle="Bar = traffic bytes, Line = session count"
               dateRange={componentDateRanges.riskTrend}
               onDateChange={(newRange) => handleComponentDateChange('riskTrend', newRange)}
+              days={riskTrendDays}
+              onDaysChange={setRiskTrendDays}
+              view={riskTrendView}
+              onViewChange={setRiskTrendView}
+              timeSeriesData={riskTrendTimeSeries}
+              storageKey="riskTrend"
             >
               <div className="h-[360px]">
                 {dashboard.riskTrendData.length === 0 ? (
                   <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No data in range</p></div>
+                ) : (riskTrendView === 'line' || riskTrendView === 'area') && riskTrendTimeSeries ? (
+                  <CategoryTimeSeriesChart timeSeriesData={riskTrendTimeSeries} type={riskTrendView} storageKey="riskTrend" />
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart data={dashboard.riskTrendData} margin={{ top: 10, right: 25, bottom: 55, left: 10 }}>
@@ -665,20 +885,30 @@ export default function PaloAltoPage() {
               subtitle="Risk 1 to Risk 5 security distribution"
               dateRange={componentDateRanges.riskDistribution}
               onDateChange={(newRange) => handleComponentDateChange('riskDistribution', newRange)}
+              days={riskDistDays}
+              onDaysChange={setRiskDistDays}
+              view={riskDistView}
+              onViewChange={setRiskDistView}
+              timeSeriesData={riskDistTimeSeries}
+              storageKey="riskDist"
             >
               <div className="h-[360px]">
                 {dashboard.riskDistribution.length === 0 ? (
                   <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No data in range</p></div>
+                ) : (riskDistView === 'line' || riskDistView === 'area') && riskDistTimeSeries ? (
+                  <CategoryTimeSeriesChart timeSeriesData={riskDistTimeSeries} type={riskDistView} storageKey="riskDist" />
                 ) : (
-                  <ImprovedDonut
+                  <MultiViewChart
                     data={dashboard.riskDistribution.map((entry) => ({
                       ...entry,
                       fill: RISK_COLORS[String(entry.risk)] || COLORS[0],
                     }))}
-                    onSliceClick={(d) => goToDetail(
+                    viewType={riskDistView}
+                    onItemClick={(d) => goToDetail(
                       dashboard.riskDistributionRows.filter((row) => String(getFirstValue(row, ['risk','severity','name'], '-')) === d.risk),
                       `${d.name} Events`, componentDateRanges.riskDistribution,
                     )}
+                    barColor="#3b82f6"
                   />
                 )}
               </div>
@@ -690,26 +920,28 @@ export default function PaloAltoPage() {
               subtitle="Most repeated firewall threat / attack names"
               dateRange={componentDateRanges.topAttacks}
               onDateChange={(newRange) => handleComponentDateChange('topAttacks', newRange)}
+              days={topAttacksDays}
+              onDaysChange={setTopAttacksDays}
+              view={topAttacksView}
+              onViewChange={setTopAttacksView}
+              timeSeriesData={topAttacksTimeSeries}
+              storageKey="topAttacks"
             >
               <div className="h-[320px]">
                 {dashboard.topAttacks.length === 0 ? (
                   <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No data in range</p></div>
+                ) : (topAttacksView === 'line' || topAttacksView === 'area') && topAttacksTimeSeries ? (
+                  <CategoryTimeSeriesChart timeSeriesData={topAttacksTimeSeries} type={topAttacksView} storageKey="topAttacks" />
                 ) : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={dashboard.topAttacks} layout="vertical" margin={{ top: 10, right: 25, bottom: 10, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                      <XAxis type="number" tick={{ fontSize: 11 }} />
-                      <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 11 }} />
-                      <Tooltip />
-                      <Bar dataKey="value" radius={[0, 5, 5, 0]} cursor="pointer"
-                        onClick={(entry) => goToDetail(
-                          matchRows(dashboard.topAttacksRows, dashboard.topAttacksCols, entry.fullName),
-                          `Attacks: ${entry.fullName}`, componentDateRanges.topAttacks,
-                        )}>
-                        {dashboard.topAttacks.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
+                  <MultiViewChart
+                    data={dashboard.topAttacks}
+                    viewType={topAttacksView}
+                    onItemClick={(entry) => goToDetail(
+                      matchRows(dashboard.topAttacksRows, dashboard.topAttacksCols, entry.fullName),
+                      `Attacks: ${entry.fullName}`, componentDateRanges.topAttacks,
+                    )}
+                    barColor="#3b82f6"
+                  />
                 )}
               </div>
             </ChartCard>
@@ -720,24 +952,28 @@ export default function PaloAltoPage() {
               subtitle="Highest source IP / source count"
               dateRange={componentDateRanges.topSources}
               onDateChange={(newRange) => handleComponentDateChange('topSources', newRange)}
+              days={topSourcesDays}
+              onDaysChange={setTopSourcesDays}
+              view={topSourcesView}
+              onViewChange={setTopSourcesView}
+              timeSeriesData={topSourcesTimeSeries}
+              storageKey="topSources"
             >
               <div className="h-[320px]">
                 {dashboard.topSources.length === 0 ? (
                   <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No data in range</p></div>
+                ) : (topSourcesView === 'line' || topSourcesView === 'area') && topSourcesTimeSeries ? (
+                  <CategoryTimeSeriesChart timeSeriesData={topSourcesTimeSeries} type={topSourcesView} storageKey="topSources" />
                 ) : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={dashboard.topSources} layout="vertical" margin={{ top: 10, right: 25, bottom: 10, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                      <XAxis type="number" tick={{ fontSize: 11 }} />
-                      <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 11 }} />
-                      <Tooltip />
-                      <Bar dataKey="value" fill="#3b82f6" radius={[0, 5, 5, 0]} cursor="pointer"
-                        onClick={(entry) => goToDetail(
-                          matchRows(dashboard.topSourcesRows, dashboard.topSourcesCols, entry.fullName),
-                          `Sessions from ${entry.fullName}`, componentDateRanges.topSources,
-                        )} />
-                    </BarChart>
-                  </ResponsiveContainer>
+                  <MultiViewChart
+                    data={dashboard.topSources}
+                    viewType={topSourcesView}
+                    onItemClick={(entry) => goToDetail(
+                      matchRows(dashboard.topSourcesRows, dashboard.topSourcesCols, entry.fullName),
+                      `Sessions from ${entry.fullName}`, componentDateRanges.topSources,
+                    )}
+                    barColor="#3b82f6"
+                  />
                 )}
               </div>
             </ChartCard>
@@ -748,24 +984,28 @@ export default function PaloAltoPage() {
               subtitle="Denied destination systems"
               dateRange={componentDateRanges.topDeniedDestinations}
               onDateChange={(newRange) => handleComponentDateChange('topDeniedDestinations', newRange)}
+              days={topDeniedDays}
+              onDaysChange={setTopDeniedDays}
+              view={topDeniedView}
+              onViewChange={setTopDeniedView}
+              timeSeriesData={topDeniedTimeSeries}
+              storageKey="topDenied"
             >
               <div className="h-[320px]">
                 {dashboard.topDeniedDestinations.length === 0 ? (
                   <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No data in range</p></div>
+                ) : (topDeniedView === 'line' || topDeniedView === 'area') && topDeniedTimeSeries ? (
+                  <CategoryTimeSeriesChart timeSeriesData={topDeniedTimeSeries} type={topDeniedView} storageKey="topDenied" />
                 ) : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={dashboard.topDeniedDestinations} layout="vertical" margin={{ top: 10, right: 25, bottom: 10, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                      <XAxis type="number" tick={{ fontSize: 11 }} />
-                      <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 11 }} />
-                      <Tooltip />
-                      <Bar dataKey="value" fill="#ef4444" radius={[0, 5, 5, 0]} cursor="pointer"
-                        onClick={(entry) => goToDetail(
-                          matchRows(dashboard.topDeniedDestinationsRows, dashboard.topDeniedCols, entry.fullName),
-                          `Denied: ${entry.fullName}`, componentDateRanges.topDeniedDestinations,
-                        )} />
-                    </BarChart>
-                  </ResponsiveContainer>
+                  <MultiViewChart
+                    data={dashboard.topDeniedDestinations}
+                    viewType={topDeniedView}
+                    onItemClick={(entry) => goToDetail(
+                      matchRows(dashboard.topDeniedDestinationsRows, dashboard.topDeniedCols, entry.fullName),
+                      `Denied: ${entry.fullName}`, componentDateRanges.topDeniedDestinations,
+                    )}
+                    barColor="#ef4444"
+                  />
                 )}
               </div>
             </ChartCard>
@@ -776,24 +1016,28 @@ export default function PaloAltoPage() {
               subtitle="Most repeated firewall connections"
               dateRange={componentDateRanges.topConnections}
               onDateChange={(newRange) => handleComponentDateChange('topConnections', newRange)}
+              days={topConnectionsDays}
+              onDaysChange={setTopConnectionsDays}
+              view={topConnectionsView}
+              onViewChange={setTopConnectionsView}
+              timeSeriesData={topConnectionsTimeSeries}
+              storageKey="topConnections"
             >
               <div className="h-[320px]">
                 {dashboard.topConnections.length === 0 ? (
                   <div className="flex items-center justify-center h-full"><p className="text-sm text-[var(--muted)]">No data in range</p></div>
+                ) : (topConnectionsView === 'line' || topConnectionsView === 'area') && topConnectionsTimeSeries ? (
+                  <CategoryTimeSeriesChart timeSeriesData={topConnectionsTimeSeries} type={topConnectionsView} storageKey="topConnections" />
                 ) : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={dashboard.topConnections} layout="vertical" margin={{ top: 10, right: 25, bottom: 10, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                      <XAxis type="number" tick={{ fontSize: 11 }} />
-                      <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 11 }} />
-                      <Tooltip />
-                      <Bar dataKey="value" fill="#10b981" radius={[0, 5, 5, 0]} cursor="pointer"
-                        onClick={(entry) => goToDetail(
-                          matchRows(dashboard.topConnectionsRows, dashboard.topConnectionsCols, entry.fullName),
-                          `Connections: ${entry.fullName}`, componentDateRanges.topConnections,
-                        )} />
-                    </BarChart>
-                  </ResponsiveContainer>
+                  <MultiViewChart
+                    data={dashboard.topConnections}
+                    viewType={topConnectionsView}
+                    onItemClick={(entry) => goToDetail(
+                      matchRows(dashboard.topConnectionsRows, dashboard.topConnectionsCols, entry.fullName),
+                      `Connections: ${entry.fullName}`, componentDateRanges.topConnections,
+                    )}
+                    barColor="#10b981"
+                  />
                 )}
               </div>
             </ChartCard>

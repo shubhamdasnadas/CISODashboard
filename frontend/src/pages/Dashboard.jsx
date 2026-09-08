@@ -193,6 +193,14 @@ export default function Dashboard() {
   const [customAlertLoading, setCustomAlertLoading] = useState(true);
   const [mitigationChart, setMitigationChart] = useState('donut');
 
+  // ── Ticketing data ──────────────────────────────────────────────────────────
+  const [ticketData, setTicketData] = useState([]);
+  const [ticketLoading, setTicketLoading] = useState(true);
+
+  // ── MDM data ────────────────────────────────────────────────────────────────
+  const [mdmData, setMdmData] = useState([]);
+  const [mdmLoading, setMdmLoading] = useState(true);
+
   // ── Checkpoint ──────────────────────────────────────────────────────────────
   const [cpEvents, setCpEvents] = useState([]);
   const [cpEventsLoading, setCpEventsLoading] = useState(true);
@@ -356,6 +364,12 @@ export default function Dashboard() {
         // Harmony
         if (Array.isArray(agg.harmony?.events)) setCpEvents(agg.harmony.events.map(mapCpEvent));
 
+        // Ticketing
+        if (Array.isArray(agg.ticketing?.tickets)) setTicketData(agg.ticketing.tickets);
+
+        // MDM
+        if (Array.isArray(agg.mdm?.devices)) setMdmData(agg.mdm.devices);
+
         // Firewall
         if (Array.isArray(agg.firewall?.widgets)) {
           setFwWidgets(agg.firewall.widgets.map((w) => ({
@@ -369,17 +383,37 @@ export default function Dashboard() {
         setS1Loading(false); setAgentLoading(false); setAppAgentLoading(false);
         setAppCveLoading(false); setDeviceControlLoading(false); setRssLoading(false);
         setCustomAlertLoading(false);
-        setCpEventsLoading(false);
+        setCpEventsLoading(false); setTicketLoading(false); setMdmLoading(false);
       })
       .catch(() => {
         setS1Loading(false); setAgentLoading(false); setAppAgentLoading(false);
         setAppCveLoading(false); setDeviceControlLoading(false); setRssLoading(false);
         setCustomAlertLoading(false);
-        setCpEventsLoading(false); setLayoutLoaded(true);
+        setCpEventsLoading(false); setTicketLoading(false); setMdmLoading(false); setLayoutLoaded(true);
       });
   }, [currentOrg?.id]);
 
-  
+  // ── Ticketing data (fetched separately) ──────────────────────────────────────
+  useEffect(() => {
+    if (!currentOrg) return;
+    setTicketLoading(true);
+    api.get('/zoho/tickets-db')
+      .then((r) => setTicketData(r.data.responseData || []))
+      .catch(() => setTicketData([]))
+      .finally(() => setTicketLoading(false));
+  }, [currentOrg?.id]);
+
+  // ── MDM data (fetched separately) ────────────────────────────────────────────
+  useEffect(() => {
+    if (!currentOrg) return;
+    setMdmLoading(true);
+    api.get('/hexnode/db/devices')
+      .then((r) => setMdmData(Array.isArray(r.data?.data) ? r.data.data : []))
+      .catch(() => setMdmData([]))
+      .finally(() => setMdmLoading(false));
+  }, [currentOrg?.id]);
+
+
   // Layout is per-user, so it is fetched live (not from the org-wide cache).
   useEffect(() => {
     if (!currentOrg) return;
@@ -1561,7 +1595,7 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="card-surface rounded-2xl overflow-hidden">
-            <FrameworkScore threats={s1Data} agents={agentData} cves={appCveData} />
+            <FrameworkScore threats={s1Data} agents={agentData} cves={appCveData} tickets={ticketData} mdmDevices={mdmData} />
           </div>
         </div>
         {/* Health Score */}
