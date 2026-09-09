@@ -3,7 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { collectKeys, getPath, toYMD, buildChartData, labelFor } from './helpers.js';
 import WidgetSkeleton from './WidgetSkeleton.jsx';
 
-const tooltipStyle = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8 };
+const tooltipStyle = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12, color: 'var(--foreground)' };
 
 export default function S1ConfigWidget({ data, loading, config, onConfigChange, accentColor = '#10b981' }) {
   if (loading) {

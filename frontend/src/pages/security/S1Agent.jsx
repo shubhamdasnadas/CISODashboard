@@ -4,6 +4,7 @@ import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 import api from '../../api.js';
 import {
   MultiViewChart, ChartViewDropdown, useViewState, rangeComparison, CompareRangeSelector, withinRange,
+  categoryTimeSeries,
 } from './widgetViews.jsx';
 
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
@@ -367,6 +368,54 @@ export default function S1Agent() {
     keyOf: (a) => a.scanStatus || 'Unknown', dateOf: (a) => parseDate(a.lastActiveDate), days: scanDays,
   }), [filteredAgents, scanDays]);
 
+  // Category time series for Line / Area daily trends per category
+  const osTimeSeries = useMemo(() => categoryTimeSeries(filteredAgents, {
+    keyOf: (a) => a.osName || 'Unknown',
+    dateOf: dateOfAgent,
+    days: osDays,
+    topN: 8,
+  }), [filteredAgents, osDays]);
+
+  const activeTimeSeries = useMemo(() => categoryTimeSeries(filteredAgents, {
+    keyOf: (a) => a.isActive ? 'Active' : 'Inactive',
+    dateOf: dateOfAgent,
+    days: activeDays,
+    colorMap: { 'Active': '#10b981', 'Inactive': '#ef4444' },
+  }), [filteredAgents, activeDays]);
+
+  const fwTimeSeries = useMemo(() => categoryTimeSeries(filteredAgents, {
+    keyOf: (a) => a.firewallEnabled ? 'Enabled' : 'Disabled',
+    dateOf: dateOfAgent,
+    days: fwDays,
+    colorMap: { 'Enabled': '#3b82f6', 'Disabled': '#f59e0b' },
+  }), [filteredAgents, fwDays]);
+
+  const versionTimeSeries = useMemo(() => categoryTimeSeries(filteredAgents, {
+    keyOf: (a) => a.isUpToDate ? 'Up to Date' : 'Outdated',
+    dateOf: dateOfAgent,
+    days: versionDays,
+    colorMap: { 'Up to Date': '#10b981', 'Outdated': '#ef4444' },
+  }), [filteredAgents, versionDays]);
+
+  const siteTimeSeries = useMemo(() => categoryTimeSeries(filteredAgents, {
+    keyOf: (a) => a.siteName || 'Unknown',
+    dateOf: dateOfAgent,
+    days: siteDays,
+    topN: 8,
+  }), [filteredAgents, siteDays]);
+
+  const netTimeSeries = useMemo(() => categoryTimeSeries(filteredAgents, {
+    keyOf: (a) => a.networkStatus || 'unknown',
+    dateOf: dateOfAgent,
+    days: netDays,
+  }), [filteredAgents, netDays]);
+
+  const scanTimeSeries = useMemo(() => categoryTimeSeries(filteredAgents, {
+    keyOf: (a) => a.scanStatus || 'Unknown',
+    dateOf: dateOfAgent,
+    days: scanDays,
+  }), [filteredAgents, scanDays]);
+
   if (loading) {
     return (
       <div className="p-6">
@@ -446,7 +495,9 @@ export default function S1Agent() {
             <MultiViewChart
               data={osDistribution}
               viewType={osView}
-              monthlyData={(osView === 'line' || osView === 'area' || osView === 'comparison') ? osRange : undefined}
+              monthlyData={osView === 'comparison' ? osRange : undefined}
+              timeSeriesData={osTimeSeries}
+              storageKey="agentOs"
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'osName', value: data.name, title: `Agents with OS: ${data.name}` } })}
             />
           </div>
@@ -458,7 +509,9 @@ export default function S1Agent() {
             <MultiViewChart
               data={activeStatusDistribution}
               viewType={activeView}
-              monthlyData={(activeView === 'line' || activeView === 'area' || activeView === 'comparison') ? activeRange : undefined}
+              monthlyData={activeView === 'comparison' ? activeRange : undefined}
+              timeSeriesData={activeTimeSeries}
+              storageKey="agentActive"
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'isActive', value: data.name === 'Active' ? 'true' : 'false', title: `${data.name} Agents` } })}
             />
           </div>
@@ -470,7 +523,9 @@ export default function S1Agent() {
             <MultiViewChart
               data={firewallStatusDistribution}
               viewType={fwView}
-              monthlyData={(fwView === 'line' || fwView === 'area' || fwView === 'comparison') ? fwRange : undefined}
+              monthlyData={fwView === 'comparison' ? fwRange : undefined}
+              timeSeriesData={fwTimeSeries}
+              storageKey="agentFw"
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'firewallEnabled', value: data.name === 'Enabled' ? 'true' : 'false', title: `Firewall ${data.name}` } })}
             />
           </div>
@@ -484,7 +539,9 @@ export default function S1Agent() {
             <MultiViewChart
               data={agentVersionStatus}
               viewType={versionView}
-              monthlyData={(versionView === 'line' || versionView === 'area' || versionView === 'comparison') ? versionRange : undefined}
+              monthlyData={versionView === 'comparison' ? versionRange : undefined}
+              timeSeriesData={versionTimeSeries}
+              storageKey="agentVersion"
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'isUpToDate', value: data.name === 'Up to Date' ? 'true' : 'false', title: `${data.name} Agents` } })}
             />
           </div>
@@ -495,7 +552,9 @@ export default function S1Agent() {
             <MultiViewChart
               data={siteDistribution}
               viewType={siteView}
-              monthlyData={(siteView === 'line' || siteView === 'area' || siteView === 'comparison') ? siteRange : undefined}
+              monthlyData={siteView === 'comparison' ? siteRange : undefined}
+              timeSeriesData={siteTimeSeries}
+              storageKey="agentSite"
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'agentSite', value: data.name, title: `Agents in Site: ${data.name}` } })}
             />
           </div>
@@ -507,7 +566,9 @@ export default function S1Agent() {
             <MultiViewChart
               data={networkStatusDistribution}
               viewType={netView}
-              monthlyData={(netView === 'line' || netView === 'area' || netView === 'comparison') ? netRange : undefined}
+              monthlyData={netView === 'comparison' ? netRange : undefined}
+              timeSeriesData={netTimeSeries}
+              storageKey="agentNetwork"
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'networkStatus', value: data.name, title: `Network Status: ${data.name}` } })}
             />
           </div>
@@ -519,7 +580,9 @@ export default function S1Agent() {
             <MultiViewChart
               data={scanStatusDistribution}
               viewType={scanView}
-              monthlyData={(scanView === 'line' || scanView === 'area' || scanView === 'comparison') ? scanRange : undefined}
+              monthlyData={scanView === 'comparison' ? scanRange : undefined}
+              timeSeriesData={scanTimeSeries}
+              storageKey="agentScan"
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'scanStatus', value: data.name, title: `Scan Status: ${data.name}` } })}
             />
           </div>

@@ -25,26 +25,26 @@ function MttrGauge({ title, score, hours, subtitle }) {
   const rotation = (score / 100) * 180 - 90;
   const scoreColor = getScoreColor(score);
   return (
-    <div className="flex flex-col items-center rounded-xl border border-slate-700 bg-slate-950/40 p-4">
-      <h3 className="mb-3 text-sm font-bold text-white">{title}</h3>
-      <div className="relative h-[180px] w-[320px]">
-        <svg viewBox="0 0 320 180" className="absolute inset-0">
-          <path d="M40 150 A120 120 0 0 1 90 60"   stroke="#ef4444" strokeWidth="28" fill="none" strokeLinecap="round" />
-          <path d="M90 60 A120 120 0 0 1 145 35"   stroke="#f59e0b" strokeWidth="28" fill="none" strokeLinecap="round" />
-          <path d="M145 35 A120 120 0 0 1 175 35"  stroke="#eab308" strokeWidth="28" fill="none" strokeLinecap="round" />
-          <path d="M175 35 A120 120 0 0 1 230 60"  stroke="#84cc16" strokeWidth="28" fill="none" strokeLinecap="round" />
-          <path d="M230 60 A120 120 0 0 1 280 150" stroke="#22c55e" strokeWidth="28" fill="none" strokeLinecap="round" />
+    <div className="w-full max-w-sm flex flex-col items-center justify-center rounded-2xl border border-[var(--card-border)] bg-[var(--muted-bg)]/50 p-4 sm:p-5 shadow-inner">
+      <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-[var(--muted)]">{title}</h3>
+      <div className="relative h-[160px] w-[280px] sm:w-[300px] flex items-center justify-center">
+        <svg viewBox="0 0 320 180" className="w-full h-full">
+          <path d="M40 150 A120 120 0 0 1 90 60"   stroke="#ef4444" strokeWidth="26" fill="none" strokeLinecap="round" />
+          <path d="M90 60 A120 120 0 0 1 145 35"   stroke="#f59e0b" strokeWidth="26" fill="none" strokeLinecap="round" />
+          <path d="M145 35 A120 120 0 0 1 175 35"  stroke="#eab308" strokeWidth="26" fill="none" strokeLinecap="round" />
+          <path d="M175 35 A120 120 0 0 1 230 60"  stroke="#84cc16" strokeWidth="26" fill="none" strokeLinecap="round" />
+          <path d="M230 60 A120 120 0 0 1 280 150" stroke="#22c55e" strokeWidth="26" fill="none" strokeLinecap="round" />
         </svg>
-        <div className="absolute left-1/2 bottom-[28px] origin-bottom" style={{ transform: `translateX(-50%) rotate(${rotation}deg)` }}>
-          <div className="h-[110px] w-[4px] rounded-full" style={{ backgroundColor: scoreColor }} />
+        <div className="absolute left-1/2 bottom-[24px] origin-bottom" style={{ transform: `translateX(-50%) rotate(${rotation}deg)` }}>
+          <div className="h-[96px] w-[4px] rounded-full shadow-md" style={{ backgroundColor: scoreColor }} />
         </div>
-        <div className="absolute bottom-[15px] left-1/2 h-8 w-8 -translate-x-1/2 rounded-full bg-slate-200 shadow-lg" />
+        <div className="absolute bottom-[14px] left-1/2 h-7 w-7 -translate-x-1/2 rounded-full bg-[var(--card-bg)] border-2 border-[var(--card-border)] shadow-md" />
       </div>
-      <div className="text-center">
-        <div className="text-5xl font-bold" style={{ color: scoreColor }}>{score}</div>
-        <div className="mt-1 text-xs text-slate-400">MTTR Score</div>
-        <div className="mt-2 text-base font-semibold text-white">{hours.toFixed(2)} Hours</div>
-        <div className="text-xs text-slate-400">{subtitle}</div>
+      <div className="text-center mt-1">
+        <div className="text-4xl font-extrabold" style={{ color: scoreColor }}>{score}</div>
+        <div className="text-xs font-semibold text-[var(--muted)] mt-0.5">MTTR Score</div>
+        <div className="mt-2 text-base font-bold text-[var(--foreground)]">{hours.toFixed(2)} Hours</div>
+        <div className="text-xs text-[var(--muted)]">{subtitle}</div>
       </div>
     </div>
   );
@@ -64,9 +64,14 @@ export default function Mttrcard({ tickets, onCardClick }) {
   }, [tickets]);
 
   return (
-    <div className="w-full rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-lg cursor-pointer hover:shadow-xl transition-shadow" onClick={() => { if (onCardClick) onCardClick(); }}>
-      <h2 className="mb-6 text-xl font-bold text-white">MTTR Score</h2>
-      <MttrGauge title="Average MTTR" score={calculateMttrScore(avgScore)} hours={avgResolutionTime} subtitle="Mean Time To Resolution" />
+    <div className="w-full h-full rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] shadow-sm flex flex-col overflow-hidden cursor-pointer hover:shadow-md transition-shadow" onClick={() => { if (onCardClick) onCardClick(); }}>
+      <div className="px-5 py-4 border-b border-[var(--card-border)] bg-[var(--muted-bg)] flex-shrink-0">
+        <h2 className="text-base font-bold text-[var(--foreground)]">MTTR Score</h2>
+        <p className="text-xs text-[var(--muted)] mt-1">Mean Time To Resolution &amp; SLA</p>
+      </div>
+      <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-6 min-h-[380px]">
+        <MttrGauge title="Average MTTR" score={calculateMttrScore(avgScore)} hours={avgResolutionTime} subtitle="Mean Time To Resolution" />
+      </div>
     </div>
   );
 }

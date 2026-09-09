@@ -10,7 +10,7 @@ import {
   ComposedChart,
 } from 'recharts';
 
-const TOOLTIP_STYLE = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12 };
+const TOOLTIP_STYLE = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12, color: 'var(--foreground)' };
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
 
 // ── Display primitives (same as Analytics.jsx but self-contained) ─────────────

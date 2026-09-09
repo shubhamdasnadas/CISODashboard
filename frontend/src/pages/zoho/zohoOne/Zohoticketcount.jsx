@@ -38,16 +38,13 @@ export default function Zohoticketcount({ tickets = [], loading = false, onCardC
   }, [tickets]);
 
   const cards = [
-    { title: 'Open',            count: counts.open,          color: '#2563eb', bg: '#dbeafe' },
-    { title: 'WIP',             count: counts.wip,           color: '#d97706', bg: '#fef3c7' },
     { title: 'On Hold',         count: counts.onHold,        color: '#f59e0b', bg: '#fef3c7' },
-    { title: 'Revert Awaited',  count: counts.revertAwaited, color: '#7c3aed', bg: '#ede9fe' },
     { title: 'Closed',          count: counts.closed,        color: '#16a34a', bg: '#dcfce7', isClosedCard: true },
   ];
 
   return (
     <div className="w-full">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {cards.map(card => {
           const isIncrease = counts.closedDifference > 0;
           const isDecrease = counts.closedDifference < 0;

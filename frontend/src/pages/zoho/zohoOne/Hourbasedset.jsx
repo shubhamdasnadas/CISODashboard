@@ -1,18 +1,16 @@
 import { useMemo, useState } from 'react';
 
-const DAYS  = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
-const CELL_SIZE   = 40;
-const LABEL_WIDTH = 70;
 
-const getColor = (count, max) => {
-  if (count === 0) return '#F5EFE6';
+const getHeatmapColor = (count, max) => {
+  if (count === 0) return 'rgba(148, 163, 184, 0.12)';
   const i = count / max;
-  if (i <= 0.2) return '#F8D48B';
-  if (i <= 0.4) return '#F3BE52';
-  if (i <= 0.6) return '#EDA41B';
-  if (i <= 0.8) return '#C97A05';
-  return '#000000';
+  if (i <= 0.2) return '#fed7aa';
+  if (i <= 0.4) return '#fb923c';
+  if (i <= 0.6) return '#f97316';
+  if (i <= 0.8) return '#ea580c';
+  return '#dc2626';
 };
 
 const formatHour = (h) => {
@@ -21,16 +19,22 @@ const formatHour = (h) => {
   return `${d} ${suffix}`;
 };
 
-const fmt = (s, opts) => s ? new Date(s).toLocaleString('en-GB', opts) : '-';
+const formatShortHour = (h) => {
+  if (h === 0) return '12a';
+  if (h === 12) return '12p';
+  return h < 12 ? `${h}a` : `${h - 12}p`;
+};
 
-export default function Hourbasedset({ tickets, onCellClick }) {
+const fmt = (s, opts) => (s ? new Date(s).toLocaleString('en-GB', opts) : '-');
+
+export default function Hourbasedset({ tickets = [], onCellClick }) {
   const [activeTooltip, setActiveTooltip] = useState(null);
 
   const heatmapData = useMemo(() => {
     const matrix = Array.from({ length: 7 }, () =>
       Array.from({ length: 24 }, () => ({ count: 0, tickets: [] }))
     );
-    tickets.forEach(t => {
+    tickets.forEach((t) => {
       const val = t.createdTime || t.created_at;
       if (!val) return;
       const d = new Date(val);
@@ -44,56 +48,110 @@ export default function Hourbasedset({ tickets, onCellClick }) {
     return matrix;
   }, [tickets]);
 
-  const maxCount = Math.max(...heatmapData.flat().map(c => c.count), 1);
+  const maxCount = Math.max(...heatmapData.flat().map((c) => c.count), 1);
+  const totalTickets = useMemo(() => heatmapData.flat().reduce((s, c) => s + c.count, 0), [heatmapData]);
 
   return (
-    <div className="w-full bg-white rounded-xl shadow-sm border p-6">
-      <h2 className="text-xl font-semibold text-gray-800 mb-6">Ticket Creation Heatmap</h2>
+    <div className="w-full h-full min-h-[480px] sm:min-h-[520px] rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] shadow-sm p-5 sm:p-6 flex flex-col justify-between overflow-hidden">
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-xl font-bold text-[var(--foreground)]">Ticket Creation Heatmap</h2>
+            <p className="text-xs text-[var(--muted)] mt-0.5">24-hour creation patterns across days of the week</p>
+          </div>
+          <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800">
+            {totalTickets} Tickets
+          </span>
+        </div>
 
-      {/* Scroll container — no flex/centering here, or overflowing content gets clipped on both edges */}
-      <div className="overflow-x-auto">
-        <div style={{ minWidth: LABEL_WIDTH + HOURS.length * (CELL_SIZE + 4) }}>
-          <div className="flex mb-4">
-            <div style={{ width: LABEL_WIDTH }} />
-            <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(24, ${CELL_SIZE}px)` }}>
-              {HOURS.map(h => (
-                <div key={h} className="text-[11px] font-medium text-center text-gray-600" style={{ width: CELL_SIZE }}>{formatHour(h)}</div>
+        {/* Heatmap Grid - 100% Fluid Width with Prominent Row Height */}
+        <div className="w-full my-auto py-3">
+          {/* Hour Milestone Header */}
+          <div className="flex items-center mb-2">
+            <div className="w-9 sm:w-11 flex-shrink-0" />
+            <div
+              className="flex-1 gap-1 sm:gap-1.5 text-[10px] sm:text-xs text-[var(--muted)] font-semibold text-center select-none"
+              style={{ display: 'grid', gridTemplateColumns: 'repeat(24, minmax(0, 1fr))' }}
+            >
+              {HOURS.map((h) => (
+                <div key={h} className="truncate">
+                  {h % 3 === 0 ? formatShortHour(h) : ''}
+                </div>
               ))}
             </div>
           </div>
 
+          {/* 7 Day Rows */}
           {DAYS.map((day, dayIdx) => (
-            <div key={day} className="flex items-center mb-2">
-              <div className="font-semibold text-gray-700 flex items-center" style={{ width: LABEL_WIDTH, height: CELL_SIZE }}>{day}</div>
-              <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(24, ${CELL_SIZE}px)` }}>
-                {HOURS.map(hour => {
+            <div key={day} className="flex items-center mb-2 sm:mb-2.5">
+              <div className="w-9 sm:w-11 text-xs sm:text-sm font-bold text-[var(--muted)] flex-shrink-0 select-none">
+                {day}
+              </div>
+              <div
+                className="flex-1 gap-1 sm:gap-1.5"
+                style={{ display: 'grid', gridTemplateColumns: 'repeat(24, minmax(0, 1fr))' }}
+              >
+                {HOURS.map((hour) => {
                   const bucket = heatmapData[dayIdx][hour];
+                  const count = bucket.count;
                   const key = `${dayIdx}-${hour}`;
+                  const isSelected = activeTooltip === key;
+
                   return (
-                    <div key={key} className="relative">
+                    <div key={key} className="relative w-full h-8 sm:h-9">
                       <div
-                        onClick={() => { setActiveTooltip(activeTooltip === key ? null : key); if (bucket.count > 0 && onCellClick) onCellClick(day, hour); }}
-                        className="rounded-md border border-white hover:scale-105 transition-all duration-200 cursor-pointer"
-                        style={{ width: CELL_SIZE, height: CELL_SIZE, backgroundColor: getColor(bucket.count, maxCount) }}
+                        onClick={() => {
+                          setActiveTooltip(isSelected ? null : key);
+                          if (count > 0 && onCellClick) onCellClick(day, hour);
+                        }}
+                        title={`${day} • ${formatHour(hour)}: ${count} Ticket${count !== 1 ? 's' : ''}`}
+                        className={`w-full h-full rounded-md sm:rounded-lg cursor-pointer transition-all duration-150 ${
+                          count > 0 ? 'hover:scale-115 hover:z-20 hover:ring-2 hover:ring-indigo-400 shadow-sm' : 'hover:opacity-80'
+                        }`}
+                        style={{
+                          backgroundColor: getHeatmapColor(count, maxCount),
+                        }}
                       />
-                      {activeTooltip === key && bucket.count > 0 && (
-                        <div className="absolute z-[99999] top-0 left-full ml-3 w-[450px] max-h-[450px] overflow-y-auto rounded-lg bg-slate-900 text-white text-xs shadow-2xl border border-slate-700 p-4">
-                          <div className="flex justify-between items-center mb-3">
-                            <div className="font-semibold text-sm text-yellow-300">{day} • {formatHour(hour)}</div>
-                            <button onClick={() => setActiveTooltip(null)} className="text-gray-400 hover:text-white text-lg leading-none">×</button>
+
+                      {/* Tooltip Popup on Click */}
+                      {isSelected && count > 0 && (
+                        <div className="absolute z-[9999] bottom-full left-1/2 -translate-x-1/2 mb-2 w-72 max-h-64 overflow-y-auto rounded-xl bg-slate-900/95 text-white text-xs shadow-2xl border border-slate-700 p-3.5 backdrop-blur-md">
+                          <div className="flex justify-between items-center mb-2 pb-1.5 border-b border-slate-800">
+                            <div className="font-bold text-amber-400">
+                              {day} • {formatHour(hour)}
+                            </div>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveTooltip(null);
+                              }}
+                              className="text-slate-400 hover:text-white font-bold px-1"
+                            >
+                              ✕
+                            </button>
                           </div>
-                          <div className="mb-3"><strong>Total Tickets:</strong> {bucket.count}</div>
-                          {bucket.tickets.map((t, i) => {
-                            const created = t.createdTime || t.created_at;
-                            return (
-                              <div key={i} className="border-t border-slate-700 pt-2 mt-2">
-                                <div><strong>Ticket:</strong> {t.ticketNumber || t.ticket_no || '-'}</div>
-                                <div><strong>Date:</strong> {fmt(created, { day: '2-digit', month: 'short', year: 'numeric' })}</div>
-                                <div><strong>Time:</strong> {fmt(created, { hour: 'numeric', minute: '2-digit', hour12: true })}</div>
-                                <div className="break-words"><strong>Subject:</strong> {t.subject || '-'}</div>
-                              </div>
-                            );
-                          })}
+                          <div className="mb-2 font-semibold text-slate-200">Total: {count} tickets</div>
+                          <div className="space-y-1.5">
+                            {bucket.tickets.slice(0, 5).map((t, i) => {
+                              const created = t.createdTime || t.created_at;
+                              return (
+                                <div key={i} className="rounded bg-slate-800/80 p-1.5 text-[11px]">
+                                  <div className="font-mono font-bold text-indigo-300">
+                                    #{t.ticketNumber || t.ticket_no || '-'}
+                                  </div>
+                                  <div className="text-slate-400 text-[10px]">
+                                    {fmt(created, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                  </div>
+                                  <div className="text-slate-200 truncate">{t.subject || '-'}</div>
+                                </div>
+                              );
+                            })}
+                            {bucket.tickets.length > 5 && (
+                              <p className="text-[10px] text-slate-400 text-center">
+                                +{bucket.tickets.length - 5} more tickets
+                              </p>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -102,14 +160,18 @@ export default function Hourbasedset({ tickets, onCellClick }) {
               </div>
             </div>
           ))}
+        </div>
+      </div>
 
-          <div className="flex justify-end items-center gap-2 mt-6">
-            <span className="text-sm text-gray-500">Less</span>
-            {['#F5EFE6', '#F8D48B', '#F3BE52', '#EDA41B', '#000000'].map((c, i) => (
-              <div key={i} className="rounded" style={{ width: 18, height: 18, backgroundColor: c }} />
-            ))}
-            <span className="text-sm text-gray-500">More</span>
-          </div>
+      {/* Heatmap Legend */}
+      <div className="flex justify-between items-center pt-3 border-t border-[var(--card-border)] text-xs text-[var(--muted)] flex-wrap gap-2">
+        <span className="font-medium">Creation Intensity</span>
+        <div className="flex items-center gap-1.5">
+          <span>Less</span>
+          {['rgba(148, 163, 184, 0.12)', '#fed7aa', '#fb923c', '#f97316', '#ea580c', '#dc2626'].map((c, i) => (
+            <div key={i} className="w-3.5 h-3.5 rounded-[3px]" style={{ backgroundColor: c }} />
+          ))}
+          <span>More</span>
         </div>
       </div>
     </div>

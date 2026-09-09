@@ -4,6 +4,7 @@ import api from '../../api.js';
 import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 import {
   MultiViewChart, ChartViewDropdown, useViewState, rangeComparison, CompareRangeSelector, withinRange,
+  categoryTimeSeries,
 } from './widgetViews.jsx';
 
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
@@ -329,6 +330,48 @@ export default function S1Cve() {
     keyOf: (r) => r.applicationVendor || '', dateOf: (r) => parseDate(r.detectionDate), days: vendorDays,
   }), [raw, vendorDays]);
 
+  // Category time series for Line / Area daily trends per category
+  const severityTimeSeries = useMemo(() => categoryTimeSeries(filteredApps, {
+    keyOf: (r) => (r.severity || 'UNKNOWN').toUpperCase(),
+    dateOf: dateOfCve,
+    days: severityDays,
+    colorMap: COLORS,
+  }), [filteredApps, severityDays]);
+
+  const scoreTimeSeries = useMemo(() => categoryTimeSeries(filteredApps, {
+    keyOf: (r) => rangeBucket(parseFloat(r.baseScore) || 0),
+    dateOf: dateOfCve,
+    days: scoreDays,
+    colorMap: { 'Low (0-3.9)': '#3b82f6', 'Med (4-6.9)': '#eab308', 'High (7-8.9)': '#ef4444', 'Crit (9-10)': '#a855f7' },
+  }), [filteredApps, scoreDays]);
+
+  const riskyTimeSeries = useMemo(() => categoryTimeSeries(filteredApps, {
+    keyOf: (r) => r.applicationName || r.application || 'Unknown',
+    dateOf: dateOfCve,
+    days: riskyDays,
+    topN: 10,
+  }), [filteredApps, riskyDays]);
+
+  const agingTimeSeries = useMemo(() => categoryTimeSeries(filteredApps, {
+    keyOf: (r) => agingBucket(parseInt(r.daysDetected, 10) || 0),
+    dateOf: dateOfCve,
+    days: agingDays,
+  }), [filteredApps, agingDays]);
+
+  const impactTimeSeries = useMemo(() => categoryTimeSeries(filteredApps, {
+    keyOf: (r) => r.applicationName || r.application || 'Unknown',
+    dateOf: dateOfCve,
+    days: impactDays,
+    topN: 10,
+  }), [filteredApps, impactDays]);
+
+  const vendorTimeSeries = useMemo(() => categoryTimeSeries(filteredApps, {
+    keyOf: (r) => r.applicationVendor || '',
+    dateOf: dateOfCve,
+    days: vendorDays,
+    topN: 10,
+  }), [filteredApps, vendorDays]);
+
   if (loading) {
     return (
       <div className="p-6">
@@ -420,7 +463,9 @@ export default function S1Cve() {
             <MultiViewChart
               data={severityPieData}
               viewType={severityView}
-              monthlyData={(severityView === 'line' || severityView === 'area' || severityView === 'comparison') ? severityRange : undefined}
+              monthlyData={severityView === 'comparison' ? severityRange : undefined}
+              timeSeriesData={severityTimeSeries}
+              storageKey="cveSeverity"
               emptyLabel="No severity data"
               onItemClick={(data) => goToDetail({ dataset: 'cve', filterId: 'severity', value: data.name, title: `${data.name} Severity CVEs` })}
             />
@@ -433,7 +478,9 @@ export default function S1Cve() {
             <MultiViewChart
               data={scoreRangePieData}
               viewType={scoreView}
-              monthlyData={(scoreView === 'line' || scoreView === 'area' || scoreView === 'comparison') ? scoreBucketRange : undefined}
+              monthlyData={scoreView === 'comparison' ? scoreBucketRange : undefined}
+              timeSeriesData={scoreTimeSeries}
+              storageKey="cveScore"
               emptyLabel="No score data"
               onItemClick={(data) => goToDetail({ dataset: 'cve', filterId: 'scoreRange', value: data.name, title: `CVEs in ${data.name} score range` })}
             />
@@ -446,7 +493,9 @@ export default function S1Cve() {
             <MultiViewChart
               data={topRiskyApps.map((a) => ({ name: a.name, fullName: a.fullName, value: a.cves, fill: '#ef4444' }))}
               viewType={riskyView}
-              monthlyData={(riskyView === 'line' || riskyView === 'area' || riskyView === 'comparison') ? riskyRange : undefined}
+              monthlyData={riskyView === 'comparison' ? riskyRange : undefined}
+              timeSeriesData={riskyTimeSeries}
+              storageKey="cveRisky"
               barColor="#ef4444"
               emptyLabel="No application data"
               onItemClick={(data) => goToDetail({ dataset: 'cve', filterId: 'topRiskyApp', value: data.fullName || data.name, title: `CVEs for ${data.fullName || data.name}` })}
@@ -460,7 +509,9 @@ export default function S1Cve() {
             <MultiViewChart
               data={cveAging.map((a, i) => ({ name: a.name, value: a.count, fill: CHART_COLORS[i % CHART_COLORS.length] }))}
               viewType={agingView}
-              monthlyData={(agingView === 'line' || agingView === 'area' || agingView === 'comparison') ? agingRange : undefined}
+              monthlyData={agingView === 'comparison' ? agingRange : undefined}
+              timeSeriesData={agingTimeSeries}
+              storageKey="cveAging"
               barColor="#38bdf8"
               emptyLabel="No aging data"
               onItemClick={(data) => goToDetail({ dataset: 'cve', filterId: 'cveAgingBucket', value: data.name, title: `CVEs in ${data.name} days aging bucket` })}
@@ -474,7 +525,9 @@ export default function S1Cve() {
             <MultiViewChart
               data={endpointImpact.map((a) => ({ name: a.name, fullName: a.fullName, value: a.endpoints, fill: '#22c55e' }))}
               viewType={impactView}
-              monthlyData={(impactView === 'line' || impactView === 'area' || impactView === 'comparison') ? impactRange : undefined}
+              monthlyData={impactView === 'comparison' ? impactRange : undefined}
+              timeSeriesData={impactTimeSeries}
+              storageKey="cveImpact"
               barColor="#22c55e"
               emptyLabel="No endpoint data"
               onItemClick={(data) => goToDetail({ dataset: 'cve', filterId: 'endpointImpact', value: data.fullName || data.name, title: `CVEs for ${data.fullName || data.name}` })}
@@ -488,7 +541,9 @@ export default function S1Cve() {
             <MultiViewChart
               data={vendorRisk.map((v) => ({ name: v.name, fullName: v.fullName, value: v.cves, fill: v.fill }))}
               viewType={vendorView}
-              monthlyData={(vendorView === 'line' || vendorView === 'area' || vendorView === 'comparison') ? vendorRange : undefined}
+              monthlyData={vendorView === 'comparison' ? vendorRange : undefined}
+              timeSeriesData={vendorTimeSeries}
+              storageKey="cveVendor"
               barColor="#f97316"
               emptyLabel="No vendor data"
               onItemClick={(data) => goToDetail({ dataset: 'cve', filterId: 'CVEs', value: data.fullName || data.name, title: `CVEs for vendor ${data.fullName || data.name}` })}

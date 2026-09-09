@@ -13,6 +13,7 @@ const TOOLTIP_STYLE = {
   border: '1px solid var(--card-border)',
   borderRadius: 8,
   fontSize: 12,
+  color: 'var(--foreground)',
 };
 
 function WidgetCard({ title, children, className = '' }) {

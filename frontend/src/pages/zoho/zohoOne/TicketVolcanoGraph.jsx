@@ -82,19 +82,6 @@ export default function TicketVolcanoGraph({ tickets, onBarClick }) {
           })}
         </div>
       </div>
-
-      <div className="mt-4 grid gap-3 sm:grid-cols-5">
-        {graphBuckets.map(bucket => (
-          <div key={bucket.label} className="rounded-md border border-[var(--card-border)] bg-[var(--muted-bg)] px-3 py-2 cursor-pointer hover:shadow-md transition-shadow"
-            onClick={() => { if (bucket.count > 0 && onBarClick) onBarClick(bucket.label, bucket.min, bucket.max); }}>
-            <div className="flex items-center gap-2">
-              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: bucket.color }} />
-              <span className="text-xs font-bold uppercase text-[var(--muted)]">{bucket.label}</span>
-            </div>
-            <div className="mt-1 text-lg font-bold text-[var(--foreground)]">{bucket.count}</div>
-          </div>
-        ))}
-      </div>
     </section>
   );
 }

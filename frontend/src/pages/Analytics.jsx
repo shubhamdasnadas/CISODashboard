@@ -57,7 +57,7 @@ export { };
 // ─── Shared constants ──────────────────────────────────────────────────────────
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
 const SEVERITY_COLORS = { CRITICAL: '#a855f7', HIGH: '#ef4444', MEDIUM: '#eab308', LOW: '#3b82f6', UNKNOWN: '#64748b' };
-const TOOLTIP_STYLE = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12 };
+const TOOLTIP_STYLE = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12, color: 'var(--foreground)' };
 const DONUT_PROPS = { innerRadius: '50%', outerRadius: '80%', cornerRadius: 10, paddingAngle: 2 };
 const fmtNum = (v) => Number(v || 0).toLocaleString('en-IN');
 

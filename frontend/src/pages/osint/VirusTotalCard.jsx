@@ -33,7 +33,7 @@ export default function VirusTotalCard({ latest, history }) {
               <Pie data={statusRows} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="45%" outerRadius="70%" paddingAngle={2}>
                 {statusRows.map((d, i) => <Cell key={i} fill={d.fill} />)}
               </Pie>
-              <Tooltip contentStyle={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8 }} />
+              <Tooltip contentStyle={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, color: 'var(--foreground)', fontSize: 12 }} />
             </PieChart>
           </ResponsiveContainer>
         </div>

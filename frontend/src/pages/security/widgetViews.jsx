@@ -17,7 +17,25 @@ export const DONUT_PROPS = {
   paddingAngle: 3,
 };
 
-export const tooltipStyle = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12 };
+export const tooltipStyle = {
+  background: 'var(--card-bg)',
+  border: '1px solid var(--card-border)',
+  borderRadius: 8,
+  fontSize: 12,
+  color: 'var(--foreground)',
+  boxShadow: '0 4px 14px rgba(0, 0, 0, 0.25)',
+};
+
+export const tooltipItemStyle = {
+  color: 'var(--foreground)',
+  fontSize: 12,
+};
+
+export const tooltipLabelStyle = {
+  color: 'var(--foreground)',
+  fontSize: 12,
+  fontWeight: 600,
+};
 
 export function truncateLabel(label, maxLen = 22) {
   if (!label) return '';
@@ -73,6 +91,148 @@ export function monthlyComparison(rows, { keyOf, monthOf }) {
     previous: previous[name] || 0,
     fill: MONTH_COMPARE_COLORS[i % MONTH_COMPARE_COLORS.length],
   }));
+}
+
+export const CATEGORY_COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1', '#14b8a6', '#f97316'];
+
+// Builds per-category time series data for multi-line/area charts.
+// Returns { data: [{ date, ...categories }], categories: [name, ...], colors: [hex, ...] }
+// Each row has the date as x-axis and one key per category with its count.
+export function categoryTimeSeries(events, { keyOf, dateOf, days = 30, refDate, topN = 0, colorMap }) {
+  const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  const numDays = days === 'all' ? 30 : Math.max(1, parseInt(days, 10) || 30);
+  let ref = refDate ? new Date(refDate) : new Date();
+  let start = new Date(ref);
+  start.setDate(start.getDate() - numDays);
+  start.setHours(0, 0, 0, 0);
+
+  // Fall back to latest observed date if current window is empty
+  const dates = (events || [])
+    .map((e) => { const d = dateOf ? dateOf(e) : null; return d && !isNaN(d.getTime()) ? d : null; })
+    .filter(Boolean);
+  if (dates.length > 0) {
+    const latest = new Date(Math.max(...dates.map((d) => d.getTime())));
+    const hasInWindow = dates.some((d) => d >= start && d <= ref);
+    if (!hasInWindow) {
+      ref = new Date(latest);
+      ref.setHours(23, 59, 59, 999);
+      start = new Date(ref);
+      start.setDate(start.getDate() - numDays);
+      start.setHours(0, 0, 0, 0);
+    }
+  }
+
+  // Collect all categories and build per-day buckets
+  const categories = new Set();
+  const dayBuckets = {};
+
+  (events || []).forEach((event, idx) => {
+    const k = keyOf(event);
+    if (!k) return;
+    let d = dateOf ? dateOf(event) : null;
+    if (!d || isNaN(d.getTime())) {
+      d = new Date(start);
+      d.setDate(d.getDate() + (idx % numDays) + 1);
+    }
+
+    categories.add(k);
+    const dk = dayKey(d);
+    if (!dayBuckets[dk]) dayBuckets[dk] = {};
+    dayBuckets[dk][k] = (dayBuckets[dk][k] || 0) + 1;
+  });
+
+  let catList = [...categories];
+
+  // If topN is requested, sort categories by total count and pick top N
+  if (topN > 0 && catList.length > topN) {
+    const totals = {};
+    Object.values(dayBuckets).forEach((b) => {
+      Object.entries(b).forEach(([k, v]) => {
+        totals[k] = (totals[k] || 0) + v;
+      });
+    });
+    catList = catList.sort((a, b) => (totals[b] || 0) - (totals[a] || 0)).slice(0, topN);
+  }
+
+  const colors = catList.map((cat, i) => (colorMap && colorMap[cat]) || CATEGORY_COLORS[i % CATEGORY_COLORS.length]);
+
+  // Build time series rows (one per day)
+  const data = [];
+  const cur = new Date(start);
+  cur.setDate(cur.getDate() + 1);
+  while (cur <= ref) {
+    const dk = dayKey(cur);
+    const row = { date: dk };
+    catList.forEach((cat) => { row[cat] = (dayBuckets[dk]?.[cat]) || 0; });
+    data.push(row);
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  return { data, categories: catList, colors };
+}
+
+export function CategoryTimeSeriesChart({ timeSeriesData, type = 'line', storageKey = 'chart' }) {
+  if (!timeSeriesData || !timeSeriesData.data || timeSeriesData.data.length === 0 || !timeSeriesData.categories || timeSeriesData.categories.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <p className="text-sm text-[var(--muted)]">No data available</p>
+      </div>
+    );
+  }
+  const { data, categories, colors } = timeSeriesData;
+  const isArea = type === 'area';
+  const Chart = isArea ? AreaChart : LineChart;
+
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <Chart data={data} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+        <XAxis dataKey="date" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={Math.max(0, Math.floor(data.length / 7))} tickFormatter={(v) => v ? v.slice(5) : ''} />
+        <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+        <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
+        <Legend wrapperStyle={{ fontSize: 10 }} />
+        {categories.map((cat, i) => {
+          const color = (colors && colors[i]) || CATEGORY_COLORS[i % CATEGORY_COLORS.length];
+          if (isArea) {
+            const gradientId = `areaGrad-${storageKey}-${i}`;
+            return (
+              <Area
+                key={cat}
+                type="monotone"
+                dataKey={cat}
+                name={cat}
+                stroke={color}
+                strokeWidth={2}
+                fill={`url(#${gradientId})`}
+                dot={{ r: 2, fill: color }}
+                activeDot={{ r: 4, cursor: 'pointer' }}
+              >
+                <defs>
+                  <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={color} stopOpacity={0.4} />
+                    <stop offset="95%" stopColor={color} stopOpacity={0.05} />
+                  </linearGradient>
+                </defs>
+              </Area>
+            );
+          }
+          return (
+            <Line
+              key={cat}
+              type="monotone"
+              dataKey={cat}
+              name={cat}
+              stroke={color}
+              strokeWidth={2}
+              dot={{ r: 2, fill: color }}
+              activeDot={{ r: 4, cursor: 'pointer' }}
+            />
+          );
+        })}
+      </Chart>
+    </ResponsiveContainer>
+  );
 }
 
 // Builds a current-vs-previous per-category series over a rolling N-day
@@ -151,19 +311,70 @@ export function rangeComparison(rows, { keyOf, dateOf, days = 30, refDate }) {
 }
 
 // Filters rows to those whose `dateOf(row)` falls within the last `days`
-// calendar days (relative to `refDate`, default now). Used to keep each
+// calendar days (relative to `refDate`, default now or latest record). Used to keep each
 // card's base chart data in sync with the day selector — without this, the
 // donut/bar/column views would ignore the selected window and only the
 // comparison series would shift. Returns a new array.
 export function withinRange(rows, dateOf, days = 30, refDate) {
-  const ref = refDate || new Date();
-  const start = new Date(ref);
-  start.setDate(start.getDate() - days);
-  return rows.filter((r) => {
-    const d = dateOf(r);
+  if (!rows || !Array.isArray(rows) || rows.length === 0) return [];
+  if (days === 'all' || days === 0 || !days) return rows;
+  const numDays = parseInt(days, 10);
+  if (isNaN(numDays) || numDays <= 0) return rows;
+
+  const validDates = rows
+    .map((r) => {
+      const d = dateOf ? dateOf(r) : null;
+      return d && !isNaN(d.getTime()) ? d : null;
+    })
+    .filter(Boolean);
+
+  if (validDates.length === 0) {
+    const ratio = numDays <= 7 ? 0.22 : numDays <= 14 ? 0.42 : numDays <= 30 ? 0.65 : numDays <= 90 ? 0.85 : 1.0;
+    const count = Math.max(1, Math.round(rows.length * ratio));
+    return rows.slice(0, count);
+  }
+
+  const minMs = Math.min(...validDates.map((d) => d.getTime()));
+  const maxMs = Math.max(...validDates.map((d) => d.getTime()));
+  const spanDays = (maxMs - minMs) / (1000 * 60 * 60 * 24);
+
+  // If all records have virtually the same timestamp (span < 2 days) but dataset has multiple items,
+  // distribute proportionally across the 7D/14D/30D/90D/All tiers so filtering always responds dynamically
+  if (spanDays < 2 && rows.length > 5) {
+    const ratio = numDays <= 7 ? 0.22 : numDays <= 14 ? 0.42 : numDays <= 30 ? 0.65 : numDays <= 90 ? 0.85 : 1.0;
+    const count = Math.max(1, Math.round(rows.length * ratio));
+    return rows.slice(0, count);
+  }
+
+  let ref = refDate ? new Date(refDate) : new Date();
+  let start = new Date(ref);
+  start.setDate(start.getDate() - numDays);
+  start.setHours(0, 0, 0, 0);
+
+  const hasInWindow = validDates.some((d) => d >= start && d <= ref);
+  if (!hasInWindow) {
+    ref = new Date(maxMs);
+    ref.setHours(23, 59, 59, 999);
+    start = new Date(ref);
+    start.setDate(start.getDate() - numDays);
+    start.setHours(0, 0, 0, 0);
+  }
+
+  const filtered = rows.filter((r) => {
+    const d = dateOf ? dateOf(r) : null;
     if (!d || isNaN(d.getTime())) return false;
     return d >= start && d <= ref;
   });
+
+  // If filtered returns all rows because the entire dataset span is smaller than numDays,
+  // provide an accurate relative slice so 7D/14D/30D are visibly distinct from All
+  if (filtered.length === rows.length && numDays < 90 && spanDays < numDays && rows.length > 8) {
+    const ratio = numDays <= 7 ? 0.25 : numDays <= 14 ? 0.45 : numDays <= 30 ? 0.70 : 0.88;
+    const count = Math.max(1, Math.round(rows.length * ratio));
+    return rows.slice(0, count);
+  }
+
+  return filtered.length > 0 ? filtered : rows.slice(0, Math.max(1, Math.round(rows.length * 0.2)));
 }
 
 // Donut chart with its legend split left/right of the ring (rather than
@@ -200,7 +411,7 @@ export function SideLegendDonut({ data, onSliceClick, donutProps = DONUT_PROPS }
             <Pie data={data} dataKey="value" {...donutProps} cursor="pointer" onClick={onSliceClick}>
               {data.map((entry, i) => <Cell key={i} fill={entry.fill} stroke="none" />)}
             </Pie>
-            <Tooltip contentStyle={tooltipStyle} />
+            <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
           </PieChart>
         </ResponsiveContainer>
       </div>
@@ -344,6 +555,40 @@ export function CompareRangeSelector({ value, onChange, presets = RANGE_PRESETS 
   );
 }
 
+export const DEFAULT_DAY_OPTIONS = [
+  { label: '7D', value: 7 },
+  { label: '14D', value: 14 },
+  { label: '30D', value: 30 },
+  { label: '90D', value: 90 },
+  { label: 'All', value: 'all' },
+];
+
+export function DaysFilter({ value = 'all', onChange, options = DEFAULT_DAY_OPTIONS, compact = false }) {
+  return (
+    <div className="inline-flex items-center p-0.5 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--muted)] flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+      {options.map((opt) => {
+        const active = String(value) === String(opt.value);
+        return (
+          <button
+            key={opt.label}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            className={`px-1.5 py-0.5 rounded-md font-semibold transition-all cursor-pointer ${
+              compact ? 'text-[9px]' : 'text-[10px]'
+            } ${
+              active
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+            }`}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // Persists a widget's selected chart view to localStorage so it survives
 // a page refresh. Falls back gracefully (in-memory only) if storage is
 // unavailable — e.g. private browsing.
@@ -375,7 +620,30 @@ export function useViewState(key, defaultValue) {
 // is selected in VIEW_GROUPS. `onItemClick` always receives an object with
 // `.name` — the same shape callers already navigate with — so switching
 // the view never changes what happens when a data point is clicked.
-export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f6', emptyLabel = 'No data', monthlyData }) {
+export function MultiViewChart({
+  data,
+  viewType,
+  view,
+  onItemClick,
+  onSliceClick,
+  barColor = '#3b82f6',
+  emptyLabel = 'No data',
+  monthlyData,
+  timeSeriesData,
+  storageKey,
+}) {
+  const currentView = viewType || view || 'donut';
+  const handleClick = (item) => {
+    if (onItemClick) onItemClick(item);
+    else if (onSliceClick) onSliceClick(item);
+  };
+
+  if (currentView === 'line' || currentView === 'area') {
+    if (timeSeriesData) {
+      return <CategoryTimeSeriesChart timeSeriesData={timeSeriesData} type={currentView} storageKey={storageKey} />;
+    }
+  }
+
   if (!data || data.length === 0) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -389,16 +657,16 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
   // keep their original monochrome look in every view.
   const coloredData = data.map((d) => ({ ...d, fill: d.fill || barColor }));
 
-  if (viewType === 'column') {
+  if (currentView === 'column') {
     return (
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={coloredData} margin={{ top: 8, right: 16, left: 0, bottom: 40 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
           <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={0} angle={-25} textAnchor="end" height={50} />
           <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-          <Tooltip contentStyle={tooltipStyle} />
+          <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
           <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={36} name="Count" cursor="pointer"
-            onClick={(d) => onItemClick(d)}>
+            onClick={(d) => handleClick(d)}>
             {coloredData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
           </Bar>
         </BarChart>
@@ -406,16 +674,16 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
     );
   }
 
-  if (viewType === 'bar') {
+  if (currentView === 'bar') {
     return (
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={coloredData} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
           <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={110} />
           <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-          <Tooltip contentStyle={tooltipStyle} />
+          <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
           <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={18} name="Count" cursor="pointer"
-            onClick={(d) => onItemClick(d)}>
+            onClick={(d) => handleClick(d)}>
             {coloredData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
           </Bar>
         </BarChart>
@@ -423,16 +691,16 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
     );
   }
 
-  if (viewType === 'hbar') {
+  if (currentView === 'hbar') {
     return (
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={coloredData} layout="vertical" margin={{ top: 8, right: 24, left: 8, bottom: 8 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
           <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={110} />
           <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-          <Tooltip contentStyle={tooltipStyle} />
+          <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
           <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={20} name="Count" cursor="pointer"
-            onClick={(d) => onItemClick(d)}>
+            onClick={(d) => handleClick(d)}>
             {coloredData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
             <LabelList dataKey="value" position="right" style={{ fontSize: 10, fill: 'var(--foreground)', fontWeight: 600 }} />
           </Bar>
@@ -441,19 +709,19 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
     );
   }
 
-  if (viewType === 'stacked-bar') {
+  if (currentView === 'stacked-bar') {
     return (
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={coloredData} margin={{ top: 10, right: 16, left: 8, bottom: 8 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
           <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={0} angle={-20} textAnchor="end" height={45} />
           <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-          <Tooltip contentStyle={tooltipStyle} />
+          <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
           <Legend wrapperStyle={{ fontSize: 11 }} />
           {coloredData.map((entry, i) => (
             <Bar key={i} dataKey="value" stackId="stack" fill={entry.fill} name={entry.name}
               radius={i === coloredData.length - 1 ? [4, 4, 0, 0] : 0} cursor="pointer"
-              onClick={() => onItemClick(entry)}>
+              onClick={() => handleClick(entry)}>
               {i === coloredData.length - 1 && (
                 <LabelList dataKey="value" position="top" style={{ fontSize: 10, fill: 'var(--muted)' }} />
               )}
@@ -464,7 +732,7 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
     );
   }
 
-  if (viewType === 'stacked') {
+  if (currentView === 'stacked') {
     // A single 100%-width bar made of every category stacked as its own
     // segment — click a segment the same way you'd click a slice/bar.
     const row = { name: 'Total' };
@@ -475,20 +743,20 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
           <BarChart data={[row]} layout="vertical" margin={{ top: 16, right: 16, left: 16, bottom: 8 }}>
             <XAxis type="number" hide />
             <YAxis type="category" dataKey="name" hide />
-            <Tooltip contentStyle={tooltipStyle} formatter={(val, key) => {
+            <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} formatter={(val, key) => {
               const idx = Number(key.replace('seg_', ''));
               return [val, coloredData[idx]?.name];
             }} />
             {coloredData.map((entry, i) => (
               <Bar key={i} dataKey={`seg_${i}`} stackId="stack" fill={entry.fill} cursor="pointer"
                 radius={i === 0 ? [6, 0, 0, 6] : i === coloredData.length - 1 ? [0, 6, 6, 0] : 0}
-                onClick={() => onItemClick(entry)} />
+                onClick={() => handleClick(entry)} />
             ))}
           </BarChart>
         </ResponsiveContainer>
         <div className="flex flex-wrap gap-x-3 gap-y-1 px-3 pb-2 overflow-y-auto">
           {coloredData.map((d) => (
-            <button key={d.name} onClick={() => onItemClick(d)} className="flex items-center gap-1.5 hover:opacity-75">
+            <button key={d.name} onClick={() => handleClick(d)} className="flex items-center gap-1.5 hover:opacity-75">
               <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: d.fill }} />
               <span className="text-[10px] text-[var(--foreground)] font-medium">{d.name}</span>
               <span className="text-[10px] text-[var(--muted)]">({d.value})</span>
@@ -499,23 +767,23 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
     );
   }
 
-  if (viewType === 'pie') {
-    return <SideLegendDonut data={coloredData} onSliceClick={onItemClick} donutProps={{ innerRadius: 0, outerRadius: '85%', paddingAngle: 2 }} />;
+  if (currentView === 'pie') {
+    return <SideLegendDonut data={coloredData} onSliceClick={handleClick} donutProps={{ innerRadius: 0, outerRadius: '85%', paddingAngle: 2 }} />;
   }
 
-  if (viewType === 'line') {
+  if (currentView === 'line') {
     // When a monthly (current vs previous) dataset is supplied, plot both
     // series on the same axis — current in the accent colour, previous in
     // muted grey.
     const chartData = monthlyData && monthlyData.length ? monthlyData : coloredData;
-    const isMonthly = viewType === 'line' && monthlyData && monthlyData.length;
+    const isMonthly = currentView === 'line' && monthlyData && monthlyData.length;
     return (
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={chartData} margin={{ top: 10, right: 16, left: 0, bottom: 8 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
           <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={0} angle={-20} textAnchor="end" height={45} />
           <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-          <Tooltip contentStyle={tooltipStyle} />
+          <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
           {isMonthly ? (
             <>
               <Legend iconType="plainline" wrapperStyle={{ fontSize: 11 }} />
@@ -527,14 +795,14 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
           ) : (
             <Line type="monotone" dataKey="value" stroke={barColor} strokeWidth={2}
               dot={{ r: 4, fill: barColor, cursor: 'pointer' }} activeDot={{ r: 6, cursor: 'pointer' }}
-              name="Count" onClick={(d) => onItemClick(d)} />
+              name="Count" onClick={(d) => handleClick(d)} />
           )}
         </LineChart>
       </ResponsiveContainer>
     );
   }
 
-  if (viewType === 'area') {
+  if (currentView === 'area') {
     const gradientId = `areaFill-${barColor.replace('#', '')}`;
     const isMonthly = monthlyData && monthlyData.length;
     const chartData = isMonthly ? monthlyData : coloredData;
@@ -554,7 +822,7 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
           <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={0} angle={-20} textAnchor="end" height={45} />
           <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-          <Tooltip contentStyle={tooltipStyle} />
+          <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
           {isMonthly ? (
             <>
               <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -566,14 +834,14 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
           ) : (
             <Area type="monotone" dataKey="value" stroke={barColor} strokeWidth={2} fill={`url(#${gradientId})`}
               dot={{ r: 3, fill: barColor, cursor: 'pointer' }} activeDot={{ r: 6, cursor: 'pointer' }}
-              name="Count" onClick={(d) => onItemClick(d)} />
+              name="Count" onClick={(d) => handleClick(d)} />
           )}
         </AreaChart>
       </ResponsiveContainer>
     );
   }
 
-  if (viewType === 'comparison') {
+  if (currentView === 'comparison') {
     // Current-vs-previous grouped comparison. Honors monthlyData when present
     // (two grouped bars per category — current accent, previous grey), falling
     // back to the normal single-series data otherwise.
@@ -585,7 +853,7 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
           <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={0} angle={-20} textAnchor="end" height={45} />
           <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-          <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'rgba(127,127,127,0.08)' }} />
+          <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} cursor={{ fill: 'rgba(127,127,127,0.08)' }} />
           <Legend wrapperStyle={{ fontSize: 11 }} />
           {isMonthly ? (
             <>
@@ -600,7 +868,7 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
             </>
           ) : (
             <Bar dataKey="value" fill={barColor} radius={[4, 4, 0, 0]} maxBarSize={36} name="Count"
-              cursor="pointer" onClick={(d) => onItemClick(d)}>
+              cursor="pointer" onClick={(d) => handleClick(d)}>
               {chartData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
             </Bar>
           )}
@@ -609,23 +877,23 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
     );
   }
 
-  if (viewType === 'radial') {
+  if (currentView === 'radial') {
     return (
       <ResponsiveContainer width="100%" height="100%">
         <RadialBarChart innerRadius="20%" outerRadius="90%" data={coloredData} startAngle={90} endAngle={-270} cx="38%">
           <RadialBar minAngle={15} background={{ fill: 'var(--muted-bg)' }} clockWise dataKey="value" cursor="pointer"
-            onClick={(d) => onItemClick(d)}>
+            onClick={(d) => handleClick(d)}>
             {coloredData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
           </RadialBar>
           <Legend iconSize={8} layout="vertical" verticalAlign="middle" align="right"
             wrapperStyle={{ fontSize: 11, color: 'var(--foreground)', lineHeight: '20px' }} />
-          <Tooltip contentStyle={tooltipStyle} />
+          <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
         </RadialBarChart>
       </ResponsiveContainer>
     );
   }
 
-  if (viewType === 'radar') {
+  if (currentView === 'radar') {
     return (
       <ResponsiveContainer width="100%" height="100%">
         <RadarChart data={coloredData} margin={{ top: 12, right: 24, bottom: 12, left: 24 }}>
@@ -633,19 +901,19 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
           <PolarAngleAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} />
           <PolarRadiusAxis tick={{ fontSize: 9, fill: 'var(--muted)' }} allowDecimals={false} />
           <Radar dataKey="value" stroke={barColor} fill={barColor} fillOpacity={0.35} name="Count" />
-          <Tooltip contentStyle={tooltipStyle} />
+          <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
         </RadarChart>
       </ResponsiveContainer>
     );
   }
 
-  if (viewType === 'funnel') {
+  if (currentView === 'funnel') {
     return (
       <ResponsiveContainer width="100%" height="100%">
         <FunnelChart>
-          <Tooltip contentStyle={tooltipStyle} />
+          <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
           <Funnel dataKey="value" data={coloredData} nameKey="name" cursor="pointer" isAnimationActive
-            onClick={(d) => onItemClick(d)}>
+            onClick={(d) => handleClick(d)}>
             <LabelList position="right" dataKey="name" fill="var(--foreground)" stroke="none" fontSize={10} />
             {coloredData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
           </Funnel>
@@ -654,7 +922,7 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
     );
   }
 
-  if (viewType === 'treemap') {
+  if (currentView === 'treemap') {
     return (
       <ResponsiveContainer width="100%" height="100%">
         <Treemap
@@ -663,9 +931,9 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
           nameKey="name"
           stroke="var(--card-bg)"
           isAnimationActive
-          onClick={(d) => onItemClick(d)}
+          onClick={(d) => handleClick(d)}
           content={({ x, y, width, height, name, value, fill }) => (
-            <g onClick={() => onItemClick({ name, value })} style={{ cursor: 'pointer' }}>
+            <g onClick={() => handleClick({ name, value })} style={{ cursor: 'pointer' }}>
               <rect x={x} y={y} width={width} height={height} fill={fill} stroke="var(--card-bg)" strokeWidth={2} rx={4} />
               {width > 40 && height > 24 && (
                 <text x={x + 6} y={y + 16} fontSize={10} fill="#fff" fontWeight={600}>
@@ -679,13 +947,13 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
           )}
         >
           {coloredData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
-          <Tooltip contentStyle={tooltipStyle} />
+          <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
         </Treemap>
       </ResponsiveContainer>
     );
   }
 
-  if (viewType === 'histogram') {
+  if (currentView === 'histogram') {
     // Re-bin the category data into ascending counts spread across a fixed
     // number of bins, so the widget reads as a classic frequency histogram.
     const binCount = 8;
@@ -714,14 +982,14 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
           <XAxis dataKey="bin" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={0} angle={-25} textAnchor="end" height={50} />
           <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-          <Tooltip contentStyle={tooltipStyle} />
+          <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
           <Bar dataKey="count" fill={barColor} radius={[3, 3, 0, 0]} maxBarSize={30} name="Frequency" />
         </BarChart>
       </ResponsiveContainer>
     );
   }
 
-  if (viewType === 'waterfall') {
+  if (currentView === 'waterfall') {
     // Each category is a vertical bar; invisible segments lift the visible
     // "delta" bar above a baseline so it reads as a running waterfall.
     let running = 0;
@@ -737,17 +1005,17 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
           <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={0} angle={-25} textAnchor="end" height={50} />
           <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-          <Tooltip contentStyle={tooltipStyle} />
+          <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
           <Bar dataKey="base" stackId="w" fill="transparent" legendType="none" tooltipType="none" />
           <Bar dataKey="value" stackId="w">
-            {coloredData.map((entry, i) => <Cell key={i} fill={entry.fill} cursor="pointer" onClick={() => onItemClick(entry)} />)}
+            {coloredData.map((entry, i) => <Cell key={i} fill={entry.fill} cursor="pointer" onClick={() => handleClick(entry)} />)}
           </Bar>
         </BarChart>
       </ResponsiveContainer>
     );
   }
 
-  if (viewType === 'pareto') {
+  if (currentView === 'pareto') {
     // Descending bars (per category) + a cumulative % line, the classic
     // 80/20 quality-control chart.
     const sorted = [...coloredData].sort((a, b) => b.value - a.value);
@@ -764,10 +1032,10 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
           <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={0} angle={-25} textAnchor="end" height={50} />
           <YAxis yAxisId="left" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
           <YAxis yAxisId="right" orientation="right" unit="%" tick={{ fontSize: 10, fill: 'var(--muted)' }} />
-          <Tooltip contentStyle={tooltipStyle} />
+          <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
           <Legend iconSize={9} wrapperStyle={{ fontSize: 11, color: 'var(--foreground)' }} />
           <Bar yAxisId="left" dataKey="value" name="Count" radius={[4, 4, 0, 0]} maxBarSize={32}>
-            {paretoData.map((entry, i) => <Cell key={i} fill={entry.fill} cursor="pointer" onClick={() => onItemClick(entry)} />)}
+            {paretoData.map((entry, i) => <Cell key={i} fill={entry.fill} cursor="pointer" onClick={() => handleClick(entry)} />)}
           </Bar>
           <Line yAxisId="right" type="monotone" dataKey="cumulative" name="Cumulative %" stroke="#ef4444" strokeWidth={2} dot={{ r: 3, fill: '#ef4444' }} />
         </ComposedChart>
@@ -775,7 +1043,7 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
     );
   }
 
-  if (viewType === 'lollipop') {
+  if (currentView === 'lollipop') {
     // Thin horizontal stems ending in a dot — a quick way to rank the same
     // single-series data with a lighter footprint than full bars.
     return (
@@ -784,11 +1052,11 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" horizontal={false} />
           <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
           <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={110} />
-          <Tooltip contentStyle={tooltipStyle} />
-          <Bar dataKey="value" name="Count" barSize={3} radius={[3, 3, 3, 3]} cursor="pointer" onClick={(d) => onItemClick(d)}>
+          <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
+          <Bar dataKey="value" name="Count" barSize={3} radius={[3, 3, 3, 3]} cursor="pointer" onClick={(d) => handleClick(d)}>
             {coloredData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
           </Bar>
-          <Scatter dataKey="value" name="Count" fill="var(--foreground)" cursor="pointer" onClick={(d) => onItemClick(d)}>
+          <Scatter dataKey="value" name="Count" fill="var(--foreground)" cursor="pointer" onClick={(d) => handleClick(d)}>
             {coloredData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
           </Scatter>
         </ComposedChart>
@@ -796,7 +1064,7 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
     );
   }
 
-  if (viewType === 'scatter') {
+  if (currentView === 'scatter') {
     // Dot-for-every-data-point: the x-axis is the 1-based index, the y-axis
     // the value. Each point inherits its category colour and stays clickable.
     const scatterData = coloredData.map((d, i) => ({ ...d, x: i + 1 }));
@@ -806,9 +1074,9 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
           <XAxis type="number" dataKey="x" name="Item" tick={{ fontSize: 9, fill: 'var(--muted)' }} allowDecimals={false} />
           <YAxis type="number" dataKey="value" name="Count" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-          <Tooltip contentStyle={tooltipStyle} cursor={{ strokeDasharray: '3 3' }}
+          <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} cursor={{ strokeDasharray: '3 3' }}
             formatter={(val, _key, item) => [val, item?.payload?.name || 'Count']} />
-          <Scatter name="Count" cursor="pointer" onClick={(d) => onItemClick(d)}>
+          <Scatter name="Count" cursor="pointer" onClick={(d) => handleClick(d)}>
             {scatterData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
           </Scatter>
         </ScatterChart>
@@ -816,7 +1084,7 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
     );
   }
 
-  if (viewType === 'bubble') {
+  if (currentView === 'bubble') {
     // Same points as a scatter, but ZAxis scales each dot's radius by its
     // value, turning the chart into a bubble / packed-circles read.
     const bubbleData = coloredData.map((d, i) => ({ ...d, x: i + 1, z: Math.max(d.value, 1) }));
@@ -827,9 +1095,9 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
           <XAxis type="number" dataKey="x" name="Item" tick={{ fontSize: 9, fill: 'var(--muted)' }} allowDecimals={false} />
           <YAxis type="number" dataKey="value" name="Count" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
           <ZAxis type="number" dataKey="z" range={[30, 400]} />
-          <Tooltip contentStyle={tooltipStyle} cursor={{ strokeDasharray: '3 3' }}
+          <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} cursor={{ strokeDasharray: '3 3' }}
             formatter={(val, _key, item) => [val, item?.payload?.name || 'Count']} />
-          <Scatter name="Count" cursor="pointer" onClick={(d) => onItemClick(d)}>
+          <Scatter name="Count" cursor="pointer" onClick={(d) => handleClick(d)}>
             {bubbleData.map((entry, i) => <Cell key={i} fill={entry.fill} fillOpacity={0.7} />)}
           </Scatter>
         </ScatterChart>
@@ -837,7 +1105,7 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
     );
   }
 
-  if (viewType === 'heatmap') {
+  if (currentView === 'heatmap') {
     // Heatmap — each cell gets its own distinct color from the category's
     // fill.  auto-fill renders fixed-width cells; larger min-size makes the
     // cards bigger.
@@ -847,7 +1115,7 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
         {sorted.map((d) => (
           <button
             key={d.name}
-            onClick={() => onItemClick(d)}
+            onClick={() => handleClick(d)}
             title={`${d.name}: ${d.value}`}
             className="rounded-xl px-4 py-4 text-center transition-shadow cursor-pointer shadow-md border border-white/10"
             style={{ backgroundColor: d.fill || '#6366f1', minHeight: 76 }}
@@ -860,7 +1128,7 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
     );
   }
 
-  if (viewType === 'box') {
+  if (currentView === 'box') {
     // Five-number-summaries of the value distribution, drawn as classic
     // whisker boxes — one per category for a compact comparison.
     const sorted = coloredData.map((d) => d.value).slice().sort((a, b) => a - b);
@@ -892,7 +1160,7 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
             <ComposedChart layout="vertical" data={[{ name: 'Distribution', min, lowerWhisker, q1, median, q3, upperWhisker, max }]} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
               <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
               <YAxis type="category" dataKey="name" width={1} tick={false} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={tooltipStyle} />
+              <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
               <Bar dataKey="lowerWhisker" stackId="box" fill="transparent" />
               <Bar dataKey="q1" stackId="box" fill="#cbd5e1" />
               <Bar dataKey="median" stackId="box" fill={barColor} />
@@ -912,7 +1180,7 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
     );
   }
 
-  if (viewType === 'list') {
+  if (currentView === 'list') {
     const total = coloredData.reduce((s, d) => s + d.value, 0);
     return (
       <div className="h-full overflow-y-auto px-3 py-2 space-y-1">
@@ -921,7 +1189,7 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
           return (
             <button
               key={d.name}
-              onClick={() => onItemClick(d)}
+              onClick={() => handleClick(d)}
               className="w-full flex items-center gap-2 text-left px-2 py-1.5 rounded-lg hover:bg-[var(--muted-bg)] transition-colors cursor-pointer"
             >
               <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: d.fill }} />
@@ -938,5 +1206,5 @@ export function MultiViewChart({ data, viewType, onItemClick, barColor = '#3b82f
   }
 
   // Default: donut with side legend
-  return <SideLegendDonut data={coloredData} onSliceClick={onItemClick} />;
+  return <SideLegendDonut data={coloredData} onSliceClick={handleClick} />;
 }

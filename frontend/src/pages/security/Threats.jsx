@@ -11,6 +11,7 @@ import {
   tooltipStyle, truncateLabel,
   MultiViewChart, ChartViewDropdown, useViewState,
   rangeComparison, CompareRangeSelector, withinRange,
+  CategoryTimeSeriesChart, categoryTimeSeries,
 } from './widgetViews.jsx';
 
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
@@ -579,7 +580,54 @@ export default function Threats() {
     return topN(c, 10).map((x, i) => ({ ...x, name: truncateLabel(x.name), fill: CHART_COLORS[i % CHART_COLORS.length] }));
   }, [groupFilter.filtered, dateOf, groupDays]);
 
-  // Per-category current-vs-previous-month series for the Line/Area views
+  // Category time series data for Line/Area views (each category as separate line/area over time)
+  const classTimeSeries = useMemo(() => categoryTimeSeries(classFilter.filtered, {
+    keyOf: (t) => t.threatInfo?.classification || 'Unknown',
+    dateOf,
+    days: classDays,
+  }), [classFilter.filtered, dateOf, classDays]);
+
+  const filelessTimeSeries = useMemo(() => categoryTimeSeries(filelessFilter.filtered, {
+    keyOf: (t) => t.threatInfo?.isFileless ? 'Fileless' : 'File-based',
+    dateOf,
+    days: filelessDays,
+    colorMap: { 'Fileless': '#ef4444', 'File-based': '#3b82f6' },
+  }), [filelessFilter.filtered, dateOf, filelessDays]);
+
+  const mitigTimeSeries = useMemo(() => categoryTimeSeries(mitigFilter.filtered, {
+    keyOf: (t) => (t.mitigationStatus?.[0]?.status) || t.threatInfo?.mitigationStatus || 'Unknown',
+    dateOf,
+    days: mitigDays,
+  }), [mitigFilter.filtered, dateOf, mitigDays]);
+
+  const usersTimeSeries = useMemo(() => categoryTimeSeries(usersFilter.filtered, {
+    keyOf: (t) => t.threatInfo?.initiatingUsername || t.threatInfo?.processUser || t.agentDetectionInfo?.agentLastLoggedInUserName || '',
+    dateOf,
+    days: usersDays,
+    topN: 10,
+  }), [usersFilter.filtered, dateOf, usersDays]);
+
+  const severityTimeSeries = useMemo(() => categoryTimeSeries(severityFilter.filtered, {
+    keyOf: (t) => t.threatInfo?.confidenceLevel || t.threatInfo?.classification || 'Unknown',
+    dateOf,
+    days: severityDays,
+  }), [severityFilter.filtered, dateOf, severityDays]);
+
+  const siteTimeSeries = useMemo(() => categoryTimeSeries(siteFilter.filtered, {
+    keyOf: (t) => t.agentRealtimeInfo?.siteName || t.siteName || t.agentDetectionInfo?.siteName || 'Unknown',
+    dateOf,
+    days: siteDays,
+    topN: 10,
+  }), [siteFilter.filtered, dateOf, siteDays]);
+
+  const groupTimeSeries = useMemo(() => categoryTimeSeries(groupFilter.filtered, {
+    keyOf: (t) => t.agentRealtimeInfo?.groupName || t.group_name || t.agentDetectionInfo?.groupName || 'Unknown',
+    dateOf,
+    days: groupDays,
+    topN: 10,
+  }), [groupFilter.filtered, dateOf, groupDays]);
+
+  // Per-category current-vs-previous-month series for the Comparison view
   // of the distribution cards (classification, fileless, mitigation,
   // users, severity, site, group).
   const classRange = useMemo(() => rangeComparison(classFilter.filtered, {
@@ -811,12 +859,16 @@ export default function Threats() {
             <CompareRangeSelector value={classDays} onChange={setClassDays} />
             <DateFilter from={classFilter.from} to={classFilter.to} onFromChange={classFilter.setFrom} onToChange={classFilter.setTo} onClear={classFilter.clear} />
           </>}>
-          <MultiViewChart
-            data={classificationData}
-            viewType={classView}
-            monthlyData={(classView === 'line' || classView === 'area' || classView === 'comparison') ? classRange : undefined}
-            onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'classification', value: data.name, title: `${data.name} Threats` } })}
-          />
+          {classView === 'line' || classView === 'area' ? (
+            <CategoryTimeSeriesChart timeSeriesData={classTimeSeries} type={classView} storageKey="classification" />
+          ) : (
+            <MultiViewChart
+              data={classificationData}
+              viewType={classView}
+              monthlyData={classView === 'comparison' ? classRange : undefined}
+              onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'classification', value: data.name, title: `${data.name} Threats` } })}
+            />
+          )}
         </ChartCard>
 
         <ChartCard title="Fileless vs File-based" height={280}
@@ -825,12 +877,16 @@ export default function Threats() {
             <CompareRangeSelector value={filelessDays} onChange={setFilelessDays} />
             <DateFilter from={filelessFilter.from} to={filelessFilter.to} onFromChange={filelessFilter.setFrom} onToChange={filelessFilter.setTo} onClear={filelessFilter.clear} />
           </>}>
-          <MultiViewChart
-            data={filelessData}
-            viewType={filelessView}
-            monthlyData={(filelessView === 'line' || filelessView === 'area' || filelessView === 'comparison') ? filelessRange : undefined}
-            onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: data.name === 'Fileless' ? 'fileless' : 'fileless_type', value: data.name === 'Fileless' ? 'true' : 'false', title: `${data.name} Threats` } })}
-          />
+          {filelessView === 'line' || filelessView === 'area' ? (
+            <CategoryTimeSeriesChart timeSeriesData={filelessTimeSeries} type={filelessView} storageKey="fileless" />
+          ) : (
+            <MultiViewChart
+              data={filelessData}
+              viewType={filelessView}
+              monthlyData={filelessView === 'comparison' ? filelessRange : undefined}
+              onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: data.name === 'Fileless' ? 'fileless' : 'fileless_type', value: data.name === 'Fileless' ? 'true' : 'false', title: `${data.name} Threats` } })}
+            />
+          )}
         </ChartCard>
 
         <ChartCard title="Mitigation Outcomes" height={280}
@@ -839,13 +895,17 @@ export default function Threats() {
             <CompareRangeSelector value={mitigDays} onChange={setMitigDays} />
             <DateFilter from={mitigFilter.from} to={mitigFilter.to} onFromChange={mitigFilter.setFrom} onToChange={mitigFilter.setTo} onClear={mitigFilter.clear} />
           </>}>
-          <MultiViewChart
-            data={mitigationRateData}
-            viewType={mitigView}
-            monthlyData={(mitigView === 'line' || mitigView === 'area' || mitigView === 'comparison') ? mitigRange : undefined}
-            emptyLabel="No mitigation data"
-            onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mitigationStatusArray', value: data.name, title: `Threats with ${data.name} status` } })}
-          />
+          {mitigView === 'line' || mitigView === 'area' ? (
+            <CategoryTimeSeriesChart timeSeriesData={mitigTimeSeries} type={mitigView} storageKey="mitigation" />
+          ) : (
+            <MultiViewChart
+              data={mitigationRateData}
+              viewType={mitigView}
+              monthlyData={mitigView === 'comparison' ? mitigRange : undefined}
+              emptyLabel="No mitigation data"
+              onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mitigationStatusArray', value: data.name, title: `Threats with ${data.name} status` } })}
+            />
+          )}
         </ChartCard>
 
       </div>
@@ -858,14 +918,18 @@ export default function Threats() {
             <CompareRangeSelector value={usersDays} onChange={setUsersDays} />
             <DateFilter from={usersFilter.from} to={usersFilter.to} onFromChange={usersFilter.setFrom} onToChange={usersFilter.setTo} onClear={usersFilter.clear} />
           </>}>
-          <MultiViewChart
-            data={topUsersData}
-            viewType={usersView}
-            monthlyData={(usersView === 'line' || usersView === 'area' || usersView === 'comparison') ? usersRange : undefined}
-            barColor="#f59e0b"
-            emptyLabel="No user data"
-            onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'processUser', value: data.name, title: `Threats by user ${data.name}` } })}
-          />
+          {usersView === 'line' || usersView === 'area' ? (
+            <CategoryTimeSeriesChart timeSeriesData={usersTimeSeries} type={usersView} storageKey="topUsers" />
+          ) : (
+            <MultiViewChart
+              data={topUsersData}
+              viewType={usersView}
+              monthlyData={usersView === 'comparison' ? usersRange : undefined}
+              barColor="#f59e0b"
+              emptyLabel="No user data"
+              onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'processUser', value: data.name, title: `Threats by user ${data.name}` } })}
+            />
+          )}
         </ChartCard>
 
         <ChartCard title="Severity / Confidence Distribution" height={280}
@@ -874,12 +938,16 @@ export default function Threats() {
             <CompareRangeSelector value={severityDays} onChange={setSeverityDays} />
             <DateFilter from={severityFilter.from} to={severityFilter.to} onFromChange={severityFilter.setFrom} onToChange={severityFilter.setTo} onClear={severityFilter.clear} />
           </>}>
-          <MultiViewChart
-            data={severityData}
-            viewType={severityView}
-            monthlyData={(severityView === 'line' || severityView === 'area' || severityView === 'comparison') ? severityRange : undefined}
-            onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'confidenceLevel', value: data.name, title: `Threats with ${data.name} confidence` } })}
-          />
+          {severityView === 'line' || severityView === 'area' ? (
+            <CategoryTimeSeriesChart timeSeriesData={severityTimeSeries} type={severityView} storageKey="severity" />
+          ) : (
+            <MultiViewChart
+              data={severityData}
+              viewType={severityView}
+              monthlyData={severityView === 'comparison' ? severityRange : undefined}
+              onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'confidenceLevel', value: data.name, title: `Threats with ${data.name} confidence` } })}
+            />
+          )}
         </ChartCard>
       </div>
 
@@ -891,14 +959,18 @@ export default function Threats() {
             <CompareRangeSelector value={siteDays} onChange={setSiteDays} />
             <DateFilter from={siteFilter.from} to={siteFilter.to} onFromChange={siteFilter.setFrom} onToChange={siteFilter.setTo} onClear={siteFilter.clear} />
           </>}>
-          <MultiViewChart
-            data={bySiteData}
-            viewType={siteView}
-            monthlyData={(siteView === 'line' || siteView === 'area' || siteView === 'comparison') ? siteRange : undefined}
-            barColor="#10b981"
-            emptyLabel="No site data"
-            onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'site', value: data.name, title: `Threats in site ${data.name}` } })}
-          />
+          {siteView === 'line' || siteView === 'area' ? (
+            <CategoryTimeSeriesChart timeSeriesData={siteTimeSeries} type={siteView} storageKey="site" />
+          ) : (
+            <MultiViewChart
+              data={bySiteData}
+              viewType={siteView}
+              monthlyData={siteView === 'comparison' ? siteRange : undefined}
+              barColor="#10b981"
+              emptyLabel="No site data"
+              onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'site', value: data.name, title: `Threats in site ${data.name}` } })}
+            />
+          )}
         </ChartCard>
 
         <ChartCard title="Threats by Group" height={280}
@@ -907,14 +979,18 @@ export default function Threats() {
             <CompareRangeSelector value={groupDays} onChange={setGroupDays} />
             <DateFilter from={groupFilter.from} to={groupFilter.to} onFromChange={groupFilter.setFrom} onToChange={groupFilter.setTo} onClear={groupFilter.clear} />
           </>}>
-          <MultiViewChart
-            data={byGroupData}
-            viewType={groupView}
-            monthlyData={(groupView === 'line' || groupView === 'area' || groupView === 'comparison') ? groupRange : undefined}
-            barColor="#ec4899"
-            emptyLabel="No group data"
-            onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'group', value: data.name, title: `Threats in group ${data.name}` } })}
-          />
+          {groupView === 'line' || groupView === 'area' ? (
+            <CategoryTimeSeriesChart timeSeriesData={groupTimeSeries} type={groupView} storageKey="group" />
+          ) : (
+            <MultiViewChart
+              data={byGroupData}
+              viewType={groupView}
+              monthlyData={groupView === 'comparison' ? groupRange : undefined}
+              barColor="#ec4899"
+              emptyLabel="No group data"
+              onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'group', value: data.name, title: `Threats in group ${data.name}` } })}
+            />
+          )}
         </ChartCard>
       </div>
 

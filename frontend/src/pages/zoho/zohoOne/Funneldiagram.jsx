@@ -64,19 +64,23 @@ export default function Funneldiagram({ tickets = [], loading = false, onSliceCl
   const stemColor = slices.length > 0 ? slices[slices.length - 1].color : '#D32F2F';
 
   return (
-    <div style={{ background: '#fff', borderRadius: 14, padding: '24px 12px 20px', fontFamily: "'Inter','Segoe UI',sans-serif", maxWidth: 960, margin: '0 auto', boxShadow: '0 2px 20px rgba(0,0,0,0.09)' }}>
-      <h2 style={{ textAlign: 'center', fontWeight: 700, fontSize: 20, marginBottom: 12, color: '#1a1a2e', letterSpacing: 0.3 }}>Ticket Status Funnel</h2>
+    <div className="w-full h-full min-h-[480px] sm:min-h-[520px] rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] shadow-sm p-5 sm:p-6 flex flex-col justify-between overflow-hidden">
+      <div className="mb-2">
+        <h2 className="text-xl font-bold text-[var(--foreground)]">Ticket Status Funnel</h2>
+        <p className="text-xs text-[var(--muted)] mt-0.5">Lifecycle stages from open to closure</p>
+      </div>
 
       {loading ? (
-        <div style={{ textAlign: 'center', padding: 80, color: '#888', fontSize: 15 }}>Loading tickets…</div>
+        <div className="flex-1 flex items-center justify-center p-12 text-sm text-[var(--muted)]">Loading tickets…</div>
       ) : (
-        <div style={{ position: 'relative', width: '100%', overflowX: 'auto' }}>
-          <svg viewBox={`0 0 ${SVG_W} ${SVG_H}`} width="100%" style={{ display: 'block', minWidth: 600 }}>
+        <div className="relative w-full flex-1 flex flex-col justify-center items-center my-auto py-2">
+          <svg viewBox={`0 0 ${SVG_W} ${SVG_H}`} className="w-full h-auto max-h-[380px] block">
             {slices.map(s => (
-              <path key={s.status} d={slicePath(s.y1, s.y2)} fill={s.color} stroke="#fff" strokeWidth={1.5} style={{ cursor: 'pointer' }}
+              <path key={s.status} d={slicePath(s.y1, s.y2)} fill={s.color} stroke="rgba(255,255,255,0.4)" strokeWidth={1.5} style={{ cursor: 'pointer' }}
                 onClick={() => { if (s.count > 0 && onSliceClick) onSliceClick(s); }}
                 onMouseEnter={e => {
                   const svg = e.target.ownerSVGElement;
+                  if (!svg) return;
                   const rect = svg.getBoundingClientRect();
                   const midY = (s.y1 + s.y2) / 2;
                   setTooltip({ x: CX * (rect.width / SVG_W) + rect.left, y: midY * (rect.height / SVG_H) + rect.top, status: s.status, count: s.count });
@@ -94,10 +98,10 @@ export default function Funneldiagram({ tickets = [], loading = false, onSliceCl
               const textColX = isRight ? LABEL_COL_X_R : LABEL_COL_X_L;
               return (
                 <g key={`lbl-${s.status}`}>
-                  <line x1={startX} y1={midY} x2={elbowX} y2={midY} stroke="#888" strokeWidth={1} />
-                  <line x1={elbowX} y1={midY} x2={textColX} y2={midY} stroke="#888" strokeWidth={1} />
-                  <circle cx={elbowX} cy={midY} r={2.5} fill="#888" />
-                  <text x={isRight ? textColX + 6 : textColX - 6} y={midY + 5} fontSize={13} fontWeight={500} fill="#222" textAnchor={isRight ? 'start' : 'end'} fontFamily="'Inter','Segoe UI',sans-serif">
+                  <line x1={startX} y1={midY} x2={elbowX} y2={midY} stroke="currentColor" className="text-[var(--muted)]" strokeWidth={1} />
+                  <line x1={elbowX} y1={midY} x2={textColX} y2={midY} stroke="currentColor" className="text-[var(--muted)]" strokeWidth={1} />
+                  <circle cx={elbowX} cy={midY} r={2.5} fill="currentColor" className="text-[var(--muted)]" />
+                  <text x={isRight ? textColX + 6 : textColX - 6} y={midY + 5} fontSize={13} fontWeight={600} fill="currentColor" className="text-[var(--foreground)]" textAnchor={isRight ? 'start' : 'end'} fontFamily="'Inter','Segoe UI',sans-serif">
                     {s.status} : {s.count}
                   </text>
                 </g>
@@ -105,7 +109,7 @@ export default function Funneldiagram({ tickets = [], loading = false, onSliceCl
             })}
           </svg>
           {tooltip && (
-            <div style={{ position: 'fixed', left: tooltip.x + 14, top: tooltip.y - 22, background: 'rgba(15,15,25,0.90)', color: '#fff', padding: '7px 14px', borderRadius: 7, fontSize: 13, fontWeight: 500, pointerEvents: 'none', zIndex: 9999, whiteSpace: 'nowrap', boxShadow: '0 3px 12px rgba(0,0,0,0.35)' }}>
+            <div style={{ position: 'fixed', left: tooltip.x + 14, top: tooltip.y - 22, background: 'rgba(15,15,25,0.92)', color: '#fff', padding: '7px 14px', borderRadius: 7, fontSize: 13, fontWeight: 500, pointerEvents: 'none', zIndex: 9999, whiteSpace: 'nowrap', boxShadow: '0 3px 12px rgba(0,0,0,0.35)' }}>
               <strong>{tooltip.status}</strong>: {tooltip.count} ticket{tooltip.count !== 1 ? 's' : ''}
             </div>
           )}
@@ -113,14 +117,14 @@ export default function Funneldiagram({ tickets = [], loading = false, onSliceCl
       )}
 
       {!loading && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 18px', marginTop: 22, justifyContent: 'center', padding: '0 12px' }}>
+        <div className="flex flex-wrap gap-2 sm:gap-4 pt-3 border-t border-[var(--card-border)] justify-center px-2">
           {statusCounts.filter(c => c.count > 0).map(c => {
             const idx = FUNNEL_STATUSES.indexOf(c.status);
             return (
-              <div key={c.status} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: c.count > 0 ? 'pointer' : 'default' }}
+              <div key={c.status} className="flex items-center gap-1.5 cursor-pointer hover:opacity-80 transition-opacity"
                 onClick={() => { if (c.count > 0 && onSliceClick) onSliceClick(c); }}>
-                <div style={{ width: 12, height: 12, borderRadius: 3, background: SLICE_COLORS[idx] ?? '#aaa', flexShrink: 0 }} />
-                <span style={{ fontSize: 13, color: '#333', fontWeight: 500 }}>{c.status} ({c.count})</span>
+                <div style={{ width: 10, height: 10, borderRadius: 3, background: SLICE_COLORS[idx] ?? '#aaa', flexShrink: 0 }} />
+                <span className="text-xs font-medium text-[var(--foreground)]">{c.status} ({c.count})</span>
               </div>
             );
           })}

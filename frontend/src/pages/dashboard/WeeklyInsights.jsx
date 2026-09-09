@@ -10,6 +10,7 @@ const TOOLTIP_STYLE = {
   border: '1px solid var(--card-border)',
   borderRadius: 8,
   fontSize: 11,
+  color: 'var(--foreground)',
 };
 
 const EVENT_TYPE_COLORS = {

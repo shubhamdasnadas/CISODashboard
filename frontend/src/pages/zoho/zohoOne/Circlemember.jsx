@@ -1,43 +1,90 @@
 import { useMemo, useEffect, useRef, useState } from 'react';
 
 const CORP_COLORS = [
-  { bg: 'rgba(240,100,80,0.18)', border: 'rgba(240,100,80,0.55)', label: '#e8604a' },
-  { bg: 'rgba(220,80,100,0.15)', border: 'rgba(220,80,100,0.50)', label: '#d94f6a' },
-  { bg: 'rgba(255,130,90,0.16)', border: 'rgba(255,130,90,0.50)', label: '#e8724a' },
-  { bg: 'rgba(200,70,90,0.14)',  border: 'rgba(200,70,90,0.48)',  label: '#c8455a' },
-  { bg: 'rgba(250,110,80,0.16)', border: 'rgba(250,110,80,0.52)', label: '#e05a40' },
+  { bg: 'rgba(239, 68, 68, 0.12)', border: 'rgba(239, 68, 68, 0.55)', label: '#fca5a5', glow: 'rgba(239, 68, 68, 0.25)' },
+  { bg: 'rgba(249, 115, 22, 0.12)', border: 'rgba(249, 115, 22, 0.55)', label: '#fdba74', glow: 'rgba(249, 115, 22, 0.25)' },
+  { bg: 'rgba(168, 85, 247, 0.12)', border: 'rgba(168, 85, 247, 0.55)', label: '#d8b4fe', glow: 'rgba(168, 85, 247, 0.25)' },
+  { bg: 'rgba(59, 130, 246, 0.12)', border: 'rgba(59, 130, 246, 0.55)', label: '#93c5fd', glow: 'rgba(59, 130, 246, 0.25)' },
+  { bg: 'rgba(16, 185, 129, 0.12)', border: 'rgba(16, 185, 129, 0.55)', label: '#6ee7b7', glow: 'rgba(16, 185, 129, 0.25)' },
 ];
 
 const ASSIGNEE_COLORS = [
-  { from: '#f08060', to: '#e84a3a' }, { from: '#f09070', to: '#e06050' },
-  { from: '#e86060', to: '#d04040' }, { from: '#f0a080', to: '#e07060' },
-  { from: '#e87060', to: '#d05545' }, { from: '#f07050', to: '#e04030' },
+  { from: '#f87171', to: '#dc2626', shadow: 'rgba(220, 38, 38, 0.45)' },
+  { from: '#fb923c', to: '#ea580c', shadow: 'rgba(234, 88, 12, 0.45)' },
+  { from: '#fbbf24', to: '#d97706', shadow: 'rgba(217, 119, 6, 0.45)' },
+  { from: '#c084fc', to: '#9333ea', shadow: 'rgba(147, 51, 234, 0.45)' },
+  { from: '#60a5fa', to: '#2563eb', shadow: 'rgba(37, 99, 235, 0.45)' },
+  { from: '#34d399', to: '#059669', shadow: 'rgba(5, 150, 105, 0.45)' },
+  { from: '#f472b6', to: '#db2777', shadow: 'rgba(219, 39, 119, 0.45)' },
 ];
 
-function packCircles(radii, containerR) {
-  if (radii.length === 1) return [{ x: 0, y: 0 }];
-  if (radii.length === 3) {
+function packCircles(n, containerR, corpR) {
+  if (n <= 1) return [{ x: 0, y: 0 }];
+  if (n === 2) {
+    const dist = Math.max(containerR * 0.42, containerR - corpR - 12);
     return [
-      { x: 0, y: -containerR * 0.55 },
-      { x: -containerR * 0.40, y: containerR * 0.35 },
-      { x: containerR * 0.50, y: containerR * 0.20 },
+      { x: -dist * 0.7, y: 0 },
+      { x: dist * 0.7, y: 0 },
     ];
   }
-  return radii.map((r, i) => {
-    const angle = (i / radii.length) * Math.PI * 2;
-    const dist  = containerR - r - 25;
-    return { x: Math.cos(angle) * dist, y: Math.sin(angle) * dist };
+  if (n === 3) {
+    const dist = Math.max(containerR * 0.48, containerR - corpR - 10);
+    return [
+      { x: 0, y: -dist },
+      { x: -dist * 0.866, y: dist * 0.5 },
+      { x: dist * 0.866, y: dist * 0.5 },
+    ];
+  }
+  if (n === 4) {
+    const dist = Math.max(containerR * 0.48, containerR - corpR - 10);
+    return [
+      { x: -dist * 0.707, y: -dist * 0.707 },
+      { x: dist * 0.707, y: -dist * 0.707 },
+      { x: -dist * 0.707, y: dist * 0.707 },
+      { x: dist * 0.707, y: dist * 0.707 },
+    ];
+  }
+  const dist = Math.max(containerR * 0.52, containerR - corpR - 8);
+  return Array.from({ length: n }, (_, i) => {
+    const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+    return {
+      x: Math.cos(angle) * dist,
+      y: Math.sin(angle) * dist,
+    };
   });
 }
 
 function packAssigneeCircles(assignees, corpR) {
+  const n = assignees.length;
+  if (n === 0) return [];
+  if (n === 1) {
+    return [{ x: 0, y: corpR * 0.44, r: Math.min(22, corpR * 0.28), idx: 0 }];
+  }
+
   const sorted = assignees.map((a, i) => ({ ...a, originalIndex: i })).sort((a, b) => b.count - a.count);
   const maxCount = Math.max(...sorted.map(a => a.count), 1);
+
   return sorted.map((a, si) => {
-    const r     = Math.max(13, Math.min(corpR * 0.18, 13 + (a.count / maxCount) * (corpR * 0.10)));
-    const angle = (si / sorted.length) * Math.PI * 2 - Math.PI / 2;
-    const ring  = corpR - r - 10;
-    return { x: Math.cos(angle) * ring, y: Math.sin(angle) * ring, r, idx: a.originalIndex };
+    const r = Math.max(16, Math.min(corpR * 0.26, 16 + (a.count / maxCount) * (corpR * 0.08)));
+    const ring = Math.max(corpR * 0.58, corpR - r - 6);
+
+    let angle;
+    if (n === 2) {
+      angle = si === 0 ? -Math.PI / 2 : Math.PI / 2;
+    } else if (n === 3) {
+      angle = -Math.PI / 2 + (si * (Math.PI * 2 / 3));
+    } else if (n === 4) {
+      angle = -Math.PI / 4 + (si * (Math.PI / 2));
+    } else {
+      angle = (si / n) * Math.PI * 2 - Math.PI / 2;
+    }
+
+    return {
+      x: Math.cos(angle) * ring,
+      y: Math.sin(angle) * ring,
+      r,
+      idx: a.originalIndex,
+    };
   });
 }
 
@@ -46,26 +93,101 @@ function CorpCircle({ corp, corpR, colorScheme, onCircleClick }) {
 
   const getInitials = (name) => {
     if (!name || name === 'Unassigned') return 'UA';
-    return name.trim().split(/\s+/).filter(Boolean).map(w => w[0]?.toUpperCase()).join('');
+    return name.trim().split(/\s+/).filter(Boolean).map(w => w[0]?.toUpperCase()).join('').slice(0, 3);
   };
 
   return (
-    <div style={{ width: corpR * 2, height: corpR * 2, borderRadius: '50%', background: colorScheme.bg, border: `1.5px solid ${colorScheme.border}`, position: 'relative', flexShrink: 0, boxShadow: `0 0 32px ${colorScheme.border}`, overflow: 'hidden' }}>
-      <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center', pointerEvents: 'none', zIndex: 5, width: corpR * 0.55 }}>
-        <div style={{ fontSize: Math.max(11, corpR * 0.11), fontWeight: 700, color: colorScheme.label, lineHeight: 1.2, padding: '0 8px' }}>{corp.corporation}</div>
+    <div
+      style={{
+        width: corpR * 2,
+        height: corpR * 2,
+        borderRadius: '50%',
+        background: colorScheme.bg,
+        border: `1.5px solid ${colorScheme.border}`,
+        position: 'relative',
+        flexShrink: 0,
+        boxShadow: `0 0 24px ${colorScheme.glow || colorScheme.border}`,
+        overflow: 'hidden',
+      }}
+    >
+      {/* Department Name Tag */}
+      <div
+        style={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          textAlign: 'center',
+          pointerEvents: 'none',
+          zIndex: 10,
+          maxWidth: corpR * 1.15,
+          padding: '0 4px',
+        }}
+      >
+        <span
+          className="inline-block px-2 py-0.5 rounded-md text-[11px] font-bold leading-tight shadow-sm text-center"
+          style={{
+            color: colorScheme.label,
+            backgroundColor: 'rgba(15, 23, 42, 0.75)',
+            border: `1px solid ${colorScheme.border}`,
+            backdropFilter: 'blur(4px)',
+            wordBreak: 'break-word',
+          }}
+        >
+          {corp.corporation}
+        </span>
       </div>
-      {packed.map(p => {
+
+      {/* Assignee Sub-bubbles */}
+      {packed.map((p) => {
         const assignee = corp.assignees[p.idx];
         const color = ASSIGNEE_COLORS[p.idx % ASSIGNEE_COLORS.length];
         return (
-          <div key={assignee.name} title={`${assignee.name}: ${assignee.count} Tickets`}
-            style={{ position: 'absolute', width: p.r * 2, height: p.r * 2, borderRadius: '50%', background: `radial-gradient(circle at 35% 35%, ${color.from}, ${color.to})`, border: '1.5px solid rgba(255,255,255,0.25)', boxShadow: '0 2px 12px rgba(220,80,60,0.35)', left: corpR + p.x - p.r, top: corpR + p.y - p.r, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', zIndex: 5, cursor: 'pointer', transition: 'transform 0.18s ease' }}
-            onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.08)'; }}
-            onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; }}
-            onClick={() => { if (onCircleClick) onCircleClick(assignee.name, corp.corporation); }}
+          <div
+            key={assignee.name}
+            title={`${assignee.name}: ${assignee.count} Tickets (${corp.corporation})`}
+            style={{
+              position: 'absolute',
+              width: p.r * 2,
+              height: p.r * 2,
+              borderRadius: '50%',
+              background: `radial-gradient(circle at 35% 35%, ${color.from}, ${color.to})`,
+              border: '1.5px solid rgba(255, 255, 255, 0.4)',
+              boxShadow: `0 2px 8px ${color.shadow || 'rgba(0,0,0,0.35)'}`,
+              left: corpR + p.x - p.r,
+              top: corpR + p.y - p.r,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexDirection: 'column',
+              zIndex: 20,
+              cursor: 'pointer',
+              transition: 'transform 0.18s ease, box-shadow 0.18s ease',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'scale(1.15)';
+              e.currentTarget.style.zIndex = '30';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'scale(1)';
+              e.currentTarget.style.zIndex = '20';
+            }}
+            onClick={() => {
+              if (onCircleClick) onCircleClick(assignee.name, corp.corporation);
+            }}
           >
-            <span style={{ fontSize: Math.max(12, Math.min(22, p.r * 0.45)), fontWeight: 800, color: '#fff', textAlign: 'center', lineHeight: 1 }}>{getInitials(assignee.name)}</span>
-            <span style={{ fontSize: Math.max(7, Math.min(10, p.r * 0.18)), color: 'rgba(255,255,255,0.9)', marginTop: 4, textAlign: 'center', maxWidth: p.r * 1.6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{assignee.count} Tickets</span>
+            <span
+              className="font-extrabold text-white leading-none tracking-tight"
+              style={{ fontSize: Math.max(10, Math.min(14, p.r * 0.65)) }}
+            >
+              {getInitials(assignee.name)}
+            </span>
+            <span
+              className="font-bold text-white/95 leading-none mt-0.5 rounded-full bg-black/30 px-1 py-[1px]"
+              style={{ fontSize: Math.max(8, Math.min(10, p.r * 0.45)) }}
+            >
+              {assignee.count}
+            </span>
           </div>
         );
       })}
@@ -75,11 +197,15 @@ function CorpCircle({ corp, corpR, colorScheme, onCircleClick }) {
 
 export default function Circlemember({ tickets, onCircleClick }) {
   const containerRef = useRef(null);
-  const [containerSize, setContainerSize] = useState(700);
+  const [containerSize, setContainerSize] = useState(380);
 
   useEffect(() => {
     const update = () => {
-      if (containerRef.current) setContainerSize(Math.max(320, containerRef.current.offsetWidth));
+      if (containerRef.current) {
+        const width = containerRef.current.offsetWidth || 380;
+        const height = containerRef.current.offsetHeight || 380;
+        setContainerSize(Math.min(width - 24, height - 24, 400));
+      }
     };
     update();
     const ro = new ResizeObserver(update);
@@ -102,39 +228,74 @@ export default function Circlemember({ tickets, onCircleClick }) {
     }));
   }, [tickets]);
 
-  const mainR  = Math.min(containerSize * 0.34, 220);
-  const circleR = mainR * 0.75;
+  const circleR = Math.max(140, Math.min(containerSize * 0.48, 185));
+  const nCorps = corporationData.length;
 
-  const corpRadii = useMemo(() => corporationData.map(c => {
-    if (c.assignees.length >= 8) return 78;
-    if (c.assignees.length >= 3) return 72;
-    return 62;
-  }), [corporationData]);
+  const corpR = useMemo(() => {
+    if (nCorps <= 1) return Math.round(circleR * 0.65);
+    if (nCorps === 2) return Math.round(circleR * 0.48);
+    if (nCorps === 3) return Math.round(circleR * 0.44);
+    if (nCorps === 4) return Math.round(circleR * 0.40);
+    return Math.round(circleR * 0.35);
+  }, [nCorps, circleR]);
+
+  const corpPositions = useMemo(() => packCircles(nCorps, circleR, corpR), [nCorps, circleR, corpR]);
 
   if (corporationData.length === 0) {
     return (
-      <div style={{ background: '#fdf4f2', borderRadius: 16, padding: 40, textAlign: 'center', color: '#c06050', fontFamily: 'sans-serif' }}>
-        No ticket data available
+      <div className="w-full h-full rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] shadow-sm flex flex-col overflow-hidden">
+        <div className="px-5 py-4 border-b border-[var(--card-border)] bg-[var(--muted-bg)] flex-shrink-0">
+          <h2 className="text-base font-bold text-[var(--foreground)]">Corporation Assignee Distribution</h2>
+          <p className="text-xs text-[var(--muted)] mt-1">Assignee distribution across corporate departments</p>
+        </div>
+        <div className="flex-1 flex items-center justify-center p-8 text-center text-sm text-[var(--muted)] min-h-[380px]">
+          No ticket data available
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="w-full rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] p-5 shadow-sm" ref={containerRef}
-      style={{ background: '#fdf4f2', borderRadius: 16, padding: 10, textAlign: 'center', fontFamily: "'Inter', 'Segoe UI', sans-serif", userSelect: 'none' }}>
-      <h2 style={{ textAlign: 'center', color: '#c04030', fontWeight: 700, fontSize: 18, marginBottom: 16, letterSpacing: 0.3 }}>
-        Corporation Assignee Distribution
-      </h2>
-      <div style={{ position: 'relative', width: circleR * 2, height: circleR * 2, borderRadius: '50%', background: 'radial-gradient(circle at 40% 40%, rgba(255,210,200,0.55), rgba(250,180,170,0.25))', border: '2px solid rgba(220,100,80,0.30)', boxShadow: '0 0 60px rgba(240,100,80,0.12), inset 0 0 40px rgba(240,100,80,0.06)', margin: '10px auto 0', overflow: 'hidden' }}>
-        {corporationData.map((corp, idx) => {
-          const r   = corpRadii[idx];
-          const pos = packCircles(corpRadii, circleR)[idx] ?? { x: 0, y: 0 };
-          return (
-            <div key={corp.corporation} style={{ position: 'absolute', left: circleR + pos.x - r, top: circleR + pos.y - r }}>
-              <CorpCircle corp={corp} corpR={r} colorScheme={CORP_COLORS[idx % CORP_COLORS.length]} onCircleClick={onCircleClick} />
-            </div>
-          );
-        })}
+    <div className="w-full h-full rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] shadow-sm flex flex-col overflow-hidden">
+      <div className="px-5 py-4 border-b border-[var(--card-border)] bg-[var(--muted-bg)] flex-shrink-0">
+        <h2 className="text-base font-bold text-[var(--foreground)]">Corporation Assignee Distribution</h2>
+        <p className="text-xs text-[var(--muted)] mt-1">Assignee distribution across corporate departments</p>
+      </div>
+      <div className="flex-1 flex items-center justify-center p-4 min-h-[380px]" ref={containerRef}>
+        <div
+          style={{
+            position: 'relative',
+            width: circleR * 2,
+            height: circleR * 2,
+            borderRadius: '50%',
+            background: 'radial-gradient(circle at 40% 40%, rgba(244,63,94,0.12), rgba(244,63,94,0.03))',
+            border: '2px solid rgba(244,63,94,0.28)',
+            boxShadow: '0 0 40px rgba(244,63,94,0.10)',
+            margin: 'auto',
+            overflow: 'hidden',
+          }}
+        >
+          {corporationData.map((corp, idx) => {
+            const pos = corpPositions[idx] ?? { x: 0, y: 0 };
+            return (
+              <div
+                key={corp.corporation}
+                style={{
+                  position: 'absolute',
+                  left: circleR + pos.x - corpR,
+                  top: circleR + pos.y - corpR,
+                }}
+              >
+                <CorpCircle
+                  corp={corp}
+                  corpR={corpR}
+                  colorScheme={CORP_COLORS[idx % CORP_COLORS.length]}
+                  onCircleClick={onCircleClick}
+                />
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

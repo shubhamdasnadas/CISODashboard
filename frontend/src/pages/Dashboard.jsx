@@ -1,32 +1,42 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ResponsiveGridLayout, noCompactor } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
-import {
-  PieChart, Pie, Cell,
-  BarChart, Bar,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-} from 'recharts';
 import api from '../api.js';
 import { useOrg } from '../context/OrgContext.jsx';
 
 import {
   FIREWALL_REPORTS, COLORS, GRID_BREAKPOINTS, GRID_COLS,
   DEFAULT_BOXES, WIDGET_OPTIONS,
-  clampLayoutItem, normalizeSavedBoxes, makeResponsiveLayouts, clampGridItem,
-  parseAxis, getNum, extractTable, buildRiskTrendData,
+  clampLayoutItem, normalizeSavedBoxes, makeResponsiveLayouts,
+  getNum, extractTable,
 } from './dashboard/helpers.js';
-import DynChart from './dashboard/DynChart.jsx';
 import FwGraphWidget from './dashboard/FwGraphWidget.jsx';
 import S1ConfigWidget from './dashboard/S1ConfigWidget.jsx';
 import WidgetSkeleton from './dashboard/WidgetSkeleton.jsx';
 import CheckpointWidgetPicker from './dashboard/CheckpointWidgetPicker.jsx';
 import SentinelOneWidgetPicker from './dashboard/SentinelOneWidgetPicker.jsx';
 import ZohoTicketMatrix from './zoho/ZohoTicketMatrix.jsx';
-import CacheCard from '../components/CacheCard.jsx';
+import ZohoServiceDeskWidgets from './dashboard/ZohoServiceDeskWidgets.jsx';
 import AllCommonmttr from './CyberHygen/AllCommonmttr.jsx';
 import FrameworkScore from './dashboard/FrameworkScore.jsx';
+
+// ── Enhanced & New Domain Widgets ──────────────────────────────────────────────
+import ExecutiveKpiStrip from './dashboard/ExecutiveKpiStrip.jsx';
+import EmailSecurityWidgets from './dashboard/EmailSecurityWidgets.jsx';
+import EndpointPostureWidgets from './dashboard/EndpointPostureWidgets.jsx';
+import NetworkSecurityWidgets from './dashboard/NetworkSecurityWidgets.jsx';
+import IdentityMdmWidgets from './dashboard/IdentityMdmWidgets.jsx';
+import ThreatIntelWidgets from './dashboard/ThreatIntelWidgets.jsx';
+import AllTools from './dashboard/AllTools.jsx';
+import {
+  MultiViewChart,
+  ChartViewDropdown,
+  DaysFilter,
+  categoryTimeSeries,
+  withinRange,
+} from './security/widgetViews.jsx';
 
 // ── Small UI helpers ────────────────────────────────────────────────────────────
 function Err({ msg }) {
@@ -44,7 +54,6 @@ function Empty({ msg }) {
   );
 }
 
-// Small SVG icon map used by the executive summary strip.
 // ── Date range filter (per-card) ───────────────────────────────────────────────
 function DateRangeMini({ from, to, onChange }) {
   return (
@@ -80,8 +89,6 @@ function DateRangeMini({ from, to, onChange }) {
 }
 
 // ── Per-widget search filter ───────────────────────────────────────────────────
-// Renders a search icon that expands into an inline input on click. Typing updates
-// `value` (controlled by the parent), so only that widget's rows get filtered.
 function WidgetSearch({ value, onChange, placeholder = 'Filter…', inputWidth = 'w-32' }) {
   const [open, setOpen] = useState(false);
   return (
@@ -115,18 +122,17 @@ function WidgetSearch({ value, onChange, placeholder = 'Filter…', inputWidth =
   );
 }
 
-// Inclusive date-range check. If no filter is set, everything passes.
+// Inclusive date-range check
 function inDateRange(dateVal, from, to) {
   if (!from && !to) return true;
   if (!dateVal) return false;
   const d = new Date(dateVal).getTime();
   if (Number.isNaN(d)) return false;
   if (from && d < new Date(from).getTime()) return false;
-  if (to && d > new Date(to).getTime() + 86399999) return false; // include entire "to" day
+  if (to && d > new Date(to).getTime() + 86399999) return false;
   return true;
 }
 
-// Best-effort date field lookup for records whose shape we don't fully control.
 function guessDateValue(obj) {
   if (!obj || typeof obj !== 'object') return null;
   const candidates = [
@@ -137,8 +143,6 @@ function guessDateValue(obj) {
   for (const c of candidates) if (obj[c]) return obj[c];
   return null;
 }
-
-const tooltipStyle = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8 };
 
 const COMPACT_S1_WIDGET_IDS = new Set(['s1-mitigation', 's1-severity', 's1-threats', 's1-agents']);
 const COMPACT_S1_WIDGET_HEIGHT = 22;
@@ -169,6 +173,8 @@ function mapCpEvent(e) {
   };
 }
 
+const ALL_SECTIONS = ['checkpoint', 'sentinelone', 'firewall', 'identity_mdm', 'ticketing', 'threat_intel'];
+
 // ── Main Dashboard ──────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const { currentOrg } = useOrg();
@@ -192,6 +198,9 @@ export default function Dashboard() {
   const [customAlertData, setCustomAlertData] = useState([]);
   const [customAlertLoading, setCustomAlertLoading] = useState(true);
   const [mitigationChart, setMitigationChart] = useState('donut');
+  const [severityChart, setSeverityChart] = useState('bar');
+  const [mitigationDays, setMitigationDays] = useState(14);
+  const [severityDays, setSeverityDays] = useState(14);
 
   // ── Ticketing data ──────────────────────────────────────────────────────────
   const [ticketData, setTicketData] = useState([]);
@@ -209,8 +218,8 @@ export default function Dashboard() {
   const [fwWidgets, setFwWidgets] = useState([]);
   const [fwReport, setFwReport] = useState('bandwidth-trend');
   const [fwRaw, setFwRaw] = useState(null);
-  const [fwLoading, setFwLoading] = useState(false);
-  const [fwError, setFwError] = useState('');
+  const [, setFwLoading] = useState(false);
+  const [, setFwError] = useState('');
   const [fwXAxis, setFwXAxis] = useState([]);
   const [fwYAxis, setFwYAxis] = useState([]);
   const [fwChartType, setFwChartType] = useState('bar');
@@ -224,7 +233,6 @@ export default function Dashboard() {
   const [s1SyncMsg, setS1SyncMsg] = useState(null);
 
   // ── Per-card date filters ───────────────────────────────────────────────────
-  // Keyed by a stable card id, e.g. 's1-mitigation', `cp-${widgetId}`, `fw-${widgetId}`.
   const [cardRanges, setCardRanges] = useState({});
   const cardRangesRef = useRef({});
   useEffect(() => { cardRangesRef.current = cardRanges; }, [cardRanges]);
@@ -235,7 +243,7 @@ export default function Dashboard() {
 
   // ── Grid layout ──────────────────────────────────────────────────────────────
   const [boxes, setBoxes] = useState(() => compactLegacyS1WidgetHeights(DEFAULT_BOXES));
-  const [layoutLoaded, setLayoutLoaded] = useState(false);
+  const [, setLayoutLoaded] = useState(false);
   const [activeGridBreakpoint, setActiveGridBreakpoint] = useState('lg');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -248,10 +256,12 @@ export default function Dashboard() {
   const [cpSelected, setCpSelected] = useState([]);
   const [s1Selected, setS1Selected] = useState([]);
 
-  // ── Section ordering ─────────────────────────────────────────────────────────
-  const [sectionOrder, setSectionOrder] = useState(['checkpoint', 'sentinelone', 'firewall']);
-  const sectionOrderRef = useRef(['checkpoint', 'sentinelone', 'firewall']);
+  // ── Section ordering & Drag & Drop ───────────────────────────────────────────
+  const [sectionOrder, setSectionOrder] = useState(ALL_SECTIONS);
+  const sectionOrderRef = useRef(ALL_SECTIONS);
   const dragSectionRef = useRef(null);
+  const [draggedSection, setDraggedSection] = useState(null);
+  const [dragOverSection, setDragOverSection] = useState(null);
 
   // ── Visible widget sets ───────────────────────────────────────────────────────
   const [visibleS1Widgets, setVisibleS1Widgets] = useState(['s1-mitigation', 's1-severity', 's1-threats', 's1-agents']);
@@ -263,7 +273,6 @@ export default function Dashboard() {
   });
   const [visibleCpWidgets, setVisibleCpWidgets] = useState([]);
 
-  // keep refs in sync for debounced persist
   const visibleS1Ref = useRef(['s1-mitigation', 's1-severity', 's1-threats', 's1-agents']);
   const s1ConfigsRef = useRef(s1WidgetConfigs);
   const visibleCpRef = useRef([]);
@@ -273,13 +282,13 @@ export default function Dashboard() {
   useEffect(() => { visibleCpRef.current = visibleCpWidgets; }, [visibleCpWidgets]);
   useEffect(() => { sectionOrderRef.current = sectionOrder; }, [sectionOrder]);
 
-  // ── Per-widget search terms (only filters that widget's rows) ──────────────
+  // ── Per-widget search terms ──────────────────────────────────────────────────
   const [widgetSearch, setWidgetSearch] = useState({});
   const setWidgetSearchTerm = useCallback((key, val) => {
     setWidgetSearch((prev) => ({ ...prev, [key]: val }));
   }, []);
 
-  // ── Container width (for react-grid-layout) ───────────────────────────────────
+  // ── Container width ──────────────────────────────────────────────────────────
   const [containerWidth, setContainerWidth] = useState(typeof window !== 'undefined' ? window.innerWidth - 240 : 1200);
   const containerRef = useRef(null);
   useEffect(() => {
@@ -295,7 +304,7 @@ export default function Dashboard() {
     return () => { window.removeEventListener('resize', update); ro.disconnect(); };
   }, []);
 
-  // ── Persist layout (debounced) ─────────────────────────────────────────────────
+  // ── Persist layout ───────────────────────────────────────────────────────────
   const persistLayout = useCallback((nextBoxes, nextSectionOrder) => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     setSaving(true);
@@ -316,10 +325,7 @@ export default function Dashboard() {
     }, 800);
   }, []);
 
-  // ── Aggregate data fetch (served from Redis cache layer) ───────────────────────
-  // Reads the cached dashboard snapshot (cache:<org>:dashboard-aggregate).
-  // The cache-aside route returns { source: 'redis' | 'postgres' } so we can
-  // surface a "Live (cached)" vs "DB (fallback)" indicator.
+  // ── Aggregate data fetch ─────────────────────────────────────────────────────
   const [aggSource, setAggSource] = useState(null);
   useEffect(() => {
     if (!currentOrg) return;
@@ -333,9 +339,11 @@ export default function Dashboard() {
           const saved = Array.isArray(agg.layout?.pgboxes) ? agg.layout.pgboxes : [];
           setBoxes(compactLegacyS1WidgetHeights(normalizeSavedBoxes(saved)));
           const savedOrder = agg.layout?.sectionOrder;
-          if (Array.isArray(savedOrder) && savedOrder.length === 3) {
-            setSectionOrder(savedOrder);
-            sectionOrderRef.current = savedOrder;
+          if (Array.isArray(savedOrder) && savedOrder.length > 0) {
+            // merge with any new sections
+            const merged = Array.from(new Set([...savedOrder, ...ALL_SECTIONS]));
+            setSectionOrder(merged);
+            sectionOrderRef.current = merged;
           }
           if (Array.isArray(agg.layout?.visibleS1Widgets) && agg.layout.visibleS1Widgets.length > 0) {
             setVisibleS1Widgets(agg.layout.visibleS1Widgets);
@@ -393,7 +401,7 @@ export default function Dashboard() {
       });
   }, [currentOrg?.id]);
 
-  // ── Ticketing data (fetched separately) ──────────────────────────────────────
+  // ── Ticketing data ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!currentOrg) return;
     setTicketLoading(true);
@@ -403,7 +411,7 @@ export default function Dashboard() {
       .finally(() => setTicketLoading(false));
   }, [currentOrg?.id]);
 
-  // ── MDM data (fetched separately) ────────────────────────────────────────────
+  // ── MDM data ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!currentOrg) return;
     setMdmLoading(true);
@@ -413,8 +421,7 @@ export default function Dashboard() {
       .finally(() => setMdmLoading(false));
   }, [currentOrg?.id]);
 
-
-  // Layout is per-user, so it is fetched live (not from the org-wide cache).
+  // ── Layout load ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!currentOrg) return;
     api.get('/dashboard/layout')
@@ -424,8 +431,9 @@ export default function Dashboard() {
           const saved = Array.isArray(layout?.pgboxes) ? layout.pgboxes : [];
           setBoxes(compactLegacyS1WidgetHeights(normalizeSavedBoxes(saved)));
           const savedOrder = layout?.sectionOrder;
-          if (Array.isArray(savedOrder) && savedOrder.length === 3) {
-            setSectionOrder(savedOrder); sectionOrderRef.current = savedOrder;
+          if (Array.isArray(savedOrder) && savedOrder.length > 0) {
+            const merged = Array.from(new Set([...savedOrder, ...ALL_SECTIONS]));
+            setSectionOrder(merged); sectionOrderRef.current = merged;
           }
           if (Array.isArray(layout?.visibleS1Widgets) && layout.visibleS1Widgets.length > 0) {
             setVisibleS1Widgets(layout.visibleS1Widgets); visibleS1Ref.current = layout.visibleS1Widgets;
@@ -443,7 +451,7 @@ export default function Dashboard() {
       .catch(() => setLayoutLoaded(true));
   }, [currentOrg?.id]);
 
-  // ── Firewall report preview (for Add Widget modal) ─────────────────────────────
+  // ── Firewall report preview ─────────────────────────────────────────────────
   useEffect(() => {
     if (!currentOrg || !fwReport) return;
     setFwLoading(true); setFwError(''); setFwRaw(null);
@@ -457,7 +465,6 @@ export default function Dashboard() {
       .finally(() => setFwLoading(false));
   }, [currentOrg?.id, fwReport]);
 
-  // Auto-select axes when firewall data loads
   useEffect(() => {
     const table = fwRaw ? extractTable(fwRaw) : null;
     if (!table?.columns?.length) return;
@@ -467,23 +474,85 @@ export default function Dashboard() {
     setFwYAxis((prev) => prev.length ? prev : [numCol]);
   }, [fwRaw]);
 
-  // ── Section drag-to-reorder ────────────────────────────────────────────────────
-  function moveSection(target) {
-    const dragged = dragSectionRef.current;
-    if (!dragged || dragged === target) return;
+  // ── Section drag-to-reorder handlers ─────────────────────────────────────────
+  const handleSectionDragStart = (e, sectionKey) => {
+    if (!isEditMode) return;
+    dragSectionRef.current = sectionKey;
+    setDraggedSection(sectionKey);
+    e.dataTransfer.effectAllowed = 'move';
+    try {
+      e.dataTransfer.setData('text/plain', sectionKey);
+    } catch {
+      // fallback for older browsers
+    }
+  };
+
+  const handleSectionDragEnd = () => {
+    dragSectionRef.current = null;
+    setDraggedSection(null);
+    setDragOverSection(null);
+  };
+
+  const handleSectionDragOver = (e, sectionKey) => {
+    if (!isEditMode || !dragSectionRef.current || dragSectionRef.current === sectionKey) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverSection !== sectionKey) {
+      setDragOverSection(sectionKey);
+    }
+  };
+
+  const handleSectionDragLeave = (e, sectionKey) => {
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    if (dragOverSection === sectionKey) {
+      setDragOverSection(null);
+    }
+  };
+
+  const handleSectionDrop = (e, targetSectionKey) => {
+    if (!isEditMode) return;
+    e.preventDefault();
+    const sourceKey = dragSectionRef.current || draggedSection;
+    if (!sourceKey || sourceKey === targetSectionKey) {
+      handleSectionDragEnd();
+      return;
+    }
     setSectionOrder((prev) => {
       const next = [...prev];
-      const from = next.indexOf(dragged);
-      const to = next.indexOf(target);
+      const from = next.indexOf(sourceKey);
+      const to = next.indexOf(targetSectionKey);
+      if (from === -1 || to === -1) return prev;
       next.splice(from, 1);
-      next.splice(to, 0, dragged);
+      next.splice(to, 0, sourceKey);
       sectionOrderRef.current = next;
       persistLayout(boxes, next);
       return next;
     });
-  }
+    handleSectionDragEnd();
+  };
 
-  // ── Grid layout change ─────────────────────────────────────────────────────────
+  const moveSectionStep = (sec, direction) => {
+    setSectionOrder((prev) => {
+      const next = [...prev];
+      const idx = next.indexOf(sec);
+      if (idx === -1) return prev;
+      const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+      if (targetIdx < 0 || targetIdx >= next.length) return prev;
+      const [item] = next.splice(idx, 1);
+      next.splice(targetIdx, 0, item);
+      sectionOrderRef.current = next;
+      persistLayout(boxes, next);
+      return next;
+    });
+  };
+
+  const resetSectionOrder = () => {
+    setSectionOrder(ALL_SECTIONS);
+    sectionOrderRef.current = ALL_SECTIONS;
+    persistLayout(boxes, ALL_SECTIONS);
+  };
+
+  // ── Grid layout change ──────────────────────────────────────────────────────
   function handleLayoutChange(newLayout, allLayouts) {
     if (!isEditMode) return;
     const layoutToSave = activeGridBreakpoint === 'lg' ? newLayout : (allLayouts.lg ?? []);
@@ -510,7 +579,7 @@ export default function Dashboard() {
     persistLayout(boxes);
   }
 
-  // ── Sync handlers ──────────────────────────────────────────────────────────────
+  // ── Sync handlers ───────────────────────────────────────────────────────────
   async function handleS1Sync() {
     setS1Syncing(true); setS1SyncMsg(null);
     try {
@@ -543,7 +612,6 @@ export default function Dashboard() {
     }
   }
 
-  // ── Add firewall widget ────────────────────────────────────────────────────────
   async function handleAddFwWidget() {
     if (!fwXAxis.length || !fwYAxis.length) return;
     const nextY = fwWidgets.length > 0 ? Math.max(...fwWidgets.map((w) => Number(w.y ?? 0) + Number(w.h ?? 44))) : 0;
@@ -560,7 +628,6 @@ export default function Dashboard() {
     setFwWidgets((prev) => prev.filter((w) => w.id !== id));
   }
 
-  // ── Widget visibility togglers ─────────────────────────────────────────────────
   function removeS1Widget(id) {
     const next = visibleS1Ref.current.filter((w) => w !== id);
     visibleS1Ref.current = next;
@@ -574,7 +641,7 @@ export default function Dashboard() {
     persistLayout(boxes);
   }
 
-  function toggleAxis(col, list, setter, max = 2) {
+  function toggleAxis(col, setter, max = 2) {
     setter((prev) => {
       if (prev.includes(col)) return prev.filter((v) => v !== col);
       if (prev.length >= max) return prev;
@@ -582,26 +649,55 @@ export default function Dashboard() {
     });
   }
 
-  // ── Derived data (each per-card, filtered by that card's own date range) ──────
+  // ── Derived S1 Data ─────────────────────────────────────────────────────────
   const mitigationRange = getRange('s1-mitigation');
-  const mitigationSourceData = s1Data.filter((t) => inDateRange(t.threatInfo?.createdAt, mitigationRange.from, mitigationRange.to));
+  const mitigationSourceData = useMemo(() => {
+    let list = s1Data;
+    if (mitigationRange.from || mitigationRange.to) {
+      list = list.filter((t) => inDateRange(t.threatInfo?.createdAt, mitigationRange.from, mitigationRange.to));
+    } else if (mitigationDays !== 'all') {
+      list = withinRange(list, (t) => (t.threatInfo?.createdAt ? new Date(t.threatInfo.createdAt) : null), mitigationDays);
+    }
+    return list;
+  }, [s1Data, mitigationRange, mitigationDays]);
+
   const mitigationCounts = {};
   mitigationSourceData.forEach((t) => { const s = t.threatInfo?.mitigationStatus || 'unknown'; mitigationCounts[s] = (mitigationCounts[s] || 0) + 1; });
   const mitigationData = Object.entries(mitigationCounts).map(([name, value], i) => ({ name, value, fill: COLORS[i % COLORS.length] }));
-  const mitigationTotal = mitigationData.reduce((s, d) => s + d.value, 0);
+
+  const mitigationTimeSeries = useMemo(() => {
+    return categoryTimeSeries(mitigationSourceData.length > 0 ? mitigationSourceData : s1Data, {
+      keyOf: (t) => t.threatInfo?.mitigationStatus || 'unknown',
+      dateOf: (t) => (t.threatInfo?.createdAt ? new Date(t.threatInfo.createdAt) : null),
+      days: mitigationDays === 'all' ? 30 : mitigationDays,
+    });
+  }, [mitigationSourceData, s1Data, mitigationDays]);
 
   const severityRange = getRange('s1-severity');
-  const severitySourceData = s1Data.filter((t) => inDateRange(t.threatInfo?.createdAt, severityRange.from, severityRange.to));
+  const severitySourceData = useMemo(() => {
+    let list = s1Data;
+    if (severityRange.from || severityRange.to) {
+      list = list.filter((t) => inDateRange(t.threatInfo?.createdAt, severityRange.from, severityRange.to));
+    } else if (severityDays !== 'all') {
+      list = withinRange(list, (t) => (t.threatInfo?.createdAt ? new Date(t.threatInfo.createdAt) : null), severityDays);
+    }
+    return list;
+  }, [s1Data, severityRange, severityDays]);
+
   const severityCounts = {};
   severitySourceData.forEach((t) => { const s = t.threatInfo?.confidenceLevel || 'unknown'; severityCounts[s] = (severityCounts[s] || 0) + 1; });
   const severityData = Object.entries(severityCounts).map(([name, value], i) => ({ name, value, fill: COLORS[i % COLORS.length] }));
 
+  const severityTimeSeries = useMemo(() => {
+    return categoryTimeSeries(severitySourceData.length > 0 ? severitySourceData : s1Data, {
+      keyOf: (t) => t.threatInfo?.confidenceLevel || 'unknown',
+      dateOf: (t) => (t.threatInfo?.createdAt ? new Date(t.threatInfo.createdAt) : null),
+      days: severityDays === 'all' ? 30 : severityDays,
+    });
+  }, [severitySourceData, s1Data, severityDays]);
+
   const threatsRange = getRange('s1-threats');
 
-  // Map a SentinelOne cloud-detection alert's status to "mitigated / not".
-  // Typical S1 alert statuses live in alertInfo.incidentStatus:
-  //   "Resolved" -> mitigated, "Unresolved" / "In Progress" -> not mitigated.
-  // NOTE: "unresolved" must be checked BEFORE "resolved" (it also contains it).
   const alertMitigation = (s) => {
     const str = String(s || '').toLowerCase().replace(/[_\s-]/g, '');
     if (str.includes('unresolved') || str.includes('inprogress') || str.includes('open')
@@ -611,14 +707,9 @@ export default function Dashboard() {
     return 'unknown';
   };
 
-  // Normalise a custom (cloud detection) alert so it renders in the same
-  // Recent Threats rows as regular threats. Uses the actual payload shape
-  // (ruleInfo.* / alertInfo.*) so name, severity, time and status map correctly.
   const mapCustomAlert = (a) => {
     const name = a.ruleInfo?.name || a.alertInfo?.indicatorName || a.ruleName
       || a.alertName || a.name || a.title || a.displayName || 'Custom Alert';
-    // createdAt lives at alertInfo.createdAt — must be picked up so the same
-    // date filter used for threats also filters custom alerts.
     const createdAt = a.alertInfo?.createdAt || a.alertInfo?.reportedAt
       || a.alertInfo?.updatedAt || a.detectedAt || a.createdAt || a.timestamp
       || a.detectionInfo?.detectedAt || guessDateValue(a);
@@ -631,8 +722,6 @@ export default function Dashboard() {
     return { source: 'custom-alert', raw: a, name, createdAt, status, severity, subtitle };
   };
 
-  // "Both mix" — threats and custom alerts combined, newest first.
-  // No slice/limit: the full mixed feed is shown (backend returns everything).
   const recentThreats = [
     ...s1Data.map((t) => ({
       source: 'threat',
@@ -648,11 +737,9 @@ export default function Dashboard() {
     .filter((t) => inDateRange(t.createdAt, threatsRange.from, threatsRange.to))
     .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
 
-  // Separate counts for the card header (respect the active date filter).
   const recentThreatCount = recentThreats.filter((x) => x.source === 'threat').length;
   const recentAlertCount = recentThreats.filter((x) => x.source === 'custom-alert').length;
 
-  // Per-widget search filtering — matches any text field in the row (case-insensitive)
   const searchThreats = (widgetSearch['s1-threats'] || '').trim().toLowerCase();
   const displayThreats = searchThreats
     ? recentThreats.filter((t) => {
@@ -696,7 +783,7 @@ export default function Dashboard() {
   const fwTable = fwRaw ? extractTable(fwRaw) : null;
   const fwColumns = fwTable?.columns ?? [];
 
-  // ── Grid items ─────────────────────────────────────────────────────────────────
+  // ── Grid items ─────────────────────────────────────────────────────────────
   const s1AllItems = boxes
     .filter((b) => b.i.startsWith('s1-') && visibleS1Widgets.includes(b.i))
     .map((b) => ({ i: b.i, x: b.x, y: b.y, w: b.w, h: b.h, minW: 2, minH: 20, static: false }));
@@ -708,7 +795,20 @@ export default function Dashboard() {
   const s1Layouts = makeResponsiveLayouts(s1AllItems);
   const fwLayouts = makeResponsiveLayouts(fwGridItems);
 
-  // ── Early return — no org ──────────────────────────────────────────────────────
+  // Tools catalog stats for AllTools orbital bubble chart
+  const integratedToolsStats = useMemo(() => [
+    { key: 'security', value: s1Data.length },
+    { key: 'agent', value: agentData.length },
+    { key: 'checkpoint', value: cpEvents.length },
+    { key: 'nvd', value: appCveData.length },
+    { key: 'paloalto', value: fwWidgets.length || 10 },
+    { key: 'mdm', value: mdmData.length },
+    { key: 'microsoft365', value: 32 },
+    { key: 'zoho', value: ticketData.length },
+    { key: 'analytics', value: rssData.length },
+  ], [s1Data, agentData, cpEvents, appCveData, fwWidgets, mdmData, ticketData, rssData]);
+
+  // ── Early return — no org ──────────────────────────────────────────────────
   if (!currentOrg) {
     return (
       <div className="p-8">
@@ -720,13 +820,12 @@ export default function Dashboard() {
     );
   }
 
-  // ── Render ─────────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="p-3 sm:p-5 lg:p-6">
+    <div className="p-3 sm:p-5 lg:p-6 space-y-6">
 
       {/* Header */}
-      <div className="mb-6">
-        {/* Eyebrow / breadcrumb */}
+      <div>
         <div className="flex items-center gap-2 text-xs text-[var(--muted)] mb-1.5">
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M3 12l9-9 9 9M5 10v10a1 1 0 001 1h3a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1h3a1 1 0 001-1V10" /></svg>
           <span className="text-[var(--muted)]">SecureHub</span>
@@ -774,21 +873,53 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Top Executive Posture KPI Strip */}
+      <ExecutiveKpiStrip
+        s1Threats={s1Data}
+        s1Agents={agentData}
+        cpEvents={cpEvents}
+        appCves={appCveData}
+        tickets={ticketData}
+        mdmDevices={mdmData}
+      />
+
       {/* Edit mode banner */}
       {isEditMode && (
-        <div className="mb-4 px-4 py-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 flex items-center gap-2.5">
-          <svg className="w-4 h-4 text-indigo-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-          <p className="text-xs text-indigo-700 dark:text-indigo-300 font-medium">Drag section headers to reorder · Drag widget title bars to move · Pull widget edges to resize</p>
-          <button onClick={handleDoneEditing} className="ml-auto text-indigo-500 hover:text-indigo-700 text-xs font-semibold">Done</button>
+        <div className="mb-4 px-4 py-3 rounded-2xl bg-indigo-50/80 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 shadow-sm flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center flex-shrink-0 shadow-sm shadow-indigo-600/30">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
+            </div>
+            <div>
+              <p className="text-xs font-bold text-[var(--foreground)]">Layout Edit Mode Active</p>
+              <p className="text-[11px] text-[var(--muted)]">Drag and drop sections to rearrange · Use ↑ / ↓ buttons to swap · Resize &amp; reposition widgets inside grids</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              type="button"
+              onClick={resetSectionOrder}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--card-bg)] border border-[var(--card-border)] transition-colors shadow-sm"
+              title="Reset sections to default order"
+            >
+              Reset Order
+            </button>
+            <button
+              type="button"
+              onClick={handleDoneEditing}
+              className="px-4 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm transition-colors"
+            >
+              Done Editing
+            </button>
+          </div>
         </div>
       )}
 
-      {/* ── Add Widget Modal ──────────────────────────────────────────────────── */}
+      {/* Add Widget Modal */}
       {showAddWidget && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={() => setShowAddWidget(false)}>
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
           <div className="relative z-10 w-full max-w-2xl bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
-            {/* Modal header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--card-border)] bg-[var(--muted-bg)]">
               <div className="flex items-center gap-2.5">
                 <div className="w-7 h-7 rounded-lg bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center">
@@ -804,7 +935,6 @@ export default function Dashboard() {
               </button>
             </div>
 
-            {/* Tab bar */}
             <div className="flex border-b border-[var(--card-border)] bg-[var(--muted-bg)]">
               {[
                 { key: 'checkpoint', label: 'Checkpoint', color: 'indigo', icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
@@ -827,7 +957,6 @@ export default function Dashboard() {
               })}
             </div>
 
-            {/* Tab body */}
             <div className="max-h-[65vh] overflow-y-auto">
               {widgetSource === 'checkpoint' && (
                 <CheckpointWidgetPicker
@@ -871,7 +1000,6 @@ export default function Dashboard() {
 
               {widgetSource === 'firewall' && (
                 <div className="p-5 space-y-4">
-                  {/* Report selector */}
                   <div>
                     <label className="text-[10px] font-bold text-[var(--muted)] uppercase tracking-wider block mb-1.5">Report</label>
                     <select value={fwReport} onChange={(e) => { setFwReport(e.target.value); setFwXAxis([]); setFwYAxis([]); }}
@@ -880,9 +1008,7 @@ export default function Dashboard() {
                     </select>
                   </div>
 
-                  {/* Axis row */}
                   <div className="grid grid-cols-2 gap-3">
-                    {/* X-Axis */}
                     <div className="relative">
                       <label className="text-[10px] font-bold text-[var(--muted)] uppercase tracking-wider block mb-1.5">X-Axis</label>
                       <button type="button" onClick={() => { setShowFwX((p) => !p); setShowFwY(false); }}
@@ -904,7 +1030,7 @@ export default function Dashboard() {
                                 const isDisabled = !isChecked && fwXAxis.length >= 2;
                                 return (
                                   <label key={col} className={`flex items-center gap-2.5 px-2.5 py-2 text-xs rounded-lg transition-colors ${isDisabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer hover:bg-[var(--muted-bg)]'} ${isChecked ? 'text-blue-700 dark:text-blue-300 font-semibold' : 'text-[var(--foreground)]'}`}>
-                                    <input type="checkbox" checked={isChecked} disabled={isDisabled} onChange={() => toggleAxis(col, fwXAxis, setFwXAxis)} className="w-3.5 h-3.5 accent-indigo-500" />
+                                    <input type="checkbox" checked={isChecked} disabled={isDisabled} onChange={() => toggleAxis(col, setFwXAxis)} className="w-3.5 h-3.5 accent-indigo-500" />
                                     <span className="truncate">{col}</span>
                                   </label>
                                 );
@@ -914,13 +1040,12 @@ export default function Dashboard() {
                       )}
                     </div>
 
-                    {/* Y-Axis */}
                     <div className="relative">
                       <label className="text-[10px] font-bold text-[var(--muted)] uppercase tracking-wider block mb-1.5">Y-Axis</label>
                       <button type="button" onClick={() => { setShowFwY((p) => !p); setShowFwX(false); }}
                         className={`w-full h-9 border rounded-lg px-3 text-sm font-medium flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-indigo-400 transition-colors ${fwYAxis.length ? 'border-emerald-400 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' : 'border-[var(--input-border)] bg-[var(--card-bg)] text-[var(--muted)]'}`}>
                         <span className="truncate flex-1 text-left text-xs">{fwYAxis.length === 0 ? 'Select column…' : fwYAxis.length === 1 ? fwYAxis[0] : `${fwYAxis.length} selected`}</span>
-                        <svg className="w-3 h-3 flex-shrink-0 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                        <svg className="w-3.5 h-3.5 flex-shrink-0 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                       </button>
                       {showFwY && (
                         <div className="absolute z-50 top-full mt-1 left-0 right-0 border border-[var(--card-border)] rounded-xl bg-[var(--card-bg)] shadow-2xl overflow-hidden">
@@ -936,7 +1061,7 @@ export default function Dashboard() {
                                 const isDisabled = !isChecked && fwYAxis.length >= 2;
                                 return (
                                   <label key={col} className={`flex items-center gap-2.5 px-2.5 py-2 text-xs rounded-lg transition-colors ${isDisabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer hover:bg-[var(--muted-bg)]'} ${isChecked ? 'text-emerald-700 dark:text-emerald-300 font-semibold' : 'text-[var(--foreground)]'}`}>
-                                    <input type="checkbox" checked={isChecked} disabled={isDisabled} onChange={() => toggleAxis(col, fwYAxis, setFwYAxis)} className="w-3.5 h-3.5 accent-indigo-500" />
+                                    <input type="checkbox" checked={isChecked} disabled={isDisabled} onChange={() => toggleAxis(col, setFwYAxis)} className="w-3.5 h-3.5 accent-indigo-500" />
                                     <span className="truncate">{col}</span>
                                   </label>
                                 );
@@ -947,7 +1072,6 @@ export default function Dashboard() {
                     </div>
                   </div>
 
-                  {/* Chart type */}
                   <div>
                     <label className="text-[10px] font-bold text-[var(--muted)] uppercase tracking-wider block mb-1.5">Chart Type</label>
                     <div className="flex rounded-lg border border-[var(--input-border)] overflow-hidden bg-[var(--card-bg)] w-fit">
@@ -961,7 +1085,6 @@ export default function Dashboard() {
                     {fwYAxis.length > 1 && <p className="text-[10px] text-[var(--muted)] mt-1">Mixed chart auto-selected for multiple Y columns</p>}
                   </div>
 
-                  {/* Footer */}
                   <div className="border-t border-[var(--card-border)] pt-4 flex items-center justify-end gap-2">
                     <button onClick={() => setShowAddWidget(false)} className="px-4 py-2 rounded-lg text-xs font-semibold text-[var(--muted)] hover:bg-[var(--card-border)] transition-colors">Cancel</button>
                     <button onClick={async () => { await handleAddFwWidget(); setShowAddWidget(false); }} disabled={!fwXAxis.length || !fwYAxis.length}
@@ -977,48 +1100,98 @@ export default function Dashboard() {
         </div>
       )}
 
-
       {/* ── Section Grid ────────────────────────────────────────────────────── */}
-      <div className="flex flex-col gap-2 divide-y divide-[var(--card-border)]">
-        {sectionOrder.map((section) => {
+      <div className="flex flex-col gap-6">
+        {sectionOrder.map((section, secIdx) => {
+          const isDragging = draggedSection === section;
+          const isDragTarget = dragOverSection === section && draggedSection !== section;
 
-          /* ─ CHECKPOINT ─ */
+          const renderDropIndicator = (secName) => isDragTarget ? (
+            <div className="mb-3 py-2.5 px-4 rounded-xl bg-indigo-500/10 dark:bg-indigo-500/20 border-2 border-dashed border-indigo-500 text-indigo-600 dark:text-indigo-400 text-xs font-bold flex items-center justify-center gap-2 animate-pulse shadow-sm">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" /></svg>
+              <span>Drop here to place {secName} at position #{secIdx + 1}</span>
+            </div>
+          ) : null;
+
+          const renderHeaderControls = () => isEditMode ? (
+            <div className="flex items-center gap-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-[11px] font-bold shadow-sm cursor-grab active:cursor-grabbing select-none" title="Drag to reorder section">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 8h16M4 16h16" /></svg>
+                <span>Drag</span>
+                <span className="opacity-80 font-mono text-[10px] ml-0.5">#{secIdx + 1}</span>
+              </div>
+              <div className="flex items-center gap-0.5 bg-[var(--card-bg)] p-0.5 rounded-lg border border-[var(--card-border)] shadow-sm">
+                <button
+                  type="button"
+                  onClick={() => moveSectionStep(section, 'up')}
+                  disabled={secIdx === 0}
+                  className="w-6 h-6 flex items-center justify-center rounded text-[var(--foreground)] hover:bg-indigo-50 dark:hover:bg-indigo-950 hover:text-indigo-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  title="Move section up"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 15l7-7 7 7" /></svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => moveSectionStep(section, 'down')}
+                  disabled={secIdx === sectionOrder.length - 1}
+                  className="w-6 h-6 flex items-center justify-center rounded text-[var(--foreground)] hover:bg-indigo-50 dark:hover:bg-indigo-950 hover:text-indigo-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  title="Move section down"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" /></svg>
+                </button>
+              </div>
+            </div>
+          ) : null;
+
+          /* ─ 1. CHECKPOINT EMAIL SECURITY ─ */
           if (section === 'checkpoint') return (
-            <div key="checkpoint" onDragOver={(e) => { e.preventDefault(); moveSection('checkpoint'); }} className="group/sec">
-              <div className="pt-4 pb-5">
-                {/* Section header */}
+            <div
+              key="checkpoint"
+              onDragOver={(e) => handleSectionDragOver(e, 'checkpoint')}
+              onDragLeave={(e) => handleSectionDragLeave(e, 'checkpoint')}
+              onDrop={(e) => handleSectionDrop(e, 'checkpoint')}
+              className={`group/sec transition-all duration-200 ${isDragging ? 'opacity-30 scale-[0.99] pointer-events-none' : ''} ${isDragTarget ? 'ring-2 ring-indigo-500 ring-offset-4 dark:ring-offset-slate-900 rounded-2xl' : ''}`}
+            >
+              {renderDropIndicator('Email Security')}
+              <div className="pt-2 pb-4">
                 <div
                   draggable={isEditMode}
-                  onDragStart={(e) => { if (!isEditMode) return; e.stopPropagation(); dragSectionRef.current = 'checkpoint'; }}
-                  onDragEnd={(e) => { e.stopPropagation(); dragSectionRef.current = null; }}
-                  className={`flex items-center gap-3 mb-4 select-none rounded-xl px-3 py-2 transition-all duration-200 ${isEditMode ? 'cursor-move bg-indigo-50/50 dark:bg-indigo-900/10 border border-dashed border-indigo-300 dark:border-indigo-700' : 'cursor-default'}`}
+                  onDragStart={(e) => handleSectionDragStart(e, 'checkpoint')}
+                  onDragEnd={handleSectionDragEnd}
+                  className={`flex items-center gap-3 mb-4 select-none rounded-xl px-3.5 py-2.5 transition-all duration-200 ${
+                    isEditMode
+                      ? 'cursor-grab active:cursor-grabbing bg-indigo-50/70 dark:bg-indigo-950/30 border-2 border-dashed border-indigo-400 dark:border-indigo-600 shadow-sm hover:shadow-md'
+                      : 'cursor-default'
+                  }`}
                 >
                   <div className="w-1.5 h-7 rounded-full bg-gradient-to-b from-indigo-400 to-indigo-600 flex-shrink-0 shadow-sm" />
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center flex-shrink-0 shadow-sm shadow-indigo-500/20">
-                      <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                      <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
                     </div>
                     <div>
                       <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest leading-none flex items-center gap-1.5"><span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-500" />Security</p>
-                      <h2 className="text-base font-bold text-[var(--foreground)] leading-tight">Email Security</h2>
-                      <p className="text-[11px] text-[var(--muted)] leading-tight">Checkpoint Harmony events &amp; remediation</p>
+                      <h2 className="text-base font-bold text-[var(--foreground)] leading-tight">Email Security &amp; Threat Prevention</h2>
+                      <p className="text-[11px] text-[var(--muted)] leading-tight">Checkpoint Harmony events, remediation rate &amp; SaaS vectors</p>
                     </div>
                   </div>
                   <div className="flex-1 h-px bg-gradient-to-r from-indigo-200 via-[var(--card-border)] to-transparent dark:from-indigo-800" />
-                  {isEditMode && <span className="text-[10px] text-indigo-400 font-medium flex items-center gap-1 flex-shrink-0"><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>drag</span>}
+                  {renderHeaderControls()}
                 </div>
 
-                {/* Checkpoint widget cards */}
-                {visibleCpWidgets.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-10 text-center border border-dashed border-indigo-200 dark:border-indigo-800 rounded-2xl bg-indigo-50/30 dark:bg-indigo-900/10">
-                    <div className="w-10 h-10 rounded-xl bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center mb-3">
-                      <svg className="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v16m8-8H4" /></svg>
-                    </div>
-                    <p className="text-sm font-semibold text-[var(--foreground)] mb-1">No widgets added yet</p>
-                    <p className="text-xs text-[var(--muted)]">Click "Add Widget" → Checkpoint to add cards here</p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {/* Rich Email Telemetry Widgets */}
+                <EmailSecurityWidgets
+                  events={cpEvents}
+                  loading={cpEventsLoading}
+                  getRange={getRange}
+                  setRange={setRange}
+                  DateRangeMini={DateRangeMini}
+                  WidgetSearch={WidgetSearch}
+                />
+
+                {/* Additional User-Added Custom Checkpoint Widget Cards */}
+                {visibleCpWidgets.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mt-4">
                     {visibleCpWidgets.map((id, idx) => {
                       const opt = WIDGET_OPTIONS.find((w) => w.id === id);
                       if (!opt) return null;
@@ -1030,7 +1203,7 @@ export default function Dashboard() {
                       const remPct = total > 0 ? Math.round((remediated / total) * 100) : 0;
                       const pendPct = total > 0 ? Math.round((pending / total) * 100) : 0;
                       return (
-                        <div key={id} className="card-surface card-surface--hover rounded-2xl overflow-hidden hover:-translate-y-0.5 transition-all duration-200" style={{ animationDelay: `${idx * 60}ms` }}>
+                        <div key={id} className="card-surface card-surface--hover rounded-2xl overflow-hidden hover:-translate-y-0.5 transition-all duration-200 border border-[var(--card-border)]" style={{ animationDelay: `${idx * 60}ms` }}>
                           <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-indigo-50 to-transparent dark:from-indigo-900/20 dark:to-transparent border-b border-[var(--card-border)]">
                             <div>
                               <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest">Checkpoint</p>
@@ -1077,11 +1250,6 @@ export default function Dashboard() {
                                     </div>
                                   </div>
                                 </div>
-                                <div className="mt-3 flex flex-wrap gap-1">
-                                  {opt.eventTypes.map((t) => (
-                                    <span key={t} className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 capitalize">{t.replace(/_/g, ' ')}</span>
-                                  ))}
-                                </div>
                               </>
                             )}
                           </div>
@@ -1094,16 +1262,26 @@ export default function Dashboard() {
             </div>
           );
 
-          /* ─ SENTINELONE ─ */
+          /* ─ 2. SENTINELONE ENDPOINT & EDR ─ */
           if (section === 'sentinelone') return (
-            <div key="sentinelone" onDragOver={(e) => { e.preventDefault(); moveSection('sentinelone'); }} className="group/sec">
-              <div className="pt-4 pb-2">
-                {/* Section header */}
+            <div
+              key="sentinelone"
+              onDragOver={(e) => handleSectionDragOver(e, 'sentinelone')}
+              onDragLeave={(e) => handleSectionDragLeave(e, 'sentinelone')}
+              onDrop={(e) => handleSectionDrop(e, 'sentinelone')}
+              className={`group/sec transition-all duration-200 ${isDragging ? 'opacity-30 scale-[0.99] pointer-events-none' : ''} ${isDragTarget ? 'ring-2 ring-indigo-500 ring-offset-4 dark:ring-offset-slate-900 rounded-2xl' : ''}`}
+            >
+              {renderDropIndicator('Endpoint Security')}
+              <div className="pt-2 pb-4">
                 <div
-                  draggable
-                  onDragStart={(e) => { e.stopPropagation(); dragSectionRef.current = 'sentinelone'; }}
-                  onDragEnd={(e) => { e.stopPropagation(); dragSectionRef.current = null; }}
-                  className="flex items-center gap-3 mb-3 cursor-move select-none rounded-xl px-3 py-2 transition-all duration-200 hover:bg-emerald-50/50 dark:hover:bg-emerald-900/10"
+                  draggable={isEditMode}
+                  onDragStart={(e) => handleSectionDragStart(e, 'sentinelone')}
+                  onDragEnd={handleSectionDragEnd}
+                  className={`flex items-center gap-3 mb-3 select-none rounded-xl px-3.5 py-2.5 transition-all duration-200 ${
+                    isEditMode
+                      ? 'cursor-grab active:cursor-grabbing bg-emerald-50/70 dark:bg-emerald-950/30 border-2 border-dashed border-emerald-400 dark:border-emerald-600 shadow-sm hover:shadow-md'
+                      : 'cursor-default'
+                  }`}
                 >
                   <div className="w-1.5 h-7 rounded-full bg-gradient-to-b from-emerald-400 to-emerald-600 flex-shrink-0 shadow-sm" />
                   <div className="flex items-center gap-3">
@@ -1112,18 +1290,21 @@ export default function Dashboard() {
                     </div>
                     <div>
                       <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest leading-none flex items-center gap-1.5"><span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />Endpoint</p>
-                      <h2 className="text-base font-bold text-[var(--foreground)] leading-tight">SentinelOne</h2>
-                      <p className="text-[11px] text-[var(--muted)] leading-tight">Threats, agents &amp; device posture</p>
+                      <h2 className="text-base font-bold text-[var(--foreground)] leading-tight">SentinelOne Endpoint &amp; EDR</h2>
+                      <p className="text-[11px] text-[var(--muted)] leading-tight">Fleet health, threats mitigation &amp; vulnerability exposure</p>
                     </div>
                   </div>
                   <div className="flex-1 h-px bg-gradient-to-r from-emerald-200 via-[var(--card-border)] to-transparent dark:from-emerald-800" />
-                  <button onClick={(e) => { e.stopPropagation(); handleS1Sync(); }} disabled={s1Syncing}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 disabled:opacity-50 transition-all duration-150 flex-shrink-0 border border-emerald-200 dark:border-emerald-700">
-                    {s1Syncing
-                      ? <><div className="animate-spin w-3 h-3 border-2 border-emerald-500 border-t-transparent rounded-full" />Syncing…</>
-                      : <><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>Sync</>
-                    }
-                  </button>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button onClick={(e) => { e.stopPropagation(); handleS1Sync(); }} disabled={s1Syncing}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 disabled:opacity-50 transition-all duration-150 flex-shrink-0 border border-emerald-200 dark:border-emerald-700">
+                      {s1Syncing
+                        ? <><div className="animate-spin w-3 h-3 border-2 border-emerald-500 border-t-transparent rounded-full" />Syncing…</>
+                        : <><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>Sync</>
+                      }
+                    </button>
+                    {renderHeaderControls()}
+                  </div>
                 </div>
 
                 {s1SyncMsg && (
@@ -1132,18 +1313,22 @@ export default function Dashboard() {
                     {s1SyncMsg.text}
                   </div>
                 )}
-              </div>
 
-              {/* S1 widget grid */}
-              {visibleS1Widgets.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-10 text-center border border-dashed border-emerald-200 dark:border-emerald-800 rounded-2xl bg-emerald-50/30 dark:bg-emerald-900/10 mb-4">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center mb-3">
-                    <svg className="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v16m8-8H4" /></svg>
-                  </div>
-                  <p className="text-sm font-semibold text-[var(--foreground)] mb-1">No widgets added yet</p>
-                  <p className="text-xs text-[var(--muted)]">Click "Add Widget" → SentinelOne to add widgets here</p>
+                {/* Endpoint Posture Hero Widgets */}
+                <div className="mb-4">
+                  <EndpointPostureWidgets
+                    agents={agentData}
+                    cves={appCveData}
+                    threats={s1Data}
+                    loading={agentLoading || appCveLoading || s1Loading}
+                    getRange={getRange}
+                    setRange={setRange}
+                    DateRangeMini={DateRangeMini}
+                    WidgetSearch={WidgetSearch}
+                  />
                 </div>
-              ) : (
+
+                {/* S1 widget grid */}
                 <div ref={containerRef} className="w-full min-w-0" onDragStart={(e) => e.stopPropagation()}>
                   <ResponsiveGridLayout
                     className="layout"
@@ -1160,21 +1345,16 @@ export default function Dashboard() {
                     margin={[10, 10]}
                   >
                     {/* Mitigation Status */}
-                    <div key="s1-mitigation" className="card-surface rounded-2xl flex flex-col overflow-hidden" style={visibleS1Widgets.includes('s1-mitigation') ? {} : { visibility: 'hidden', pointerEvents: 'none' }}>
+                    <div key="s1-mitigation" className="card-surface rounded-2xl flex flex-col overflow-hidden border border-[var(--card-border)]" style={visibleS1Widgets.includes('s1-mitigation') ? {} : { visibility: 'hidden', pointerEvents: 'none' }}>
                       <div className="drag-handle cursor-grab active:cursor-grabbing bg-[var(--muted-bg)]/70 border-b border-[var(--card-border)] px-4 py-3 flex items-center justify-between flex-shrink-0 select-none">
                         <div><p className="text-xs text-[var(--muted)] font-medium">SentinelOne</p><p className="text-sm font-bold text-[var(--foreground)]">Mitigation Status</p></div>
-                        <div className="flex gap-1 items-center">
-                          {['donut', 'probability', 'bar'].map((ct) => (
-                            <button key={ct} onClick={(e) => { e.stopPropagation(); setMitigationChart(ct); }}
-                              className={`px-2 py-1 rounded-lg text-xs font-medium transition-colors ${mitigationChart === ct ? 'bg-indigo-600 text-white' : 'bg-[var(--card-bg)] border border-[var(--card-border)] text-[var(--muted)] hover:bg-[var(--muted-bg)]'}`}>
-                              {ct === 'donut' ? 'Donut' : ct === 'probability' ? '%' : 'Bar'}
-                            </button>
-                          ))}
+                        <div className="flex gap-1.5 items-center">
+                          <DaysFilter value={mitigationDays} onChange={setMitigationDays} compact />
+                          <ChartViewDropdown value={mitigationChart} onChange={setMitigationChart} />
                           <button onClick={(e) => { e.stopPropagation(); removeS1Widget('s1-mitigation'); }}
                             className={`w-5 h-5 flex items-center justify-center rounded text-[var(--muted)] hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400 transition-colors ml-1 flex-shrink-0 ${isEditMode ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                           </button>
-                          
                         </div>
                       </div>
                       <div className="px-4 pt-2 pb-0 flex items-center justify-between flex-shrink-0">
@@ -1182,52 +1362,29 @@ export default function Dashboard() {
                         <DateRangeMini from={mitigationRange.from} to={mitigationRange.to} onChange={(v) => setRange('s1-mitigation', v)} />
                       </div>
                       <div className="flex-1 min-h-0 p-3 relative">
-                        {s1Loading ? <WidgetSkeleton variant="chart" /> : s1Error ? <Err msg={s1Error} /> : mitigationData.length === 0 ? <Empty msg="No mitigation data" /> :
-                          mitigationChart === 'bar' ? (
-                            <ResponsiveContainer width="100%" height="100%">
-                              <BarChart data={mitigationData} margin={{ top: 8, right: 8, left: -10, bottom: 30 }}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                                <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} angle={-20} textAnchor="end" />
-                                <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-                                <Tooltip contentStyle={tooltipStyle} />
-                                <Bar dataKey="value" radius={[4, 4, 0, 0]} cursor="pointer" onClick={(data) => navigate('/dashboard/detail', { state: { dataset: 'threats', filterId: 'mitigationStatus', value: data.name, title: `Threats with ${data.name} mitigation status` } })}>{mitigationData.map((d, i) => <Cell key={i} fill={d.fill} />)}</Bar>
-                              </BarChart>
-                            </ResponsiveContainer>
-                          ) : mitigationChart === 'probability' ? (
-                            <div className="h-full overflow-auto space-y-3 pt-2 px-1">
-                              {mitigationData.map((d) => (
-                                <div key={d.name} className="cursor-pointer" onClick={() => navigate('/dashboard/detail', { state: { dataset: 'threats', filterId: 'mitigationStatus', value: d.name, title: `Threats with ${d.name} mitigation status` } })}>
-                                  <div className="flex justify-between text-xs text-[var(--muted)] mb-1"><span className="font-medium capitalize">{d.name}</span><span>{mitigationTotal > 0 ? ((d.value / mitigationTotal) * 100).toFixed(1) : 0}%</span></div>
-                                  <div className="w-full bg-[var(--muted-bg)] rounded-full h-2.5"><div className="h-2.5 rounded-full" style={{ width: mitigationTotal > 0 ? `${(d.value / mitigationTotal) * 100}%` : '0%', backgroundColor: d.fill }} /></div>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="relative h-full flex items-center justify-center">
-                              <ResponsiveContainer width="100%" height="100%">
-                                <PieChart>
-                                  <Pie data={mitigationData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="50%" outerRadius="70%" paddingAngle={2} cursor="pointer" onClick={(data) => navigate('/dashboard/detail', { state: { dataset: 'threats', filterId: 'mitigationStatus', value: data.name, title: `Threats with ${data.name} mitigation status` } })}>{mitigationData.map((d, i) => <Cell key={i} fill={d.fill} />)}</Pie>
-                                  <Tooltip contentStyle={tooltipStyle} />
-                                  <Legend iconSize={9} wrapperStyle={{ fontSize: 11, color: 'var(--muted)' }} />
-                                </PieChart>
-                              </ResponsiveContainer>
-                              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                                <p className="text-xs text-[var(--muted)]">Total</p>
-                                <p className="text-2xl font-bold text-[var(--foreground)]">{mitigationTotal}</p>
-                              </div>
-                            </div>
-                          )
-                        }
+                        {s1Loading ? <WidgetSkeleton variant="chart" /> : s1Error ? <Err msg={s1Error} /> : mitigationData.length === 0 ? <Empty msg="No mitigation data" /> : (
+                          <MultiViewChart
+                            view={mitigationChart}
+                            data={mitigationData}
+                            timeSeriesData={mitigationTimeSeries}
+                            storageKey="s1-mitigation"
+                            onSliceClick={(data) => navigate('/dashboard/detail', { state: { dataset: 'threats', filterId: 'mitigationStatus', value: data.name, title: `Threats with ${data.name} mitigation status` } })}
+                          />
+                        )}
                       </div>
                     </div>
 
                     {/* Threat Severity */}
-                    <div key="s1-severity" className="card-surface rounded-2xl flex flex-col overflow-hidden" style={visibleS1Widgets.includes('s1-severity') ? {} : { visibility: 'hidden', pointerEvents: 'none' }}>
+                    <div key="s1-severity" className="card-surface rounded-2xl flex flex-col overflow-hidden border border-[var(--card-border)]" style={visibleS1Widgets.includes('s1-severity') ? {} : { visibility: 'hidden', pointerEvents: 'none' }}>
                       <div className="drag-handle cursor-grab active:cursor-grabbing bg-[var(--muted-bg)]/70 border-b border-[var(--card-border)] px-4 py-3 flex items-center justify-between flex-shrink-0 select-none">
                         <div><p className="text-xs text-[var(--muted)] font-medium">SentinelOne</p><p className="text-sm font-bold text-[var(--foreground)]">Threat Severity</p></div>
-                        <button onClick={(e) => { e.stopPropagation(); removeS1Widget('s1-severity'); }} className={`w-5 h-5 flex items-center justify-center rounded text-[var(--muted)] hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400 transition-colors ml-1 flex-shrink-0 ${isEditMode ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                        </button>
+                        <div className="flex gap-1.5 items-center">
+                          <DaysFilter value={severityDays} onChange={setSeverityDays} compact />
+                          <ChartViewDropdown value={severityChart} onChange={setSeverityChart} />
+                          <button onClick={(e) => { e.stopPropagation(); removeS1Widget('s1-severity'); }} className={`w-5 h-5 flex items-center justify-center rounded text-[var(--muted)] hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400 transition-colors ml-1 flex-shrink-0 ${isEditMode ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
+                        </div>
                       </div>
                       <div className="px-4 pt-2 pb-0 flex items-center justify-between flex-shrink-0">
                         <span className="text-[9px] font-semibold text-[var(--muted)] uppercase tracking-wider">Date range</span>
@@ -1235,28 +1392,36 @@ export default function Dashboard() {
                       </div>
                       <div className="flex-1 min-h-0 p-3">
                         {s1Loading ? <WidgetSkeleton variant="chart" /> : s1Error ? <Err msg={s1Error} /> : severityData.length === 0 ? <Empty msg="No severity data" /> : (
-                          <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={severityData} layout="vertical" margin={{ top: 5, right: 20, left: 5, bottom: 5 }}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" horizontal={false} />
-                              <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-                              <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={65} />
-                              <Tooltip contentStyle={tooltipStyle} />
-                              <Bar dataKey="value" radius={[0, 4, 4, 0]} cursor="pointer" onClick={(data) => navigate('/dashboard/detail', { state: { dataset: 'threats', filterId: 'confidenceLevel', value: data.name, title: `Threats with ${data.name} confidence` } })}>{severityData.map((d, i) => <Cell key={i} fill={d.fill} />)}</Bar>
-                            </BarChart>
-                          </ResponsiveContainer>
+                          <MultiViewChart
+                            view={severityChart}
+                            data={severityData}
+                            timeSeriesData={severityTimeSeries}
+                            storageKey="s1-severity"
+                            onSliceClick={(data) => navigate('/dashboard/detail', { state: { dataset: 'threats', filterId: 'confidenceLevel', value: data.name, title: `Threats with ${data.name} confidence` } })}
+                          />
                         )}
                       </div>
                     </div>
 
                     {/* Recent Threats */}
-                    <div key="s1-threats" className="card-surface rounded-2xl flex flex-col overflow-hidden" style={visibleS1Widgets.includes('s1-threats') ? {} : { visibility: 'hidden', pointerEvents: 'none' }}>
+                    <div key="s1-threats" className="card-surface rounded-2xl flex flex-col overflow-hidden border border-[var(--card-border)]" style={visibleS1Widgets.includes('s1-threats') ? {} : { visibility: 'hidden', pointerEvents: 'none' }}>
                       <div className="drag-handle cursor-grab active:cursor-grabbing bg-[var(--muted-bg)]/70 border-b border-[var(--card-border)] px-4 py-3 flex items-center justify-between flex-shrink-0 select-none">
                         <div className="min-w-0">
                           <p className="text-xs text-[var(--muted)] font-medium">SentinelOne</p>
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <p className="text-sm font-bold text-[var(--foreground)]">Recent Threats</p>
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">Threats {recentThreatCount}</span>
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">Alerts {recentAlertCount}</span>
+                            <span
+                              onClick={() => navigate('/dashboard/detail', { state: { dataset: 'threats', filterId: 'all', title: 'SentinelOne Active Threats' } })}
+                              className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 cursor-pointer hover:opacity-80 transition-opacity"
+                            >
+                              Threats {recentThreatCount}
+                            </span>
+                            <span
+                              onClick={() => navigate('/dashboard/detail', { state: { dataset: 'threats', filterId: 'all', title: 'Custom Alerts & Detections' } })}
+                              className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 cursor-pointer hover:opacity-80 transition-opacity"
+                            >
+                              Alerts {recentAlertCount}
+                            </span>
                           </div>
                         </div>
                         <button onClick={(e) => { e.stopPropagation(); removeS1Widget('s1-threats'); }} className={`w-5 h-5 flex items-center justify-center rounded text-[var(--muted)] hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400 transition-colors ml-1 flex-shrink-0 ${isEditMode ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
@@ -1297,7 +1462,18 @@ export default function Dashboard() {
                                     : status === 'active' ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
                                       : 'bg-[var(--muted-bg)] text-[var(--muted)]';
                                 return (
-                                  <tr key={i} className={i % 2 === 0 ? 'bg-[var(--card-bg)]' : 'bg-[var(--muted-bg)]'}>
+                                  <tr
+                                    key={i}
+                                    onClick={() => navigate('/dashboard/detail', {
+                                      state: {
+                                        dataset: 'threats',
+                                        filterId: 'threatName',
+                                        value: t.name,
+                                        title: `Threat Detail: ${t.name || 'Threat'}`,
+                                      },
+                                    })}
+                                    className={`cursor-pointer transition-colors hover:bg-[var(--muted-bg)]/80 ${i % 2 === 0 ? 'bg-[var(--card-bg)]' : 'bg-[var(--muted-bg)]'}`}
+                                  >
                                     <td className="px-3 py-2 border-b border-[var(--card-border)]">
                                       <div className="flex items-center gap-1.5 min-w-0">
                                         {isAlert && (
@@ -1323,12 +1499,22 @@ export default function Dashboard() {
                     </div>
 
                     {/* Agent Status */}
-                    <div key="s1-agents" className="card-surface rounded-2xl flex flex-col overflow-hidden" style={visibleS1Widgets.includes('s1-agents') ? {} : { visibility: 'hidden', pointerEvents: 'none' }}>
+                    <div key="s1-agents" className="card-surface rounded-2xl flex flex-col overflow-hidden border border-[var(--card-border)]" style={visibleS1Widgets.includes('s1-agents') ? {} : { visibility: 'hidden', pointerEvents: 'none' }}>
                       <div className="drag-handle cursor-grab active:cursor-grabbing bg-[var(--muted-bg)]/70 border-b border-[var(--card-border)] px-4 py-3 flex items-center justify-between flex-shrink-0 select-none">
                         <div><p className="text-xs text-[var(--muted)] font-medium">SentinelOne</p><p className="text-sm font-bold text-[var(--foreground)]">Agent Status</p></div>
                         <div className="flex gap-1 items-center">
-                          <span className="px-2 py-0.5 rounded-lg text-xs font-semibold bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">{activeAgents} Active</span>
-                          <span className="px-2 py-0.5 rounded-lg text-xs font-semibold bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">{inactiveAgents} Inactive</span>
+                          <span
+                            onClick={() => navigate('/dashboard/detail', { state: { dataset: 'agents', filterId: 'active', title: 'Active Protected Agents' } })}
+                            className="px-2 py-0.5 rounded-lg text-xs font-semibold bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300 cursor-pointer hover:opacity-80 transition-opacity"
+                          >
+                            {activeAgents} Active
+                          </span>
+                          <span
+                            onClick={() => navigate('/dashboard/detail', { state: { dataset: 'agents', filterId: 'inactive', title: 'Inactive Endpoint Agents' } })}
+                            className="px-2 py-0.5 rounded-lg text-xs font-semibold bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 cursor-pointer hover:opacity-80 transition-opacity"
+                          >
+                            {inactiveAgents} Inactive
+                          </span>
                           <button onClick={(e) => { e.stopPropagation(); removeS1Widget('s1-agents'); }} className={`w-5 h-5 flex items-center justify-center rounded text-[var(--muted)] hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400 transition-colors ml-1 flex-shrink-0 ${isEditMode ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                           </button>
@@ -1352,7 +1538,18 @@ export default function Dashboard() {
                             </thead>
                             <tbody>
                               {displayAgentData.map((a, i) => (
-                                <tr key={i} className={i % 2 === 0 ? 'bg-[var(--card-bg)]' : 'bg-[var(--muted-bg)]'}>
+                                <tr
+                                  key={i}
+                                  onClick={() => navigate('/dashboard/detail', {
+                                    state: {
+                                      dataset: 'agents',
+                                      filterId: 'computerName',
+                                      value: a.computerName,
+                                      title: `Agent Detail: ${a.computerName || 'Endpoint'}`,
+                                    },
+                                  })}
+                                  className={`cursor-pointer transition-colors hover:bg-[var(--muted-bg)]/80 ${i % 2 === 0 ? 'bg-[var(--card-bg)]' : 'bg-[var(--muted-bg)]'}`}
+                                >
                                   <td className="px-3 py-2 border-b border-[var(--card-border)] text-[var(--muted)] whitespace-nowrap">{a.computerName || '—'}</td>
                                   <td className="px-3 py-2 border-b border-[var(--card-border)]">
                                     <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${a.isActive ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' : 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'}`}>{a.isActive ? 'Active' : 'Inactive'}</span>
@@ -1366,7 +1563,7 @@ export default function Dashboard() {
                     </div>
 
                     {/* App Agent */}
-                    <div key="s1-app-agent" className="card-surface rounded-2xl flex flex-col overflow-hidden" style={visibleS1Widgets.includes('s1-app-agent') ? {} : { visibility: 'hidden', pointerEvents: 'none' }}>
+                    <div key="s1-app-agent" className="card-surface rounded-2xl flex flex-col overflow-hidden border border-[var(--card-border)]" style={visibleS1Widgets.includes('s1-app-agent') ? {} : { visibility: 'hidden', pointerEvents: 'none' }}>
                       <div className="drag-handle cursor-grab active:cursor-grabbing bg-[var(--muted-bg)]/70 border-b border-[var(--card-border)] px-4 py-3 flex items-center justify-between flex-shrink-0 select-none">
                         <div><p className="text-xs text-[var(--muted)] font-medium">SentinelOne</p><p className="text-sm font-bold text-[var(--foreground)]">Application Agents</p></div>
                         <div className="flex items-center gap-2">
@@ -1392,11 +1589,16 @@ export default function Dashboard() {
                     </div>
 
                     {/* App CVE */}
-                    <div key="s1-app-cve" className="card-surface rounded-2xl flex flex-col overflow-hidden" style={visibleS1Widgets.includes('s1-app-cve') ? {} : { visibility: 'hidden', pointerEvents: 'none' }}>
+                    <div key="s1-app-cve" className="card-surface rounded-2xl flex flex-col overflow-hidden border border-[var(--card-border)]" style={visibleS1Widgets.includes('s1-app-cve') ? {} : { visibility: 'hidden', pointerEvents: 'none' }}>
                       <div className="drag-handle cursor-grab active:cursor-grabbing bg-[var(--muted-bg)]/70 border-b border-[var(--card-border)] px-4 py-3 flex items-center justify-between flex-shrink-0 select-none">
                         <div><p className="text-xs text-[var(--muted)] font-medium">SentinelOne</p><p className="text-sm font-bold text-[var(--foreground)]">Application CVEs</p></div>
                         <div className="flex items-center gap-2">
-                          <span className="px-2 py-0.5 rounded-lg text-xs font-semibold bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">{filteredAppCveData.length} CVEs</span>
+                          <span
+                            onClick={() => navigate('/dashboard/detail', { state: { dataset: 'cve', filterId: 'all', title: 'SentinelOne Application CVEs' } })}
+                            className="px-2 py-0.5 rounded-lg text-xs font-semibold bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 cursor-pointer hover:opacity-80 transition-opacity"
+                          >
+                            {filteredAppCveData.length} CVEs
+                          </span>
                           <div className="flex items-center gap-0.5 bg-[var(--card-bg)] rounded-lg p-0.5 border border-[var(--card-border)]">
                             <button onClick={(e) => { e.stopPropagation(); setS1WidgetConfigs((p) => ({ ...p, 's1-app-cve': { ...(p['s1-app-cve'] ?? { id: 's1-app-cve', viewMode: 'table' }), viewMode: 'graph' } })); }}
                               className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${s1WidgetConfigs['s1-app-cve']?.viewMode === 'graph' ? 'bg-emerald-500 text-white' : 'text-[var(--muted)] hover:text-[var(--foreground)]'}`}>Graph</button>
@@ -1418,7 +1620,7 @@ export default function Dashboard() {
                     </div>
 
                     {/* Device Control */}
-                    <div key="s1-device-control" className="card-surface rounded-2xl flex flex-col overflow-hidden" style={visibleS1Widgets.includes('s1-device-control') ? {} : { visibility: 'hidden', pointerEvents: 'none' }}>
+                    <div key="s1-device-control" className="card-surface rounded-2xl flex flex-col overflow-hidden border border-[var(--card-border)]" style={visibleS1Widgets.includes('s1-device-control') ? {} : { visibility: 'hidden', pointerEvents: 'none' }}>
                       <div className="drag-handle cursor-grab active:cursor-grabbing bg-[var(--muted-bg)]/70 border-b border-[var(--card-border)] px-4 py-3 flex items-center justify-between flex-shrink-0 select-none">
                         <div><p className="text-xs text-[var(--muted)] font-medium">SentinelOne</p><p className="text-sm font-bold text-[var(--foreground)]">Device Control</p></div>
                         <div className="flex items-center gap-2">
@@ -1444,9 +1646,9 @@ export default function Dashboard() {
                     </div>
 
                     {/* RSS Feed */}
-                    <div key="s1-rss" className="card-surface rounded-2xl flex flex-col overflow-hidden" style={visibleS1Widgets.includes('s1-rss') ? {} : { visibility: 'hidden', pointerEvents: 'none' }}>
+                    <div key="s1-rss" className="card-surface rounded-2xl flex flex-col overflow-hidden border border-[var(--card-border)]" style={visibleS1Widgets.includes('s1-rss') ? {} : { visibility: 'hidden', pointerEvents: 'none' }}>
                       <div className="drag-handle cursor-grab active:cursor-grabbing bg-[var(--muted-bg)]/70 border-b border-[var(--card-border)] px-4 py-3 flex items-center justify-between flex-shrink-0 select-none">
-                        <div><p className="text-xs text-[var(--muted)] font-medium">SentinelOne</p><p className="text-sm font-bold text-[var(--foreground)]">RSS Feed</p></div>
+                        <div><p className="text-xs text-[var(--muted)] font-medium">SentinelOne</p><p className="text-sm font-bold text-[var(--foreground)]">Threat Intel &amp; RSS Feed</p></div>
                         <div className="flex items-center gap-2">
                           <span className="px-2 py-0.5 rounded-lg text-xs font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">{filteredRssData.length} items</span>
                           <button onClick={(e) => { e.stopPropagation(); removeS1Widget('s1-rss'); }} className={`w-5 h-5 flex items-center justify-center rounded text-[var(--muted)] hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400 transition-colors ml-1 flex-shrink-0 ${isEditMode ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
@@ -1490,20 +1692,30 @@ export default function Dashboard() {
                     </div>
                   </ResponsiveGridLayout>
                 </div>
-              )}
+              </div>
             </div>
           );
 
-          /* ─ FIREWALL ─ */
-          return (
-            <div key="firewall" onDragOver={(e) => { e.preventDefault(); moveSection('firewall'); }} className="group/sec">
-              <div className="pt-4 pb-5 relative z-10">
-                {/* Section header */}
+          /* ─ 3. PALO ALTO FIREWALL ─ */
+          if (section === 'firewall') return (
+            <div
+              key="firewall"
+              onDragOver={(e) => handleSectionDragOver(e, 'firewall')}
+              onDragLeave={(e) => handleSectionDragLeave(e, 'firewall')}
+              onDrop={(e) => handleSectionDrop(e, 'firewall')}
+              className={`group/sec transition-all duration-200 ${isDragging ? 'opacity-30 scale-[0.99] pointer-events-none' : ''} ${isDragTarget ? 'ring-2 ring-indigo-500 ring-offset-4 dark:ring-offset-slate-900 rounded-2xl' : ''}`}
+            >
+              {renderDropIndicator('Palo Alto Firewall')}
+              <div className="pt-2 pb-4 relative z-10">
                 <div
-                  draggable
-                  onDragStart={(e) => { e.stopPropagation(); dragSectionRef.current = 'firewall'; }}
-                  onDragEnd={(e) => { e.stopPropagation(); dragSectionRef.current = null; }}
-                  className="flex items-center gap-3 mb-3 cursor-move select-none rounded-xl px-3 py-2 transition-all duration-200 hover:bg-orange-50/50 dark:hover:bg-orange-900/10"
+                  draggable={isEditMode}
+                  onDragStart={(e) => handleSectionDragStart(e, 'firewall')}
+                  onDragEnd={handleSectionDragEnd}
+                  className={`flex items-center gap-3 mb-3 select-none rounded-xl px-3.5 py-2.5 transition-all duration-200 ${
+                    isEditMode
+                      ? 'cursor-grab active:cursor-grabbing bg-orange-50/70 dark:bg-orange-950/30 border-2 border-dashed border-orange-400 dark:border-orange-600 shadow-sm hover:shadow-md'
+                      : 'cursor-default'
+                  }`}
                 >
                   <div className="w-1.5 h-7 rounded-full bg-gradient-to-b from-orange-400 to-orange-600 flex-shrink-0 shadow-sm" />
                   <div className="flex items-center gap-3">
@@ -1512,18 +1724,21 @@ export default function Dashboard() {
                     </div>
                     <div>
                       <p className="text-[10px] font-bold text-orange-500 uppercase tracking-widest leading-none flex items-center gap-1.5"><span className="inline-block w-1.5 h-1.5 rounded-full bg-orange-500" />Network</p>
-                      <h2 className="text-base font-bold text-[var(--foreground)] leading-tight">Palo Alto Firewall</h2>
-                      <p className="text-[11px] text-[var(--muted)] leading-tight">Traffic reports &amp; bandwidth analytics</p>
+                      <h2 className="text-base font-bold text-[var(--foreground)] leading-tight">Palo Alto Firewall &amp; Perimeter</h2>
+                      <p className="text-[11px] text-[var(--muted)] leading-tight">Application traffic analytics, bandwidth &amp; policy enforcement</p>
                     </div>
                   </div>
                   <div className="flex-1 h-px bg-gradient-to-r from-orange-200 via-[var(--card-border)] to-transparent dark:from-orange-800" />
-                  <button onClick={(e) => { e.stopPropagation(); handleCollect(); }} disabled={collecting}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-orange-600 dark:text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-900/30 disabled:opacity-50 transition-all duration-150 flex-shrink-0 border border-orange-200 dark:border-orange-700">
-                    {collecting
-                      ? <><div className="animate-spin w-3 h-3 border-2 border-orange-500 border-t-transparent rounded-full" />Collecting…</>
-                      : <><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>Collect</>
-                    }
-                  </button>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button onClick={(e) => { e.stopPropagation(); handleCollect(); }} disabled={collecting}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-orange-600 dark:text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-900/30 disabled:opacity-50 transition-all duration-150 flex-shrink-0 border border-orange-200 dark:border-orange-700">
+                      {collecting
+                        ? <><div className="animate-spin w-3 h-3 border-2 border-orange-500 border-t-transparent rounded-full" />Collecting…</>
+                        : <><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>Collect</>
+                      }
+                    </button>
+                    {renderHeaderControls()}
+                  </div>
                 </div>
 
                 {collectMsg && (
@@ -1532,135 +1747,230 @@ export default function Dashboard() {
                     {collectMsg.text}
                   </div>
                 )}
-              </div>
 
-              {/* Firewall widget grid */}
-              {fwWidgets.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-10 text-center border border-dashed border-orange-200 dark:border-orange-800 rounded-2xl bg-orange-50/30 dark:bg-orange-900/10 mb-4">
-                  <div className="w-10 h-10 rounded-xl bg-orange-100 dark:bg-orange-900/40 flex items-center justify-center mb-3">
-                    <svg className="w-5 h-5 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v16m8-8H4" /></svg>
+                {/* Rich Network Traffic Widgets */}
+                <div className="mb-4">
+                  <NetworkSecurityWidgets
+                    getRange={getRange}
+                    setRange={setRange}
+                    DateRangeMini={DateRangeMini}
+                  />
+                </div>
+
+                {/* Firewall Custom Grid */}
+                {fwWidgets.length > 0 && (
+                  <div className="w-full min-w-0 mt-4" onDragStart={(e) => e.stopPropagation()}>
+                    <ResponsiveGridLayout
+                      className="layout"
+                      layouts={fwLayouts}
+                      breakpoints={GRID_BREAKPOINTS}
+                      cols={GRID_COLS}
+                      rowHeight={10}
+                      width={containerWidth}
+                      onLayoutChange={handleLayoutChange}
+                      onBreakpointChange={(bp) => setActiveGridBreakpoint(bp)}
+                      compactor={noCompactor}
+                      dragConfig={{ enabled: isEditMode, handle: '.drag-handle' }}
+                      resizeConfig={{ enabled: isEditMode, handles: ['s', 'w', 'e', 'n', 'sw', 'nw', 'se', 'ne'] }}
+                      margin={[10, 10]}
+                    >
+                      {fwWidgets.map((widget) => {
+                        const fwRange = getRange(`fw-${widget.id}`);
+                        return (
+                          <div key={widget.id} className="card-surface rounded-2xl overflow-hidden flex flex-col border border-[var(--card-border)]">
+                            <div className="flex items-center justify-between px-3 pt-2 pb-1 flex-shrink-0">
+                              <span className="text-[9px] font-semibold text-[var(--muted)] uppercase tracking-wider">Date range</span>
+                              <DateRangeMini from={fwRange.from} to={fwRange.to} onChange={(v) => setRange(`fw-${widget.id}`, v)} />
+                            </div>
+                            <div className="flex-1 min-h-0">
+                              <FwGraphWidget widget={widget} onDelete={handleDeleteFwWidget} isEditMode={isEditMode} dateFrom={fwRange.from} dateTo={fwRange.to} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </ResponsiveGridLayout>
                   </div>
-                  <p className="text-sm font-semibold text-[var(--foreground)] mb-1">No firewall widgets</p>
-                  <p className="text-xs text-[var(--muted)]">Click "Add Widget" → Palo Alto Firewall to create charts</p>
-                </div>
-              ) : (
-                <div className="w-full min-w-0" onDragStart={(e) => e.stopPropagation()}>
-                  <ResponsiveGridLayout
-                    className="layout"
-                    layouts={fwLayouts}
-                    breakpoints={GRID_BREAKPOINTS}
-                    cols={GRID_COLS}
-                    rowHeight={10}
-                    width={containerWidth}
-                    onLayoutChange={handleLayoutChange}
-                    onBreakpointChange={(bp) => setActiveGridBreakpoint(bp)}
-                    compactor={noCompactor}
-                    dragConfig={{ enabled: isEditMode, handle: '.drag-handle' }}
-                    resizeConfig={{ enabled: isEditMode, handles: ['s', 'w', 'e', 'n', 'sw', 'nw', 'se', 'ne'] }}
-                    margin={[10, 10]}
-                  >
-                    {fwWidgets.map((widget) => {
-                      const fwRange = getRange(`fw-${widget.id}`);
-                      return (
-                        <div key={widget.id} className="card-surface rounded-2xl overflow-hidden flex flex-col">
-                          <div className="flex items-center justify-between px-3 pt-2 pb-1 flex-shrink-0">
-                            <span className="text-[9px] font-semibold text-[var(--muted)] uppercase tracking-wider">Date range</span>
-                            <DateRangeMini from={fwRange.from} to={fwRange.to} onChange={(v) => setRange(`fw-${widget.id}`, v)} />
-                          </div>
-                          <div className="flex-1 min-h-0">
-                            <FwGraphWidget widget={widget} onDelete={handleDeleteFwWidget} isEditMode={isEditMode} dateFrom={fwRange.from} dateTo={fwRange.to} />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </ResponsiveGridLayout>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           );
+
+          /* ─ 4. IDENTITY & MOBILE DEVICE SECURITY ─ */
+          if (section === 'identity_mdm') return (
+            <div
+              key="identity_mdm"
+              onDragOver={(e) => handleSectionDragOver(e, 'identity_mdm')}
+              onDragLeave={(e) => handleSectionDragLeave(e, 'identity_mdm')}
+              onDrop={(e) => handleSectionDrop(e, 'identity_mdm')}
+              className={`group/sec transition-all duration-200 ${isDragging ? 'opacity-30 scale-[0.99] pointer-events-none' : ''} ${isDragTarget ? 'ring-2 ring-indigo-500 ring-offset-4 dark:ring-offset-slate-900 rounded-2xl' : ''}`}
+            >
+              {renderDropIndicator('Identity & MDM')}
+              <div className="pt-2 pb-4">
+                <div
+                  draggable={isEditMode}
+                  onDragStart={(e) => handleSectionDragStart(e, 'identity_mdm')}
+                  onDragEnd={handleSectionDragEnd}
+                  className={`flex items-center gap-3 mb-4 select-none rounded-xl px-3.5 py-2.5 transition-all duration-200 ${
+                    isEditMode
+                      ? 'cursor-grab active:cursor-grabbing bg-sky-50/70 dark:bg-sky-950/30 border-2 border-dashed border-sky-400 dark:border-sky-600 shadow-sm hover:shadow-md'
+                      : 'cursor-default'
+                  }`}
+                >
+                  <div className="w-1.5 h-7 rounded-full bg-gradient-to-b from-sky-400 to-blue-600 flex-shrink-0 shadow-sm" />
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center flex-shrink-0 shadow-sm shadow-sky-500/20">
+                      <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold text-sky-500 uppercase tracking-widest leading-none flex items-center gap-1.5"><span className="inline-block w-1.5 h-1.5 rounded-full bg-sky-500" />Identity &amp; Devices</p>
+                      <h2 className="text-base font-bold text-[var(--foreground)] leading-tight">Hexnode MDM &amp; Mobile Posture</h2>
+                      <p className="text-[11px] text-[var(--muted)] leading-tight">Enrolled device compliance, mobile OS platforms &amp; policy alerts</p>
+                    </div>
+                  </div>
+                  <div className="flex-1 h-px bg-gradient-to-r from-sky-200 via-[var(--card-border)] to-transparent dark:from-sky-800" />
+                  {renderHeaderControls()}
+                </div>
+
+                <IdentityMdmWidgets
+                  devices={mdmData}
+                  loading={mdmLoading}
+                  WidgetSearch={WidgetSearch}
+                />
+              </div>
+            </div>
+          );
+
+          /* ─ 5. SERVICE DESK & TICKETING ─ */
+          if (section === 'ticketing') return (
+            <div
+              key="ticketing"
+              onDragOver={(e) => handleSectionDragOver(e, 'ticketing')}
+              onDragLeave={(e) => handleSectionDragLeave(e, 'ticketing')}
+              onDrop={(e) => handleSectionDrop(e, 'ticketing')}
+              className={`group/sec transition-all duration-200 ${isDragging ? 'opacity-30 scale-[0.99] pointer-events-none' : ''} ${isDragTarget ? 'ring-2 ring-indigo-500 ring-offset-4 dark:ring-offset-slate-900 rounded-2xl' : ''}`}
+            >
+              {renderDropIndicator('Zoho Service Desk')}
+              <div className="pt-2 pb-4">
+                <div
+                  draggable={isEditMode}
+                  onDragStart={(e) => handleSectionDragStart(e, 'ticketing')}
+                  onDragEnd={handleSectionDragEnd}
+                  className={`flex items-center gap-3 mb-4 select-none rounded-xl px-3.5 py-2.5 transition-all duration-200 ${
+                    isEditMode
+                      ? 'cursor-grab active:cursor-grabbing bg-fuchsia-50/70 dark:bg-fuchsia-950/30 border-2 border-dashed border-fuchsia-400 dark:border-fuchsia-600 shadow-sm hover:shadow-md'
+                      : 'cursor-default'
+                  }`}
+                >
+                  <div className="w-1.5 h-7 rounded-full bg-gradient-to-b from-fuchsia-400 to-purple-600 flex-shrink-0 shadow-sm" />
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-fuchsia-500 to-purple-600 flex items-center justify-center flex-shrink-0 shadow-sm shadow-fuchsia-500/20">
+                      <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold text-fuchsia-500 uppercase tracking-widest leading-none flex items-center gap-1.5"><span className="inline-block w-1.5 h-1.5 rounded-full bg-fuchsia-500" />Service Desk</p>
+                      <h2 className="text-base font-bold text-[var(--foreground)] leading-tight">Zoho Desk &amp; Incident Operations</h2>
+                      <p className="text-[11px] text-[var(--muted)] leading-tight">Ticket volume, priority matrix &amp; SLA resolution performance</p>
+                    </div>
+                  </div>
+                  <div className="flex-1 h-px bg-gradient-to-r from-fuchsia-200 via-[var(--card-border)] to-transparent dark:from-fuchsia-800" />
+                  {renderHeaderControls()}
+                </div>
+
+                <ZohoServiceDeskWidgets
+                  tickets={ticketData}
+                  loading={ticketLoading}
+                  getRange={getRange}
+                  setRange={setRange}
+                  DateRangeMini={DateRangeMini}
+                  WidgetSearch={WidgetSearch}
+                />
+
+                <ZohoTicketMatrix />
+              </div>
+            </div>
+          );
+
+          /* ─ 6. THREAT INTEL & SECURITY POSTURE ─ */
+          if (section === 'threat_intel') return (
+            <div
+              key="threat_intel"
+              onDragOver={(e) => handleSectionDragOver(e, 'threat_intel')}
+              onDragLeave={(e) => handleSectionDragLeave(e, 'threat_intel')}
+              onDrop={(e) => handleSectionDrop(e, 'threat_intel')}
+              className={`group/sec transition-all duration-200 ${isDragging ? 'opacity-30 scale-[0.99] pointer-events-none' : ''} ${isDragTarget ? 'ring-2 ring-indigo-500 ring-offset-4 dark:ring-offset-slate-900 rounded-2xl' : ''}`}
+            >
+              {renderDropIndicator('Threat Intel & Governance')}
+              <div className="pt-2 pb-4">
+                <div
+                  draggable={isEditMode}
+                  onDragStart={(e) => handleSectionDragStart(e, 'threat_intel')}
+                  onDragEnd={handleSectionDragEnd}
+                  className={`flex items-center gap-3 mb-4 select-none rounded-xl px-3.5 py-2.5 transition-all duration-200 ${
+                    isEditMode
+                      ? 'cursor-grab active:cursor-grabbing bg-cyan-50/70 dark:bg-cyan-950/30 border-2 border-dashed border-cyan-400 dark:border-cyan-600 shadow-sm hover:shadow-md'
+                      : 'cursor-default'
+                  }`}
+                >
+                  <div className="w-1.5 h-7 rounded-full bg-gradient-to-b from-cyan-400 to-sky-600 flex-shrink-0 shadow-sm" />
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-cyan-500 to-sky-600 flex items-center justify-center flex-shrink-0 shadow-sm shadow-cyan-500/20">
+                      <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 12h16M4 17h10" /></svg>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold text-cyan-500 uppercase tracking-widest leading-none flex items-center gap-1.5"><span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-500" />Governance &amp; Intel</p>
+                      <h2 className="text-base font-bold text-[var(--foreground)] leading-tight">NIST CSF Posture &amp; Threat Intelligence</h2>
+                      <p className="text-[11px] text-[var(--muted)] leading-tight">Target vs Current NIST radar, MTTD/MTTM health score &amp; live CVE advisories</p>
+                    </div>
+                  </div>
+                  <div className="flex-1 h-px bg-gradient-to-r from-cyan-200 via-[var(--card-border)] to-transparent dark:from-cyan-800" />
+                  {renderHeaderControls()}
+                </div>
+
+                {/* NIST Radar + Health Score + Orbital Tools */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+                  {/* NIST CSF Radar */}
+                  <div className="card-surface rounded-2xl overflow-hidden border border-[var(--card-border)]">
+                    <div className="bg-[var(--muted-bg)]/70 border-b border-[var(--card-border)] px-4 py-3 flex items-center justify-between">
+                      <p className="text-xs font-bold text-[var(--foreground)]">NIST CSF Target vs Current</p>
+                      <span className="text-[10px] font-semibold text-cyan-500">Radar</span>
+                    </div>
+                    <div className="p-2">
+                      <FrameworkScore threats={s1Data} agents={agentData} cves={appCveData} tickets={ticketData} mdmDevices={mdmData} />
+                    </div>
+                  </div>
+
+                  {/* Composite Cyber Hygiene Health Score */}
+                  <div className="card-surface rounded-2xl overflow-hidden border border-[var(--card-border)]">
+                    <div className="bg-[var(--muted-bg)]/70 border-b border-[var(--card-border)] px-4 py-3 flex items-center justify-between">
+                      <p className="text-xs font-bold text-[var(--foreground)]">Cyber Hygiene Health Score</p>
+                      <span className="text-[10px] font-semibold text-sky-500">MTTD / MTTM</span>
+                    </div>
+                    <div className="p-2">
+                      <AllCommonmttr />
+                    </div>
+                  </div>
+
+                  {/* Orbital Tool Ecosystem Chart */}
+                  <div className="card-surface rounded-2xl overflow-hidden border border-[var(--card-border)] flex flex-col">
+                    <div className="bg-[var(--muted-bg)]/70 border-b border-[var(--card-border)] px-4 py-3 flex items-center justify-between">
+                      <p className="text-xs font-bold text-[var(--foreground)]">Tool Connectivity Matrix</p>
+                      <span className="text-[10px] font-semibold text-indigo-500">Active Orbits</span>
+                    </div>
+                    <div className="flex-1 min-h-[220px]">
+                      <AllTools tools={integratedToolsStats} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Live Threat Intelligence & CVE Advisories Feed */}
+                <ThreatIntelWidgets WidgetSearch={WidgetSearch} />
+              </div>
+            </div>
+          );
+
+          return null;
         })}
       </div>
-
-      {/* ── Framework Score + Health Score (side by side) ───────────────────── */}
-      <div className="mt-10 mb-2 flex flex-col lg:flex-row gap-6">
-        {/* NIST CSF radar: previous-month target vs current score */}
-        <div className="lg:w-1/2">
-          <div className="flex items-center gap-2 mb-4">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-sky-600 flex items-center justify-center flex-shrink-0 shadow-sm shadow-cyan-500/20">
-              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16M4 12h16M4 17h10" /></svg>
-            </div>
-            <div>
-              <p className="text-[10px] font-bold text-cyan-500 uppercase tracking-widest leading-none">Security Framework</p>
-              <h2 className="text-base font-bold text-[var(--foreground)] leading-tight">Target vs Current Score</h2>
-            </div>
-          </div>
-          <div className="card-surface rounded-2xl overflow-hidden">
-            <FrameworkScore threats={s1Data} agents={agentData} cves={appCveData} tickets={ticketData} mdmDevices={mdmData} />
-          </div>
-        </div>
-        {/* Health Score */}
-        <div className="lg:w-1/2">
-          <div className="flex items-center gap-2 mb-4">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center flex-shrink-0 shadow-sm shadow-sky-500/20">
-              <svg className="w-4.5 h-4.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-            </div>
-            <div>
-              <p className="text-[10px] font-bold text-sky-500 uppercase tracking-widest leading-none">Security Posture</p>
-              <h2 className="text-base font-bold text-[var(--foreground)] leading-tight">Health Score</h2>
-            </div>
-          </div>
-          <div className="card-surface rounded-2xl overflow-hidden">
-            <AllCommonmttr />
-          </div>
-        </div>
-
-      </div>
-
-      {/* ── Zoho Ticket Matrix ──────────────────────────────────────────────── */}
-      <div className="mt-10 mb-2">
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-fuchsia-500 to-purple-600 flex items-center justify-center flex-shrink-0 shadow-sm shadow-fuchsia-500/20">
-            <svg className="w-4.5 h-4.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-          </div>
-          <div>
-            <p className="text-[10px] font-bold text-fuchsia-500 uppercase tracking-widest leading-none">Service Desk</p>
-            <h2 className="text-base font-bold text-[var(--foreground)] leading-tight">Zoho Ticket Dashboard</h2>
-          </div>
-        </div>
-        <ZohoTicketMatrix />
-      </div>
-
-      {/* ── Cached Zoho Tickets (Redis cache-aside layer) ──────────────────────── */}
-      {/* <div className="mt-8 mb-2">
-        <h2 className="text-sm font-bold text-[var(--foreground)] mb-4">
-          Zoho Tickets — Cached (Redis)
-        </h2>
-        <CacheCard
-          title="Zoho Tickets Cache"
-          resourceKey="zoho-tickets"
-          pollIntervalMs={0}
-          render={(data) => (
-            <div className="space-y-2">
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-bold text-[var(--foreground)]">
-                  {data?.tickets ?? (Array.isArray(data?.data) ? data.data.length : 0)}
-                </span>
-                <span className="text-xs text-[var(--muted)]">tickets</span>
-              </div>
-              <p className="text-xs text-[var(--muted)]">
-                Fetched: {data?.fetched ?? '—'} · Synced:{' '}
-                {data?.syncedAt ? new Date(data.syncedAt).toLocaleString() : '—'}
-              </p>
-              <p className="text-[10px] text-[var(--muted)]">
-                Served from Redis cache (TTL 900s). Use the refresh button to trigger an
-                immediate Zoho sync.
-              </p>
-            </div>
-          )}
-        />
-      </div> */}
-
-
     </div>
   );
 }

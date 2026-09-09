@@ -5,7 +5,7 @@ import {
 import { fmtLbl, parseN, fmtBytes, fmtBytesShort, isTimeCol, isBytesCol } from './helpers.js';
 
 const PCOLS = ['#6366f1', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4'];
-const ts = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8 };
+const ts = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, color: 'var(--foreground)', fontSize: 12 };
 
 export default function DynChart({ rows, xList, yList, chartType }) {
   const xColName = xList[0] ?? '';

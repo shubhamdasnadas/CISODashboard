@@ -313,9 +313,9 @@ router.post('/sync', async (req, res) => {
   }
 });
 
-// GET /api/nvd/db — list stored CVEs with optional filters + pagination.
+// GET /api/nvd/db or /api/nvd/cves — list stored CVEs with optional filters + pagination.
 // Query: severity, status, search, page, limit, sort (published|score)
-router.get('/db', async (req, res) => {
+const handleListCves = async (req, res) => {
   try {
     const { severity, status, search } = req.query;
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
@@ -359,6 +359,7 @@ router.get('/db', async (req, res) => {
 
     res.json({
       vulnerabilities: dataRes.rows,
+      data: dataRes.rows,
       total,
       page,
       limit,
@@ -367,7 +368,10 @@ router.get('/db', async (req, res) => {
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
-});
+};
+
+router.get('/db', handleListCves);
+router.get('/cves', handleListCves);
 
 // GET /api/nvd/db/:cve_id — single CVE detail
 router.get('/db/:cve_id', async (req, res) => {

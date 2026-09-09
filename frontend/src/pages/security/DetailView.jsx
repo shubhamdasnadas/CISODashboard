@@ -8,7 +8,7 @@ const RECENT_CAP = 1500;
 const CAPPED_FILTERS = new Set(['classification', 'severity']);
 
 const fmt = (d) => d ? new Date(d).toLocaleString() : '—';
-const yesNo = (v) => v ? 'Yes' : 'No';
+const yesNo = (v) => (v === true || v === 'true' || v === 1) ? 'Yes' : (v === false || v === 'false' || v === 0) ? 'No' : (v ? String(v) : 'No');
 
 function parseDate(v) {
   if (!v) return null;
@@ -27,15 +27,15 @@ function extractTechId(link) {
 // endpoint directly rather than importing that page's local helper.
 function mapCheckpointEvent(e) {
   return {
-    eventId: e.event_id,
+    eventId: e.event_id || e.eventId,
     type: e.type,
     state: e.state,
     severity: e.severity,
-    confidenceIndicator: e.confidence_indicator,
+    confidenceIndicator: e.confidence_indicator || e.confidenceIndicator,
     description: e.description,
-    senderAddress: e.sender_address,
+    senderAddress: e.sender_address || e.senderAddress,
     saas: e.saas,
-    eventCreated: e.event_created,
+    eventCreated: e.event_created || e.eventCreated,
   };
 }
 
@@ -52,17 +52,13 @@ function getFirstValue(row, cols, fallback = '-') {
   return fallback;
 }
 
-const FIREWALL_DATE_COLS = ['slabbed-receive_time', 'receive_time', 'time_generated', 'time', 'date', 'updatedAt'];
-const FIREWALL_COUNT_COLS = ['count', 'nrepeat', 'nsess', 'sessions', 'threats'];
+const FIREWALL_DATE_COLS = ['slabbed-receive_time', 'receive_time', 'time_generated', 'time', 'date', 'updatedAt', 'publishedDate', 'createdAt'];
+const FIREWALL_COUNT_COLS = ['count', 'nrepeat', 'nsess', 'sessions', 'threats', 'value'];
 
 // Raw firewall report keys aren't always self-explanatory — override display
 // labels for known abbreviations while keeping the underlying key for lookup.
 const RAW_COL_LABELS = { nsess: 'Number of sessions' };
 
-// Raw firewall rows are pre-aggregated Panorama report entries (one row per
-// e.g. day+risk bucket, carrying a count/session field) rather than one row
-// per individual event — mirrors PaloAltoPage.jsx's getSumByColumn, so the
-// header can show the same "events" total the source dashboard summed.
 function sumFirewallCount(rows) {
   const col = FIREWALL_COUNT_COLS.find((c) => rows.some((r) => r[c] !== undefined && r[c] !== null && r[c] !== ''));
   if (!col) return null;
@@ -89,9 +85,7 @@ const DATASET_CONFIG = {
   threats: {
     endpoint: '/sentinelone/db/threats',
     extract: (r) => r.data?.data || r.data?.threats || [],
-    dateField: (t) => t.threatInfo?.createdAt,
-    // Top/red only for genuinely outstanding threats — excludes benign-marked ones,
-    // which otherwise have a non-'mitigated' status but aren't actually a problem.
+    dateField: (t) => t.threatInfo?.createdAt || t.createdAt,
     rowRank: (t) => (
       t.threatInfo?.incidentStatus === 'unresolved'
         && t.threatInfo?.mitigationStatus !== 'mitigated'
@@ -100,62 +94,59 @@ const DATASET_CONFIG = {
     tierStyles: [RED_TIER, NORMAL_TIER],
     cols: ['Endpoint', 'Site', 'Group', 'User', 'Classification', 'Incident Status', 'Mitigation', 'Fileless', 'Confidence', 'Created At', 'Identified At'],
     rowFn: (t) => [
-      t.agentRealtimeInfo?.agentComputerName,
-      t.agentRealtimeInfo?.siteName,
-      t.agentRealtimeInfo?.groupName,
-      t.threatInfo?.processUser,
-      t.threatInfo?.classification,
-      t.threatInfo?.incidentStatus,
-      t.threatInfo?.mitigationStatus,
-      yesNo(t.threatInfo?.isFileless),
-      t.threatInfo?.confidenceLevel,
-      fmt(t.threatInfo?.createdAt),
-      fmt(t.threatInfo?.identifiedAt),
+      t.agentRealtimeInfo?.agentComputerName || t.agentComputerName || t.computerName,
+      t.agentRealtimeInfo?.siteName || t.siteName,
+      t.agentRealtimeInfo?.groupName || t.groupName,
+      t.threatInfo?.processUser || t.processUser,
+      t.threatInfo?.classification || t.classification,
+      t.threatInfo?.incidentStatus || t.incidentStatus,
+      t.threatInfo?.mitigationStatus || t.mitigationStatus,
+      yesNo(t.threatInfo?.isFileless ?? t.isFileless),
+      t.threatInfo?.confidenceLevel || t.confidenceLevel,
+      fmt(t.threatInfo?.createdAt || t.createdAt),
+      fmt(t.threatInfo?.identifiedAt || t.identifiedAt),
     ],
   },
   cve: {
     endpoint: '/sentinelone/db/application-cve',
     extract: (r) => r.data?.data || r.data?.cves || [],
-    dateField: (r) => r.detectionDate,
+    dateField: (r) => r.detectionDate || r.publishedDate || r.createdAt,
     cols: ['CVE ID', 'Application', 'Vendor', 'Severity', 'Base Score', 'Days Detected', 'Endpoint', 'Detection Date', 'Status'],
     rowFn: (r) => [
-      r.cveId,
+      r.cveId || r.cve_id,
       r.applicationName || r.application,
-      r.applicationVendor,
+      r.applicationVendor || r.vendor,
       r.severity,
-      r.baseScore,
-      r.daysDetected,
-      r.endpointName,
-      fmt(r.detectionDate),
-      r.status,
+      r.baseScore || r.cvssScore,
+      r.daysDetected || (r.publishedDate ? Math.floor((Date.now() - new Date(r.publishedDate).getTime()) / 86400000) : '—'),
+      r.endpointName || r.computerName,
+      fmt(r.detectionDate || r.publishedDate || r.createdAt),
+      r.status || 'Active',
     ],
   },
   agents: {
     endpoint: '/sentinelone/db/agents',
     extract: (r) => r.data?.agents || r.data?.data || [],
-    dateField: (a) => a.lastActiveDate,
+    dateField: (a) => a.lastActiveDate || a.registeredAt || a.createdAt,
     cols: ['Machine', 'User', 'Site', 'OS', 'Active', 'Active Threats', 'Mitigation Mode', 'Up To Date', 'Firewall', 'Last Active', 'Agent Version'],
     rowFn: (a) => [
-      a.computerName,
-      a.lastLoggedInUserName,
-      a.siteName,
-      a.osName,
+      a.computerName || a.agentComputerName,
+      a.lastLoggedInUserName || a.user,
+      a.siteName || a.site,
+      a.osName || a.os_name || a.osType,
       yesNo(a.isActive),
-      a.activeThreats,
-      a.mitigationMode,
+      a.activeThreats ?? 0,
+      a.mitigationMode || 'Protect',
       yesNo(a.isUpToDate),
       yesNo(a.firewallEnabled),
-      fmt(a.lastActiveDate),
-      a.agentVersion,
+      fmt(a.lastActiveDate || a.registeredAt || a.createdAt),
+      a.agentVersion || a.version,
     ],
   },
   checkpoint: {
     endpoint: '/harmony/events-db',
     extract: (r) => (r.data?.events || r.data?.responseData || []).map(mapCheckpointEvent),
     dateField: (e) => e.eventCreated,
-    // 4-step heat scale between "new" and "detected" states, each split by
-    // confidence — malicious confidence pushes a row to the darker shade
-    // within its state tier.
     rowRank: (e) => {
       const malicious = (e.confidenceIndicator || '').toLowerCase() === 'malicious';
       if (e.state === 'new') return malicious ? 0 : 1;
@@ -175,19 +166,13 @@ const DATASET_CONFIG = {
       fmt(e.eventCreated),
     ],
   },
-  // PaloAltoPage.jsx has already fetched/matched the rows client-side (raw
-  // firewall report entries have wildly varying schemas per report type, so
-  // matching is easiest to do right where the chart data is built) — this
-  // dataset just renders whatever rows arrive via router state, with dynamic
-  // columns computed from whatever keys are actually present.
   firewall: {
     raw: true,
     dateField: (row) => getFirstValue(row, FIREWALL_DATE_COLS, null),
   },
-  // Zoho tickets — same "raw rows via router state" pattern as firewall.
-  // Zohoone.jsx already has the tickets loaded and passes them when navigating.
   zoho: {
-    raw: true,
+    endpoint: '/zoho/tickets-db',
+    extract: (r) => r.data?.responseData || r.data?.tickets || [],
     dateField: (t) => t.created_at || t.createdTime || t.createdAt,
     cols: ['Ticket #', 'Subject', 'Status', 'Priority', 'Department', 'Contact', 'Assignee', 'Channel', 'Type', 'Created At'],
     rowFn: (t) => {
@@ -196,8 +181,8 @@ const DATASET_CONFIG = {
       const contact = `${norm(t.contact?.firstName)} ${norm(t.contact?.lastName)}`.trim() || norm(t.contact?.email) || 'Unknown';
       const assignee = `${norm(t.assignee?.firstName)} ${norm(t.assignee?.lastName)}`.trim() || 'Unassigned';
       return [
-        t.ticketNumber || t.ticket_no || '—',
-        t.subject || '—',
+        t.ticketNumber || t.ticket_no || t.number || '—',
+        t.subject || t.title || '—',
         t.status || '—',
         t.priority || '—',
         dept,
@@ -209,7 +194,53 @@ const DATASET_CONFIG = {
       ];
     },
   },
+  mdm: {
+    endpoint: '/hexnode/db/devices',
+    extract: (r) => Array.isArray(r.data?.data) ? r.data.data : [],
+    dateField: (d) => d.last_reported || d.enrolled_time || d.created_time,
+    cols: ['Device Name', 'Model', 'OS', 'OS Version', 'Type', 'Owner', 'Compliant', 'Enrollment Status', 'Serial Number', 'Last Reported'],
+    rowFn: (d) => [
+      d.device_name || d.name || `Device ${d.id || '—'}`,
+      d.model_name || d.model || '—',
+      d.os_name || d.os_type || d.platform || '—',
+      d.os_version || '—',
+      d.device_type || '—',
+      d.user?.name || d.user_name || '—',
+      yesNo(d.is_compliant ?? d.compliant),
+      d.enrollment_status || (d.enrolled === false ? 'Pending' : 'Enrolled'),
+      d.serial_number || '—',
+      fmt(d.last_reported || d.enrolled_time || d.created_time),
+    ],
+  },
+  nvd: {
+    endpoint: '/nvd/cves?limit=100',
+    extract: (r) => Array.isArray(r.data?.vulnerabilities) ? r.data.vulnerabilities : Array.isArray(r.data?.data) ? r.data.data : Array.isArray(r.data) ? r.data : [],
+    dateField: (c) => c.publishedDate || c.published || c.createdAt || c.lastModifiedDate,
+    cols: ['CVE ID', 'CVSS Score', 'Severity', 'Description', 'Published Date', 'Source'],
+    rowFn: (c) => [
+      c.cveId || c.cve_id || '—',
+      c.baseScore != null ? c.baseScore : (c.cvss_base_score != null ? c.cvss_base_score : (c.cvssScore || '—')),
+      c.severity || c.cvss_base_severity || (c.cvss_base_score >= 9 ? 'CRITICAL' : c.cvss_base_score >= 7 ? 'HIGH' : c.cvss_base_score >= 4 ? 'MEDIUM' : 'LOW'),
+      c.description || c.description_en || '—',
+      fmt(c.publishedDate || c.published || c.createdAt || c.lastModifiedDate),
+      c.sourceIdentifier || c.source_identifier || c.vendor || 'NVD',
+    ],
+  },
 };
+
+function normalizeDatasetKey(key) {
+  if (!key) return 'threats';
+  const k = String(key).toLowerCase().trim();
+  if (k === 'harmony' || k === 'checkpoint' || k === 'email') return 'checkpoint';
+  if (k === 'cve' || k === 'cves' || k === 'application-cve' || k === 'app-cve') return 'cve';
+  if (k === 'agent' || k === 'agents' || k === 's1agent') return 'agents';
+  if (k === 'threat' || k === 'threats' || k === 'security') return 'threats';
+  if (k === 'firewall' || k === 'paloalto' || k === 'fw') return 'firewall';
+  if (k === 'zoho' || k === 'tickets' || k === 'ticketing' || k === 'itsm') return 'zoho';
+  if (k === 'mdm' || k === 'hexnode' || k === 'devices') return 'mdm';
+  if (k === 'nvd' || k === 'threatintel' || k === 'threat_intel' || k === 'intel') return 'nvd';
+  return key;
+}
 
 const FILTERS = {
   // Special filter that returns all rows (for "All Threats" etc.)
@@ -233,76 +264,143 @@ const FILTERS = {
   },
   // CVE Aging bucket filter - filters by daysDetected range
   cveAgingBucket:   (r, value) => {
-    const d = parseInt(r.daysDetected, 10) || 0;
-    if (value === '0-30') return d <= 30;
-    if (value === '31-90') return d > 30 && d <= 90;
-    if (value === '91-180') return d > 90 && d <= 180;
-    if (value === '180+') return d > 180;
-    return false;
+    const d = parseInt(r.daysDetected, 10) || (r.publishedDate ? Math.floor((Date.now() - new Date(r.publishedDate).getTime()) / 86400000) : 0);
+    const v = String(value || '').trim().toLowerCase();
+    if (v === '0-30' || v.includes('< 30') || v.includes('0-30')) return d <= 30;
+    if (v === '31-90' || v.includes('31-90')) return d > 30 && d <= 90;
+    if (v === '91-180' || v.includes('91-180')) return d > 90 && d <= 180;
+    if (v === '180+' || v.includes('180+')) return d > 180;
+    return true;
   },
   mitreTechnique:   (t, value) => (t.indicators || []).some((ind) =>
     (ind.tactics || []).some((tac) => (tac.techniques || []).some((tech) => tech.name === value))),
   mitreTactic:      (t, value) => (t.indicators || []).some((ind) =>
     (ind.tactics || []).some((tac) => (tac.name || '').toLowerCase() === value.toLowerCase())),
   activeThreats:    (a) => (a.activeThreats || 0) > 0,
-  agentDetail:      (a, value) => a.computerName === value,
+  agentDetail:      (a, value) => (a.computerName || a.agentComputerName) === value,
   active:           (a) => a.isActive === true,
   inactive:         (a) => a.isActive === false,
   outdated:         (a) => a.isUpToDate === false,
-  inactiveMachines: (a, value) => a.computerName === value,
-  outdatedAgent:    (a, value) => a.computerName === value,
-  firewallDisabled: (a, value) => a.computerName === value && a.firewallEnabled === false,
-  oldScan:          (a, value) => a.computerName === value,
-  agentSite:        (a, value) => (a.siteName || 'Unknown') === value,
-  os:               (a, value) => (a.osName || 'Unknown') === value,
-  osName:           (a, value) => (a.osName || 'Unknown') === value,
+  inactiveMachines: (a, value) => (a.computerName || a.agentComputerName) === value,
+  outdatedAgent:    (a, value) => (a.computerName || a.agentComputerName) === value,
+  firewallDisabled: (a, value) => (a.computerName || a.agentComputerName) === value && a.firewallEnabled === false,
+  oldScan:          (a, value) => (a.computerName || a.agentComputerName) === value,
+  agentSite:        (a, value) => (a.siteName || a.site || 'Unknown') === value,
+  os:               (a, value) => {
+    const raw = String(a.osName || a.os_name || a.os_type || a.platform || a.osType || '').toLowerCase();
+    const target = String(value || '').toLowerCase();
+    if (target === 'other') return true;
+    if (target.includes('win')) return raw.includes('win');
+    if (target.includes('mac') || target.includes('darwin')) return raw.includes('mac') || raw.includes('darwin') || raw.includes('osx');
+    if (target.includes('linux')) return raw.includes('linux') || raw.includes('ubuntu') || raw.includes('debian');
+    if (target.includes('android')) return raw.includes('android');
+    if (target.includes('ios')) return raw.includes('ios');
+    return raw.includes(target) || target.includes(raw);
+  },
+  osName:           (a, value) => {
+    const raw = String(a.osName || a.os_name || a.os_type || a.platform || a.osType || '').toLowerCase();
+    const target = String(value || '').toLowerCase();
+    if (target === 'other') return true;
+    if (target.includes('win')) return raw.includes('win');
+    if (target.includes('mac') || target.includes('darwin')) return raw.includes('mac') || raw.includes('darwin') || raw.includes('osx');
+    if (target.includes('linux')) return raw.includes('linux') || raw.includes('ubuntu') || raw.includes('debian');
+    if (target.includes('android')) return raw.includes('android');
+    if (target.includes('ios')) return raw.includes('ios');
+    return raw.includes(target) || target.includes(raw);
+  },
   networkStatus:    (a, value) => (a.networkStatus || a.network_status || 'Unknown') === value,
   scanStatus:       (a, value) => (a.scanStatus || 'Unknown') === value,
-  isActive:         (a, value) => String(a.isActive) === value,
-  firewallEnabled:  (a, value) => String(a.firewallEnabled) === value,
-  isUpToDate:       (a, value) => String(a.isUpToDate) === value,
+  isActive:         (a, value) => String(a.isActive) === String(value),
+  firewallEnabled:  (a, value) => String(a.firewallEnabled) === String(value),
+  isUpToDate:       (a, value) => String(a.isUpToDate) === String(value),
   criticalEvents:   (e) => Number(e.severity) >= 4,
-  checkpointSeverity: (e, value) => String(e.severity ?? '?') === value,
-  checkpointState:  (e, value) => (e.state ?? 'unknown') === value,
-  checkpointConfidence: (e, value) => (e.confidenceIndicator ?? 'unknown').toLowerCase() === value,
+  checkpointSeverity: (e, value) => String(e.severity ?? '?') === String(value),
+  checkpointState:  (e, value) => {
+    const s = String(e.state ?? 'unknown').toLowerCase();
+    const v = String(value || '').toLowerCase();
+    if (v === 'remediated' || v === 'neutralized' || v === 'resolved' || v === 'closed') {
+      return ['remediated', 'closed', 'done', 'resolved'].includes(s);
+    }
+    if (v === 'detected' || v === 'in-flight' || v === 'in-progress' || v === 'wip') {
+      return ['detected', 'in_progress', 'wip'].includes(s);
+    }
+    if (v === 'new' || v === 'pending' || v === 'open' || v === 'unresolved') {
+      return ['new', 'pending', 'open', 'unresolved'].includes(s);
+    }
+    return s === v || s.includes(v);
+  },
+  checkpointConfidence: (e, value) => (e.confidenceIndicator ?? 'unknown').toLowerCase() === String(value || '').toLowerCase(),
+  checkpointSaas:   (e, value) => String(e.saas || 'Office 365').toLowerCase() === String(value || '').toLowerCase(),
   checkpointDate: (e, value) => {
     const d = parseDate(e.eventCreated);
     if (!d) return false;
     const key = d.toISOString().slice(0, 10);
-    
+
     // Special handling for 'last7days'
     if (value === 'last7days') {
       const now = Date.now();
       const DAY = 86_400_000;
       return (now - d.getTime()) < 7 * DAY;
     }
-    
+
     return key === value;
   },
-  checkpointType: (e, value) => (e.type ?? 'unknown') === value,
+  checkpointType: (e, value) => {
+    const t = String(e.type ?? 'unknown').toLowerCase().replace(/_/g, ' ');
+    const v = String(value || '').toLowerCase().replace(/_/g, ' ');
+    return t.includes(v) || v.includes(t);
+  },
   senderDomain:     (e, value) => {
     const parts = (e.senderAddress || '').split('@');
-    return parts.length >= 2 && parts[parts.length - 1].toLowerCase() === value;
+    return parts.length >= 2 && parts[parts.length - 1].toLowerCase() === String(value || '').toLowerCase();
   },
-  sender:           (e, value) => (e.senderAddress || '').toLowerCase() === value,
+  sender:           (e, value) => (e.senderAddress || '').toLowerCase() === String(value || '').toLowerCase(),
   targetedMailbox:  (e, value) => {
     const matches = (e.description || '').match(CHECKPOINT_EMAIL_RE);
     if (!matches) return false;
     const sender = (e.senderAddress || '').toLowerCase();
-    return matches.some((m) => { const lm = m.toLowerCase(); return lm === value && lm !== sender; });
+    return matches.some((m) => { const lm = m.toLowerCase(); return lm === String(value || '').toLowerCase() && lm !== sender; });
   },
   // ── Zoho ticket filters ──────────────────────────────────────────────────
-  zohoStatus:       (t, value) => (t.status || '') === value,
-  zohoPriority:     (t, value) => (t.priority || '') === value,
+  zohoStatus:       (t, value) => {
+    const s = String(t.status || '').trim().toLowerCase();
+    const v = String(value || '').trim().toLowerCase();
+    if (v === 'open') return s === 'open' || s === 're-open';
+    if (v === 'in progress' || v === 'wip') return s.includes('progress') || s === 'wip';
+    if (v === 'on hold') return s.includes('hold') || s.includes('revert');
+    if (v === 'escalated') return s === 'escalated';
+    if (v === 'closed' || v === 'resolved') return ['closed', 'technically closed', 'resolved', 'duplicate'].includes(s);
+    return s === v;
+  },
+  zohoPriority:     (t, value) => {
+    const p = String(t.priority || '').trim().toLowerCase();
+    const v = String(value || '').trim().toLowerCase();
+    if (v === 'critical' || v === 'urgent') return p === 'critical' || p === 'urgent';
+    return p === v;
+  },
   zohoDepartment:   (t, value) => {
     const norm = (v) => (v != null ? String(v).trim() : '');
-    const dept = norm(t.department?.name) || norm(t.departmentName) || 'Unknown';
-    return dept === value;
+    const dept = (norm(t.department?.name) || norm(t.departmentName) || 'Unknown').toLowerCase();
+    return dept === String(value || '').toLowerCase();
   },
   zohoAll:          () => true,
-  zohoOpen:         (t) => (t.status || '') === 'Open',
-  zohoHighPriority: (t) => t.priority === 'High' || t.priority === 'Critical',
-  zohoClosed:       (t) => ['Closed', 'Technically Closed', 'Resolved'].includes(t.status || ''),
+  zohoOpen:         (t) => ['open', 're-open'].includes(String(t.status || '').trim().toLowerCase()),
+  zohoHighPriority: (t) => ['high', 'critical', 'urgent'].includes(String(t.priority || '').trim().toLowerCase()),
+  zohoClosed:       (t) => ['closed', 'technically closed', 'resolved', 'duplicate'].includes(String(t.status || '').trim().toLowerCase()),
+  zohoAgingBucket:  (t, value) => {
+    const created = t.createdTime || t.created_at || t.createdAt;
+    if (!created) return true;
+    const c = new Date(created).getTime();
+    if (isNaN(c)) return true;
+    const hours = (Date.now() - c) / (1000 * 60 * 60);
+    const val = String(value || '').toLowerCase();
+    if (val === '< 1 hour' || val.includes('< 1')) return hours < 1;
+    if (val === '1-4 hours' || val.includes('1-4')) return hours >= 1 && hours <= 4;
+    if (val === '4-24 hours' || val.includes('4-24')) return hours > 4 && hours <= 24;
+    if (val === '1-3 days' || val.includes('1-3')) return hours > 24 && hours <= 72;
+    if (val.includes('3+ days') || val.includes('overdue')) return hours > 72;
+    return true;
+  },
   zohoDay:          (t, value) => {
     const ca = t.created_at || t.createdTime || t.createdAt;
     const d = new Date(ca);
@@ -313,11 +411,12 @@ const FILTERS = {
   zohoAssignee:     (t, value) => {
     const norm = (v) => (v != null ? String(v).trim() : '');
     const name = `${norm(t.assignee?.firstName)} ${norm(t.assignee?.lastName)}`.trim() || 'Unassigned';
-    return name === value;
+    return name.toLowerCase() === String(value || '').toLowerCase();
   },
   zohoTicketNo:     (t, value) => {
-    const norm = (v) => (v != null ? String(v).trim() : '');
-    return (norm(t.ticket_no) || norm(t.ticketNumber)) === value;
+    const norm = (v) => (v != null ? String(v).trim().replace(/#/g, '') : '');
+    const cleanVal = String(value || '').trim().replace(/#/g, '');
+    return (norm(t.ticket_no) || norm(t.ticketNumber) || norm(t.number)) === cleanVal;
   },
   zohoStatusGroup:  (t, value) => {
     const s = String(t.status || '').trim().toLowerCase();
@@ -326,13 +425,63 @@ const FILTERS = {
       'WIP':           ['wip'],
       'On Hold':       ['on hold', 'on hold by customer'],
       'Revert Awaited': ['revert awaited - customer', 'revert awaited - oem', 'revert awaited - vendor'],
-      'Closed':        ['closed', 'technically closed'],
+      'Closed':        ['closed', 'technically closed', 'resolved'],
       'Escalated':     ['escalated'],
       'Duplicate':     ['duplicate'],
       'Acknowledge':   ['acknowledge'],
     };
-    const matchers = groups[value] || [value.toLowerCase()];
+    const matchers = groups[value] || [String(value || '').toLowerCase()];
     return matchers.includes(s);
+  },
+  // ── MDM / Device filters ─────────────────────────────────────────────────
+  complianceStatus: (d, value) => {
+    const isComp = d.is_compliant === true || d.compliant === true || String(d.status || '').toLowerCase() === 'compliant';
+    const isPend = String(d.status || '').toLowerCase().includes('pending') || d.enrolled === false;
+    const val = String(value || '').toLowerCase();
+    if (val === 'compliant') return isComp;
+    if (val === 'non-compliant' || val === 'noncompliant') return !isComp && !isPend;
+    if (val.includes('pending')) return isPend;
+    return true;
+  },
+  mdmCompliance:    (d, value) => {
+    const isComp = d.is_compliant === true || d.compliant === true || String(d.status || '').toLowerCase() === 'compliant';
+    const isPend = String(d.status || '').toLowerCase().includes('pending') || d.enrolled === false;
+    const val = String(value || '').toLowerCase();
+    if (val === 'compliant') return isComp;
+    if (val === 'non-compliant' || val === 'noncompliant') return !isComp && !isPend;
+    if (val.includes('pending')) return isPend;
+    return true;
+  },
+  compliant:        (d) => d.is_compliant === true || d.compliant === true || String(d.status || '').toLowerCase() === 'compliant',
+  nonCompliant:     (d) => !(d.is_compliant === true || d.compliant === true || String(d.status || '').toLowerCase() === 'compliant'),
+  deviceId:         (d, value) => {
+    const name = d.device_name || d.name || String(d.id || '');
+    return name === String(value) || String(d.id) === String(value);
+  },
+  // ── NVD / Threat Intel filters ───────────────────────────────────────────
+  nvdSeverity:      (c, value) => {
+    const s = parseFloat(c.baseScore != null ? c.baseScore : (c.cvss_base_score != null ? c.cvss_base_score : (c.cvssScore || 0))) || 0;
+    const sev = String(c.severity || c.cvss_base_severity || '').toUpperCase();
+    const val = String(value || '').toUpperCase();
+    if (val.includes('CRITICAL') || val.includes('9.0')) return s >= 9.0 || sev === 'CRITICAL';
+    if (val.includes('HIGH') || val.includes('7.0')) return (s >= 7.0 && s < 9.0) || sev === 'HIGH';
+    if (val.includes('MEDIUM') || val.includes('4.0')) return (s >= 4.0 && s < 7.0) || sev === 'MEDIUM';
+    if (val.includes('LOW') || val.includes('0.1')) return (s < 4.0 && s > 0) || sev === 'LOW';
+    return true;
+  },
+  cveId:            (c, value) => String(c.cveId || c.cve_id || '').toLowerCase() === String(value || '').toLowerCase(),
+  // ── Firewall / Network filters ───────────────────────────────────────────
+  app:              (r, value) => {
+    const name = r['@name'] || r['name'] || r['app'] || r['application'] || '';
+    return String(name).toLowerCase() === String(value || '').toLowerCase() || String(name).toLowerCase().includes(String(value || '').toLowerCase());
+  },
+  action:           (r, value) => {
+    const a = String(r['action'] || r['rule_action'] || '').toLowerCase();
+    return a.includes(String(value || '').toLowerCase());
+  },
+  threat:           (r, value) => {
+    const t = String(r['threat'] || r['threat_name'] || r['subtype'] || '').toLowerCase();
+    return t.includes(String(value || '').toLowerCase());
   },
   // Threats dataset filters
   total_threats:    () => true,
@@ -397,26 +546,34 @@ export default function DetailView() {
   const [page, setPage] = useState(1);
   const [mitreDescriptions, setMitreDescriptions] = useState(null);
 
-  const config = dataset ? DATASET_CONFIG[dataset] : null;
-  const filterFn = filterId ? FILTERS[filterId] : (config?.raw ? () => true : null);
+  const normKey = normalizeDatasetKey(dataset);
+  const config = normKey ? DATASET_CONFIG[normKey] : null;
+  const filterFn = filterId && FILTERS[filterId] ? FILTERS[filterId] : (config?.raw ? () => true : (FILTERS.all || (() => true)));
   // Handle additional filter from chart clicks (e.g., filter by type AND date)
   const additionalFilterFn = additionalFilter?.filterId ? FILTERS[additionalFilter.filterId] : null;
   const additionalFilterValue = additionalFilter?.value;
 
   useEffect(() => {
-    if (!config) { setLoading(false); return; }
-    if (config.raw) {
-      // Rows already come pre-matched via router state (see PaloAltoPage.jsx)
-      // — re-run this whenever a fresh navigation lands here, not just when
-      // `dataset` itself changes, since the row set differs per click.
+    if (!config) {
+      if (location.state?.rows) {
+        setRows(location.state.rows);
+      }
+      setLoading(false);
+      return;
+    }
+    if (config.raw || (location.state?.rows && Array.isArray(location.state.rows) && location.state.rows.length > 0)) {
       setRows(location.state?.rows || []);
       setLoading(false);
       return;
     }
     setLoading(true);
     api.get(config.endpoint)
-      .then((r) => setRows(config.extract(r)))
-      .catch(() => {})
+      .then((r) => setRows(config.extract ? config.extract(r) : (r.data?.data || [])))
+      .catch(() => {
+        if (location.state?.rows) {
+          setRows(location.state.rows);
+        }
+      })
       .finally(() => setLoading(false));
   }, [dataset, location.state]);
 
