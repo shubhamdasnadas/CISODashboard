@@ -16,9 +16,9 @@ const STATUS_COLORS = {
   'Closed': '#2fb344',
   'Duplicate': '#2fb344',
   'On Hold by Customer': '#ff9f43',
-  'Acknowledge': '#111827',
-  'WIP': '#111827',
-  'Re-Open': '#111827',
+  'Acknowledge': '#8b5cf6',
+  'WIP': '#3b82f6',
+  'Re-Open': '#ec4899',
   'Revert Awaited - Customer': '#ff9f43',
   'Revert Awaited - OEM': '#ff9f43',
   'Revert Awaited - Vendor': '#ff9f43',
@@ -104,8 +104,8 @@ export default function ZohoTicketMatrix() {
                   <td key={status} className="relative px-0 py-0 w-[115px] min-w-[115px] max-w-[115px] border-l border-[var(--card-border)]">
                     {count > 0 ? (
                       <div className="group relative">
-                        <div className="px-2 py-2 font-bold cursor-pointer h-[36px] flex items-center"
-                          style={{ backgroundColor: STATUS_COLORS[status] || '#e5e7eb', color: DARK_TEXT_STATUSES.has(status) ? '#ffffff' : '#111827' }}>
+                        <div className="px-2 py-2 font-bold cursor-pointer h-[36px] flex items-center text-white rounded-sm"
+                          style={{ backgroundColor: STATUS_COLORS[status] || '#6366f1' }}>
                           {count}
                         </div>
                         <div className="hidden group-hover:block absolute z-50 top-full left-0 w-[760px] max-h-[360px] overflow-auto bg-[var(--card-bg)] border border-[var(--card-border)] rounded-lg shadow-xl p-3">

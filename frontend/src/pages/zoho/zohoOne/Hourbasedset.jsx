@@ -115,9 +115,9 @@ export default function Hourbasedset({ tickets = [], onCellClick }) {
 
                       {/* Tooltip Popup on Click */}
                       {isSelected && count > 0 && (
-                        <div className="absolute z-[9999] bottom-full left-1/2 -translate-x-1/2 mb-2 w-72 max-h-64 overflow-y-auto rounded-xl bg-slate-900/95 text-white text-xs shadow-2xl border border-slate-700 p-3.5 backdrop-blur-md">
-                          <div className="flex justify-between items-center mb-2 pb-1.5 border-b border-slate-800">
-                            <div className="font-bold text-amber-400">
+                        <div className="absolute z-[9999] bottom-full left-1/2 -translate-x-1/2 mb-2 w-72 max-h-64 overflow-y-auto rounded-xl bg-[var(--card-bg)] text-[var(--foreground)] text-xs shadow-2xl border border-[var(--card-border)] p-3.5 backdrop-blur-md">
+                          <div className="flex justify-between items-center mb-2 pb-1.5 border-b border-[var(--card-border)]">
+                            <div className="font-bold text-amber-500 dark:text-amber-400">
                               {day} • {formatHour(hour)}
                             </div>
                             <button
@@ -125,29 +125,29 @@ export default function Hourbasedset({ tickets = [], onCellClick }) {
                                 e.stopPropagation();
                                 setActiveTooltip(null);
                               }}
-                              className="text-slate-400 hover:text-white font-bold px-1"
+                              className="text-[var(--muted)] hover:text-[var(--foreground)] font-bold px-1 cursor-pointer"
                             >
                               ✕
                             </button>
                           </div>
-                          <div className="mb-2 font-semibold text-slate-200">Total: {count} tickets</div>
+                          <div className="mb-2 font-semibold text-[var(--foreground)]">Total: {count} tickets</div>
                           <div className="space-y-1.5">
                             {bucket.tickets.slice(0, 5).map((t, i) => {
                               const created = t.createdTime || t.created_at;
                               return (
-                                <div key={i} className="rounded bg-slate-800/80 p-1.5 text-[11px]">
-                                  <div className="font-mono font-bold text-indigo-300">
+                                <div key={i} className="rounded bg-[var(--muted-bg)] p-1.5 text-[11px] border border-[var(--card-border)]">
+                                  <div className="font-mono font-bold text-indigo-600 dark:text-indigo-400">
                                     #{t.ticketNumber || t.ticket_no || '-'}
                                   </div>
-                                  <div className="text-slate-400 text-[10px]">
+                                  <div className="text-[var(--muted)] text-[10px]">
                                     {fmt(created, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                                   </div>
-                                  <div className="text-slate-200 truncate">{t.subject || '-'}</div>
+                                  <div className="text-[var(--foreground)] truncate">{t.subject || '-'}</div>
                                 </div>
                               );
                             })}
                             {bucket.tickets.length > 5 && (
-                              <p className="text-[10px] text-slate-400 text-center">
+                              <p className="text-[10px] text-[var(--muted)] text-center">
                                 +{bucket.tickets.length - 5} more tickets
                               </p>
                             )}

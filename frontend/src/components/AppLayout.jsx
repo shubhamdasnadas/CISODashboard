@@ -5,6 +5,7 @@ import * as session from '../utils/session.js';
 import { PAGES } from '../constants/navPages.js';
 import { useOrg } from '../context/OrgContext.jsx';
 import { useTheme } from '../context/ThemeContext.jsx';
+import PageTransitionLoader from './PageTransitionLoader.jsx';
 
 const NAV = [
   {
@@ -86,7 +87,7 @@ const NAV = [
   },
 ];
 
-function Sidebar({ mobileOpen, onClose, allowedPages }) {
+function Sidebar({ mobileOpen, onClose, allowedPages, collapsed = false, onToggleCollapse }) {
   const navigate = useNavigate();
   const user = session.getUser();
   const { setCurrentOrg } = useOrg();
@@ -111,35 +112,63 @@ function Sidebar({ mobileOpen, onClose, allowedPages }) {
   };
 
   const content = (
-    <div className="w-60 bg-[var(--sidebar-bg)] border-r border-[var(--sidebar-border)] h-full flex flex-col transition-colors duration-200">
-      {/* Logo */}
-      <div className="px-5 py-5 border-b border-[var(--sidebar-border)] flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center flex-shrink-0">
-            <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
+    <div className={`relative ${collapsed ? 'w-[68px]' : 'w-60'} bg-[var(--sidebar-bg)] backdrop-blur-xl border-r border-[var(--sidebar-border)] h-full flex flex-col transition-all duration-300`}>
+      {/* Circular Floating Collapse/Expand Button on the Header Corner Intersection (Image #36) */}
+      <button
+        onClick={onToggleCollapse}
+        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        className="hidden lg:flex absolute -right-3 top-14 -translate-y-1/2 w-6 h-6 rounded-full bg-[var(--elevated)] hover:bg-[var(--card-bg)] border border-[var(--sidebar-border)] shadow-md items-center justify-center text-[var(--foreground)] z-50 transition-all duration-200 hover:scale-110 cursor-pointer"
+      >
+        {collapsed ? (
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+          </svg>
+        ) : (
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+          </svg>
+        )}
+      </button>
+
+      {/* Logo & Header */}
+      <div className={`h-14 px-3 border-b border-[var(--sidebar-border)] flex items-center ${collapsed ? 'justify-center' : 'justify-between'} transition-all flex-shrink-0`}>
+        {collapsed ? (
+          <div className="w-8 h-8 bg-indigo-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm shadow-indigo-500/30" title="SecureHub Enterprise">
+            <svg className="w-4.5 h-4.5 text-white" fill="currentColor" viewBox="0 0 20 20">
               <path fillRule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
             </svg>
           </div>
-          <div>
-            <p className="font-bold text-[var(--foreground)] text-sm leading-tight">SecureHub</p>
-            <p className="text-xs text-[var(--muted)] leading-tight">Enterprise Platform</p>
-          </div>
-        </div>
-        {onClose && (
-          <button onClick={onClose} className="lg:hidden p-1.5 rounded-lg hover:bg-[var(--muted-bg)] text-[var(--muted)]">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+        ) : (
+          <>
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 bg-indigo-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm shadow-indigo-500/30">
+                <svg className="w-4.5 h-4.5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div className="truncate">
+                <p className="font-bold text-[var(--foreground)] text-xs leading-tight">SecureHub</p>
+                <p className="text-[10px] text-[var(--muted)] leading-tight">Enterprise Platform</p>
+              </div>
+            </div>
+            {onClose && (
+              <button onClick={onClose} className="lg:hidden p-1.5 rounded-lg hover:bg-[var(--muted-bg)] text-[var(--muted)]">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </>
         )}
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+      <nav className={`flex-1 ${collapsed ? 'px-2 py-4' : 'px-3 py-4'} space-y-1 overflow-y-auto`}>
         {visibleNav.map(item => (
           <NavLink key={item.key} to={item.path} onClick={onClose}
+            title={collapsed ? item.name : undefined}
             className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+              `flex items-center ${collapsed ? 'justify-center px-0 py-2.5' : 'gap-3 px-3 py-2.5'} rounded-xl text-sm font-medium transition-all ${
                 isActive
                   ? 'bg-indigo-600 text-white shadow-sm'
                   : 'text-[var(--muted)] hover:bg-[var(--muted-bg)] hover:text-[var(--foreground)]'
@@ -148,8 +177,8 @@ function Sidebar({ mobileOpen, onClose, allowedPages }) {
           >
             {({ isActive }) => (
               <>
-                <span className={isActive ? 'text-white' : 'text-[var(--muted)]'}>{item.icon}</span>
-                {item.name}
+                <span className={`${isActive ? 'text-white' : 'text-[var(--muted)]'} flex-shrink-0`}>{item.icon}</span>
+                {!collapsed && <span>{item.name}</span>}
               </>
             )}
           </NavLink>
@@ -157,34 +186,57 @@ function Sidebar({ mobileOpen, onClose, allowedPages }) {
       </nav>
 
       {/* User */}
-      <div className="px-3 py-4 border-t border-[var(--sidebar-border)]">
-        <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-[var(--muted-bg)] mb-1">
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold text-white flex-shrink-0 bg-indigo-600">
-            {initials}
+      <div className={`${collapsed ? 'px-2 py-3' : 'px-3 py-4'} border-t border-[var(--sidebar-border)]`}>
+        {collapsed ? (
+          <div className="flex flex-col items-center gap-2">
+            <div
+              className="w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold text-white flex-shrink-0 bg-indigo-600"
+              title={`${user.username} (${user.role?.replace(/_/g, ' ')})`}
+            >
+              {initials}
+            </div>
+            <button
+              disabled={loggingOut}
+              onClick={logout}
+              title="Sign out"
+              className="p-2 rounded-xl text-[var(--muted)] hover:bg-[var(--muted-bg)] hover:text-[var(--foreground)] transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+            </button>
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-[var(--foreground)] truncate">{user.username}</p>
-            <p className="text-xs text-[var(--muted)] capitalize">{user.role?.replace(/_/g, ' ')}</p>
-          </div>
-        </div>
-        <button
-          disabled={loggingOut}
-          onClick={logout}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm text-[var(--muted)] hover:bg-[var(--muted-bg)] hover:text-[var(--foreground)] transition-colors disabled:opacity-50"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-          </svg>
-          {loggingOut ? 'Signing out…' : 'Sign out'}
-        </button>
+        ) : (
+          <>
+            <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-[var(--muted-bg)] mb-1">
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold text-white flex-shrink-0 bg-indigo-600">
+                {initials}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-[var(--foreground)] truncate">{user.username}</p>
+                <p className="text-xs text-[var(--muted)] capitalize">{user.role?.replace(/_/g, ' ')}</p>
+              </div>
+            </div>
+            <button
+              disabled={loggingOut}
+              onClick={logout}
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm text-[var(--muted)] hover:bg-[var(--muted-bg)] hover:text-[var(--foreground)] transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              {loggingOut ? 'Signing out…' : 'Sign out'}
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
 
   return (
     <>
-      {/* Desktop */}
-      <div className="hidden lg:flex flex-shrink-0">{content}</div>
+      {/* Desktop: relative z-40 ensures the border-mounted toggle button renders above TopBar */}
+      <div className="hidden lg:flex flex-shrink-0 relative z-40">{content}</div>
       {/* Mobile overlay */}
       {mobileOpen && (
         <div className="lg:hidden fixed inset-0 z-50 flex">
@@ -212,9 +264,10 @@ function TopBar({ onMenuClick }) {
   const liveOrgs = organisations.filter(Boolean);
 
   return (
-    <div className="h-14 bg-[var(--topbar-bg)] border-b border-[var(--topbar-border)] flex items-center justify-between px-4 sm:px-6 flex-shrink-0 z-30 transition-colors duration-200">
+    <div className="h-14 topbar-surface flex items-center justify-between px-4 sm:px-6 flex-shrink-0 z-30 transition-colors duration-200">
       {/* Left */}
       <div className="flex items-center gap-3">
+        {/* Mobile menu button */}
         <button onClick={onMenuClick} className="lg:hidden p-2 rounded-lg hover:bg-[var(--muted-bg)] text-[var(--muted)] hover:text-[var(--foreground)] transition-colors">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
@@ -306,6 +359,7 @@ function TopBar({ onMenuClick }) {
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { currentOrg } = useOrg();
   const user = session.getUser();
 
@@ -331,8 +385,22 @@ export default function AppLayout() {
     ? cloneElement(outlet, { key: currentOrg?.id ?? 'none' })
     : outlet;
 
-  // Route guard: if current path's page isn't allowed, bounce to first allowed page.
+  // Synchronous route transition state to prevent target page flash before loader (Image #25)
   const location = useLocation();
+  const [transitionState, setTransitionState] = useState({
+    activePath: location.pathname,
+    isTransitioning: false,
+  });
+
+  // Synchronously intercept route change during render phase so the loader appears instantly
+  // without allowing the target page (e.g. Dashboard) to render or paint first
+  if (transitionState.activePath !== location.pathname) {
+    setTransitionState({
+      activePath: location.pathname,
+      isTransitioning: true,
+    });
+  }
+
   let guardedOutlet = outletKeyed;
   if (!isSuperAdmin && Array.isArray(allowedPages) && outletKeyed) {
     const matchedPage = PAGES.find(p => {
@@ -346,12 +414,29 @@ export default function AppLayout() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[var(--background)] transition-colors duration-200">
-      <Sidebar mobileOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} allowedPages={allowedPages} />
+    <div className="flex h-screen overflow-hidden bg-[var(--background)] bg-app-glow transition-colors duration-200">
+      <Sidebar
+        mobileOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        allowedPages={allowedPages}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed(v => !v)}
+      />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <TopBar onMenuClick={() => setSidebarOpen(true)} />
-        <main className="flex-1 overflow-y-auto overflow-x-hidden">
-          {guardedOutlet}
+        <TopBar
+          onMenuClick={() => setSidebarOpen(true)}
+        />
+        <main className="flex-1 overflow-y-auto overflow-x-hidden relative">
+          {transitionState.isTransitioning && (
+            <PageTransitionLoader
+              key={location.pathname}
+              isLoading={true}
+              onComplete={() => setTransitionState(prev => ({ ...prev, isTransitioning: false }))}
+            />
+          )}
+          <div className={`w-full min-h-full transition-opacity duration-200 ${transitionState.isTransitioning ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+            {guardedOutlet}
+          </div>
         </main>
       </div>
     </div>

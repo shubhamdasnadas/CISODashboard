@@ -21,15 +21,15 @@ export default function AllTools({ tools = [] }) {
   });
 
   return (
-    <div className="flex flex-col h-full w-full bg-[#0b1329] p-3 rounded-2xl">
+    <div className="flex flex-col h-full w-full bg-white dark:bg-[#0b1329] border border-[var(--card-border)] p-3 rounded-2xl">
       <div className="flex items-center justify-between gap-2 mb-1 px-1">
         <div className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-sky-400" />
-          <span className="text-[10px] font-bold tracking-wider text-sky-400 uppercase">
+          <span className="w-2 h-2 rounded-full bg-indigo-500 dark:bg-sky-400" />
+          <span className="text-[10px] font-bold tracking-wider text-indigo-600 dark:text-sky-400 uppercase">
             Orbital Tool Matrix
           </span>
         </div>
-        <span className="text-[9px] font-semibold text-slate-400 bg-slate-800/80 px-2 py-0.5 rounded-full border border-slate-700/50">
+        <span className="text-[9px] font-semibold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-700/50">
           {mapped.length} Active Nodes
         </span>
       </div>

@@ -9,24 +9,61 @@ const api = axios.create({
 // Make sure this tab has a session id before any request goes out.
 initSession();
 
-// Attach the tab's own token + org on every request (per-tab sessions).
-api.interceptors.request.use((config) => {
-  const token = getToken();
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  const orgId = getOrgId();
-  if (orgId) config.headers['X-Org-Id'] = String(orgId);
-  return config;
-});
+// ── Active API Request Tracking for Real-Time Page Loading ───────────────────
+let activeRequestsCount = 0;
+const subscribers = new Set();
 
-// Auto-logout on 401 — but ONLY for calls that genuinely mean "not authenticated"
-// (not the auth/login, auth/check-username, or /organisations endpoints, which
-// the login / org-selection screens depend on). A blind redirect here would bounce
-// a fresh user away from the organisation picker the moment any single request 401s.
-// A guard flag also prevents redirect loops on repeated 401s.
+function notifySubscribers() {
+  subscribers.forEach((callback) => {
+    try {
+      callback(activeRequestsCount);
+    } catch {
+      // ignore callback error
+    }
+  });
+}
+
+export function subscribeToActiveRequests(callback) {
+  subscribers.add(callback);
+  callback(activeRequestsCount);
+  return () => subscribers.delete(callback);
+}
+
+export function getActiveRequestsCount() {
+  return activeRequestsCount;
+}
+
+// Attach the tab's own token + org on every request (per-tab sessions).
+api.interceptors.request.use(
+  (config) => {
+    activeRequestsCount++;
+    notifySubscribers();
+
+    const token = getToken();
+    if (token) config.headers.Authorization = `Bearer ${token}`;
+    const orgId = getOrgId();
+    if (orgId) config.headers['X-Org-Id'] = String(orgId);
+    return config;
+  },
+  (err) => {
+    activeRequestsCount = Math.max(0, activeRequestsCount - 1);
+    notifySubscribers();
+    return Promise.reject(err);
+  }
+);
+
+// Auto-logout on 401 & decrement active request count
 let _authRedirecting = false;
 api.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    activeRequestsCount = Math.max(0, activeRequestsCount - 1);
+    notifySubscribers();
+    return res;
+  },
   (err) => {
+    activeRequestsCount = Math.max(0, activeRequestsCount - 1);
+    notifySubscribers();
+
     const status = err.response?.status;
     const url = err.config?.url || '';
     const isAuthFlow =

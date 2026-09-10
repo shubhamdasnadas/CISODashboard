@@ -401,14 +401,34 @@ export default function Dashboard() {
       });
   }, [currentOrg?.id]);
 
-  // ── Ticketing data ──────────────────────────────────────────────────────────
+  // ── Ticketing data (with real-time automatic polling) ────────────────────────
   useEffect(() => {
     if (!currentOrg) return;
-    setTicketLoading(true);
-    api.get('/zoho/tickets-db')
-      .then((r) => setTicketData(r.data.responseData || []))
-      .catch(() => setTicketData([]))
-      .finally(() => setTicketLoading(false));
+    let isMounted = true;
+
+    const fetchTickets = (isInitial = false) => {
+      if (isInitial) setTicketLoading(true);
+      api.get('/zoho/tickets-db')
+        .then((r) => {
+          if (isMounted) {
+            setTicketData(r.data.responseData || []);
+          }
+        })
+        .catch(() => {
+          if (isMounted && isInitial) setTicketData([]);
+        })
+        .finally(() => {
+          if (isMounted && isInitial) setTicketLoading(false);
+        });
+    };
+
+    fetchTickets(true);
+    const interval = setInterval(() => fetchTickets(false), 20000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, [currentOrg?.id]);
 
   // ── MDM data ────────────────────────────────────────────────────────────────

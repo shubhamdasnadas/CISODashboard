@@ -112,11 +112,12 @@ const Emailsecuritymttr = () => {
             </linearGradient>
           </defs>
 
-          {/* Gauge background (dark gray track) */}
+          {/* Gauge background (theme-aware track) */}
           <path
             d="M 30 100 A 70 70 0 0 1 170 100"
             fill="none"
-            stroke="#1e293b"
+            stroke="currentColor"
+            className="text-slate-200 dark:text-slate-800"
             strokeWidth="16"
             strokeLinecap="round"
           />
@@ -136,13 +137,14 @@ const Emailsecuritymttr = () => {
             y1="100"
             x2={needleX}
             y2={needleY}
-            stroke="#FFFFFF"
+            stroke="currentColor"
+            className="text-slate-800 dark:text-white"
             strokeWidth="3"
             strokeLinecap="round"
           />
 
           {/* Center pivot point */}
-          <circle cx="100" cy="100" r="6" fill="#FFFFFF" />
+          <circle cx="100" cy="100" r="6" fill="currentColor" className="text-slate-800 dark:text-white" />
         </svg>
 
         {/* Percentage Display - reduced margin */}

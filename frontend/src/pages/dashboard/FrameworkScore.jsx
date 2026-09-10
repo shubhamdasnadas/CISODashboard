@@ -7,7 +7,7 @@ import {
 } from 'recharts';
 
 const PREVIOUS_COLOR = '#94a3b8';  // Lighter color for previous month
-const CURRENT_COLOR = '#0f172a';    // Darker color for current month
+const CURRENT_COLOR = '#6366f1';   // Indigo for current month
 const RADAR_DATA = {
   previous: 'Previous Month',
   current: 'Current Month',
@@ -43,15 +43,15 @@ function RadarTooltip({ active, payload, label, currentLabel, previousLabel, sco
   const previousCount = toolIndex >= 0 ? scores[toolIndex].previous : 0;
 
   return (
-    <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, padding: '8px 10px', fontSize: 11 }}>
-      <p style={{ color: '#f8fafc', fontWeight: 700, margin: '0 0 5px' }}>{label}</p>
+    <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-lg p-2 text-xs shadow-lg text-[var(--foreground)]">
+      <p className="font-bold mb-1 text-[var(--foreground)]">{label}</p>
       {payload.map((item) => {
         const isPrevious = item.dataKey === RADAR_DATA.previous;
         const count = isPrevious ? previousCount : currentCount;
         return (
-          <p key={item.dataKey} style={{ color: '#cbd5e1', margin: '2px 0' }}>
+          <p key={item.dataKey} className="text-[var(--muted)] my-0.5">
             <span style={{ color: item.color, marginRight: 5 }}>●</span>
-            {isPrevious ? `Previous Month (${previousLabel})` : `Current Month (${currentLabel})`}: <b>{item.value}%</b>
+            {isPrevious ? `Previous Month (${previousLabel})` : `Current Month (${currentLabel})`}: <b className="text-[var(--foreground)]">{item.value}%</b>
           </p>
         );
       })}
@@ -172,18 +172,15 @@ export default function FrameworkScore({ threats = [], agents = [], cves = [], t
   const avgPrevious = scores.scores.reduce((sum, item) => sum + item.previous, 0) / scores.scores.length;
 
   return (
-    <div style={{
-      display: 'flex', flexDirection: 'column', height: '100%', padding: '18px 16px',
-      backgroundColor: '#0f172a', borderRadius: '8px', width: '100%',
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-        <svg style={{ width: '15px', height: '15px', color: '#38bdf8' }} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+    <div className="flex flex-col h-full p-4 rounded-2xl bg-white dark:bg-[#0b1329] border border-[var(--card-border)] w-full">
+      <div className="flex items-center gap-2 mb-1">
+        <svg className="w-4 h-4 text-indigo-600 dark:text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
         </svg>
-        <span style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', color: '#38bdf8', textTransform: 'uppercase' }}>
+        <span className="text-[11px] font-bold tracking-wider text-indigo-600 dark:text-sky-400 uppercase">
           Framework Score
         </span>
-        <span style={{ marginLeft: 'auto', fontSize: '10px', fontWeight: 600, color: '#94a3b8', background: '#1e293b', borderRadius: '6px', padding: '2px 8px' }}>
+        <span className="ml-auto text-[10px] font-semibold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 rounded-md px-2 py-0.5 border border-slate-200 dark:border-slate-700/50">
           NIST CSF
         </span>
       </div>
@@ -191,15 +188,15 @@ export default function FrameworkScore({ threats = [], agents = [], cves = [], t
       <div style={{ width: '100%', height: 340, minHeight: 340, flex: '0 0 340px' }}>
         <ResponsiveContainer width="100%" height="100%">
           <RadarChart data={radarData} cx="50%" cy="46%" outerRadius="72%" margin={{ top: 16, right: 28, bottom: 18, left: 28 }}>
-            <PolarGrid stroke="#334155" strokeDasharray="3 3" />
-            <PolarAngleAxis dataKey="name" tick={{ fill: '#cbd5e1', fontSize: 12, fontWeight: 600 }} tickLine={false} />
+            <PolarGrid stroke="currentColor" className="text-slate-200 dark:text-slate-800" strokeDasharray="3 3" />
+            <PolarAngleAxis dataKey="name" tick={{ fill: 'currentColor', fontSize: 11, fontWeight: 600 }} className="text-slate-700 dark:text-slate-300" tickLine={false} />
             <PolarRadiusAxis domain={[0, 100]} tick={{ fill: '#64748b', fontSize: 9 }} tickCount={6} axisLine={false} tickLine={false} />
             <Radar
               name={RADAR_DATA.previous}
               dataKey={RADAR_DATA.previous}
               stroke={PREVIOUS_COLOR}
               fill={PREVIOUS_COLOR}
-              fillOpacity={0.34}
+              fillOpacity={0.25}
               strokeWidth={2}
               dot={{ r: 3, fill: PREVIOUS_COLOR, stroke: '#e2e8f0', strokeWidth: 1 }}
             />
@@ -208,26 +205,26 @@ export default function FrameworkScore({ threats = [], agents = [], cves = [], t
               dataKey={RADAR_DATA.current}
               stroke={CURRENT_COLOR}
               fill={CURRENT_COLOR}
-              fillOpacity={0.82}
+              fillOpacity={0.65}
               strokeWidth={2}
-              dot={{ r: 3, fill: CURRENT_COLOR, stroke: '#cbd5e1', strokeWidth: 1 }}
+              dot={{ r: 3, fill: CURRENT_COLOR, stroke: '#c7d2fe', strokeWidth: 1 }}
             />
             <Tooltip content={<RadarTooltip currentLabel={currentLabel} previousLabel={previousLabel} scores={scores.scores} />} />
             <Legend
               verticalAlign="bottom"
               iconType="circle"
-              wrapperStyle={{ color: '#cbd5e1', fontSize: 11, paddingTop: 4 }}
+              wrapperStyle={{ fontSize: 11, paddingTop: 4 }}
             />
           </RadarChart>
         </ResponsiveContainer>
       </div>
 
-      <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '10px', color: '#64748b' }}>
-        <span>Current: <b style={{ color: '#60a5fa' }}>{avgCurrent.toFixed(0)}%</b></span>
-        <span>Previous: <b style={{ color: '#94a3b8' }}>{avgPrevious.toFixed(0)}%</b></span>
+      <div className="mt-2 flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400">
+        <span>Current: <b className="text-indigo-600 dark:text-indigo-400">{avgCurrent.toFixed(0)}%</b></span>
+        <span>Previous: <b className="text-slate-500 dark:text-slate-400">{avgPrevious.toFixed(0)}%</b></span>
         <button
           onClick={() => navigate('/analytics')}
-          style={{ background: 'none', border: 'none', color: '#38bdf8', fontWeight: 600, cursor: 'pointer', padding: 0, fontSize: 10 }}
+          className="text-indigo-600 dark:text-sky-400 font-semibold hover:underline cursor-pointer"
         >
           View report →
         </button>

@@ -41,17 +41,17 @@ export default function ToolBubbleChart({ tools = [] }) {
   });
 
   return (
-    <div className="w-full h-full flex items-center justify-center bg-[#0b1329] dark:bg-[#0b1329] rounded-xl p-2 select-none overflow-hidden">
+    <div className="w-full h-full flex items-center justify-center bg-white dark:bg-[#0b1329] rounded-xl p-2 select-none overflow-hidden">
       <svg
         viewBox={`0 0 ${W} ${H}`}
         className="w-full h-full max-h-[360px] block"
-        style={{ filter: 'drop-shadow(0 4px 12px rgba(0, 0, 0, 0.35))' }}
+        style={{ filter: 'drop-shadow(0 4px 12px rgba(0, 0, 0, 0.15))' }}
       >
         <defs>
           {/* Central Hub Gradient */}
           <radialGradient id="centerHubGrad" cx="40%" cy="40%" r="60%">
-            <stop offset="0%" stopColor="#1e293b" />
-            <stop offset="100%" stopColor="#091024" />
+            <stop offset="0%" stopColor="#312e81" />
+            <stop offset="100%" stopColor="#1e1b4b" />
           </radialGradient>
 
           {/* Dynamic Tool Bubble Gradients */}
@@ -70,7 +70,8 @@ export default function ToolBubbleChart({ tools = [] }) {
           cy={cy}
           r={ringR}
           fill="none"
-          stroke="#1e293b"
+          stroke="currentColor"
+          className="text-slate-300 dark:text-slate-700"
           strokeWidth="1.2"
           strokeDasharray="4 4"
           opacity="0.8"
@@ -86,11 +87,11 @@ export default function ToolBubbleChart({ tools = [] }) {
               y1={cy}
               x2={t.x}
               y2={t.y}
-              stroke={isHovered ? t.color : '#1e293b'}
+              stroke={isHovered ? t.color : 'currentColor'}
+              className={isHovered ? '' : 'text-slate-300 dark:text-slate-700'}
               strokeWidth={isHovered ? 1.5 : 1}
               strokeDasharray={isHovered ? 'none' : '3 4'}
               opacity={isHovered ? 0.9 : 0.6}
-              className="transition-all duration-300"
             />
           );
         })}

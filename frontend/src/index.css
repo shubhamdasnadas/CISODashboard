@@ -4,40 +4,46 @@
 
 /* ── Light mode variables ─────────────────────────────────────────────────── */
 :root {
-  --background: #f6f7f9;
+  --background: #f4f6fa;
+  --bg-glow-color: rgba(79, 70, 229, 0.08);
+  --bg-glow-secondary: rgba(99, 102, 241, 0.05);
+  --bg-glow-accent: rgba(79, 70, 229, 0.04);
   --foreground: #0f172a;
-  --sidebar-bg: #ffffff;
-  --sidebar-border: #e7eaf0;
-  --topbar-bg: #ffffff;
-  --topbar-border: #e7eaf0;
-  --card-bg: #ffffff;
-  --card-border: #e7eaf0;
-  --input-bg: #ffffff;
+  --sidebar-bg: rgba(255, 255, 255, 0.85);
+  --sidebar-border: rgba(226, 232, 240, 0.85);
+  --topbar-bg: rgba(255, 255, 255, 0.88);
+  --topbar-border: rgba(99, 102, 241, 0.18);
+  --card-bg: rgba(255, 255, 255, 0.82);
+  --card-border: rgba(226, 232, 240, 0.85);
+  --input-bg: rgba(255, 255, 255, 0.9);
   --input-border: #d1d5db;
   --muted: #64748b;
-  --muted-bg: #eef1f6;
-  --elevated: #ffffff;
-  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.06);
-  --shadow-card-hover: 0 4px 12px rgba(15, 23, 42, 0.08), 0 2px 6px rgba(15, 23, 42, 0.06);
+  --muted-bg: rgba(238, 242, 246, 0.8);
+  --elevated: rgba(255, 255, 255, 0.95);
+  --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.02);
+  --shadow-card-hover: 0 6px 18px rgba(79, 70, 229, 0.1), 0 2px 6px rgba(15, 23, 42, 0.04);
 }
 
-/* ── Dark mode variables ──────────────────────────────────────────────────── */
+/* ── Dark mode variables (Image #22 Glassmorphism & Image #23/24 Purple/Indigo Ambient Glow & Header) ───── */
 .dark {
-  --background: #0b1220;
-  --foreground: #eef2f8;
-  --sidebar-bg: #111a2e;
-  --sidebar-border: #1e2b44;
-  --topbar-bg: #0f172a;
-  --topbar-border: #1e2b44;
-  --card-bg: #131e34;
-  --card-border: #223049;
-  --input-bg: #0b1220;
-  --input-border: #33415e;
-  --muted: #8b9bb4;
-  --muted-bg: #1b2740;
-  --elevated: #1a2640;
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-card-hover: 0 6px 18px rgba(0, 0, 0, 0.45);
+  --background: #090e1a;
+  --bg-glow-color: rgba(79, 70, 229, 0.28);
+  --bg-glow-secondary: rgba(99, 102, 241, 0.16);
+  --bg-glow-accent: rgba(79, 70, 229, 0.12);
+  --foreground: #f1f5f9;
+  --sidebar-bg: rgba(11, 17, 33, 0.72);
+  --sidebar-border: rgba(99, 102, 241, 0.16);
+  --topbar-bg: rgba(16, 20, 48, 0.88);
+  --topbar-border: rgba(99, 102, 241, 0.32);
+  --card-bg: rgba(16, 24, 46, 0.65);
+  --card-border: rgba(99, 102, 241, 0.18);
+  --input-bg: rgba(11, 18, 34, 0.75);
+  --input-border: rgba(99, 102, 241, 0.28);
+  --muted: #94a3b8;
+  --muted-bg: rgba(27, 36, 68, 0.65);
+  --elevated: rgba(22, 33, 62, 0.75);
+  --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.35);
+  --shadow-card-hover: 0 8px 30px rgba(79, 70, 229, 0.22);
 }
 
 html, body, #root {
@@ -45,8 +51,16 @@ html, body, #root {
   margin: 0;
 }
 
+body, .bg-app-glow {
+  background-color: var(--background);
+  background-image:
+    radial-gradient(circle 900px at 50% -12%, var(--bg-glow-color), transparent 70%),
+    radial-gradient(circle 750px at 85% 15%, var(--bg-glow-secondary), transparent 60%),
+    radial-gradient(circle 600px at 10% 80%, var(--bg-glow-accent, transparent), transparent 65%);
+  background-repeat: no-repeat;
+}
+
 body {
-  background: var(--background);
   color: var(--foreground);
   font-family: 'Inter', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -54,18 +68,43 @@ body {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-/* ── Professional surface helpers ────────────────────────────────────────── */
+/* ── TopBar & Header surfaces (Image #24) ────────────────────────────────── */
+.topbar-surface {
+  background: var(--topbar-bg);
+  border-bottom: 1px solid var(--topbar-border);
+  box-shadow: 0 4px 20px -2px rgba(79, 70, 229, 0.18);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.dark .topbar-surface {
+  background: linear-gradient(90deg, rgba(16, 20, 46, 0.92) 0%, rgba(28, 26, 68, 0.85) 50%, rgba(16, 20, 46, 0.92) 100%);
+  border-bottom-color: rgba(99, 102, 241, 0.32);
+  box-shadow: 0 4px 24px -2px rgba(79, 70, 229, 0.25), inset 0 -1px 0 rgba(129, 140, 248, 0.2);
+}
+
+/* ── Professional glassmorphic surface helpers ───────────────────────────── */
 .card-surface {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
   box-shadow: var(--shadow-card);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
 .card-surface--hover { transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease; }
 .card-surface--hover:hover {
   box-shadow: var(--shadow-card-hover);
   border-color: #c7d2fe;
 }
-.dark .card-surface--hover:hover { border-color: #4f46e5; }
+.dark .card-surface--hover:hover {
+  border-color: rgba(99, 102, 241, 0.5);
+  box-shadow: 0 8px 24px rgba(79, 70, 229, 0.2);
+}
+
+.dark .card-surface > div:first-child[class*="border-b"],
+.dark .card-surface > header {
+  background: linear-gradient(90deg, rgba(20, 27, 56, 0.72) 0%, rgba(32, 33, 76, 0.65) 50%, rgba(20, 27, 56, 0.72) 100%) !important;
+  border-bottom-color: rgba(99, 102, 241, 0.22) !important;
+}
 
 /* ── React Grid Layout drag placeholder ──────────────────────────────────── */
 .react-grid-placeholder {
@@ -166,4 +205,32 @@ html, body { overflow-x: hidden; max-width: 100vw; }
 .dark .recharts-tooltip-item-separator {
   color: #f8fafc !important;
 }
+
+/* ── Page Transition Logo Animations (Image #25) ─────────────────────────── */
+@keyframes logoBounce {
+  0%, 100% {
+    transform: scale(1) translateY(0);
+  }
+  50% {
+    transform: scale(1.08) translateY(-4px);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-logoBounce {
+  animation: logoBounce 2.4s ease-in-out infinite;
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.25s ease-out forwards;
+}
+
 

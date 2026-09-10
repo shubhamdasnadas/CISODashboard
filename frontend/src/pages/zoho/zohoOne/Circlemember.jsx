@@ -125,10 +125,8 @@ function CorpCircle({ corp, corpR, colorScheme, onCircleClick }) {
         }}
       >
         <span
-          className="inline-block px-2 py-0.5 rounded-md text-[11px] font-bold leading-tight shadow-sm text-center"
+          className="inline-block px-2 py-0.5 rounded-md text-[11px] font-bold leading-tight shadow-sm text-center bg-white/95 dark:bg-slate-900/85 text-slate-800 dark:text-slate-100"
           style={{
-            color: colorScheme.label,
-            backgroundColor: 'rgba(15, 23, 42, 0.75)',
             border: `1px solid ${colorScheme.border}`,
             backdropFilter: 'blur(4px)',
             wordBreak: 'break-word',

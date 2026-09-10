@@ -52,14 +52,14 @@ export default function TicketVolcanoGraph({ tickets, onBarClick }) {
         <div className="text-sm font-semibold text-[var(--muted)]">{totalTickets} tickets</div>
       </div>
 
-      <div className="relative min-h-[540px] overflow-hidden rounded-lg border border-slate-800 bg-[#06101e] p-5 text-slate-200">
-        <div className="absolute inset-0 bg-[linear-gradient(180deg,#08162a_0%,#050b15_100%)]" />
-        <div className="absolute left-6 top-8 z-20 text-xs font-bold uppercase tracking-wide text-slate-300">Number of Tickets</div>
-        <div className="absolute left-8 top-20 bottom-24 z-20 flex flex-col justify-between text-xs font-semibold text-slate-400">
+      <div className="relative min-h-[540px] overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#06101e] p-5 text-slate-800 dark:text-slate-200 shadow-inner">
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] dark:bg-[linear-gradient(180deg,#08162a_0%,#050b15_100%)]" />
+        <div className="absolute left-6 top-8 z-20 text-xs font-bold uppercase tracking-wide text-slate-700 dark:text-slate-300">Number of Tickets</div>
+        <div className="absolute left-8 top-20 bottom-24 z-20 flex flex-col justify-between text-xs font-semibold text-slate-500 dark:text-slate-400">
           {axisValues.map(v => <span key={v}>{v}</span>)}
         </div>
-        <div className="absolute left-20 right-10 bottom-24 top-20 z-0 border-b border-l border-slate-500/40">
-          <div className="h-full w-full bg-[linear-gradient(0deg,rgba(148,163,184,0.13)_1px,transparent_1px)] bg-[size:100%_20%]" />
+        <div className="absolute left-20 right-10 bottom-24 top-20 z-0 border-b border-l border-slate-300 dark:border-slate-500/40">
+          <div className="h-full w-full bg-[linear-gradient(0deg,rgba(100,116,139,0.12)_1px,transparent_1px)] dark:bg-[linear-gradient(0deg,rgba(148,163,184,0.13)_1px,transparent_1px)] bg-[size:100%_20%]" />
         </div>
         <div className="absolute left-24 right-16 bottom-24 top-20 z-10 flex items-end justify-around gap-8">
           {graphBuckets.map(bucket => {
@@ -73,10 +73,10 @@ export default function TicketVolcanoGraph({ tickets, onBarClick }) {
                       <polygon points={`${BAR_W},${DEPTH_Y} ${BAR_W + DEPTH_X},0 ${BAR_W + DEPTH_X},${100 - DEPTH_Y} ${BAR_W},100`} fill={bucket.dark} />
                       <polygon points={`0,${DEPTH_Y} ${BAR_W},${DEPTH_Y} ${BAR_W + DEPTH_X},0 ${DEPTH_X},0`} fill={bucket.light} />
                     </svg>
-                    <div className="absolute -top-10 left-[27px] -translate-x-1/2 text-sm font-bold text-white">{bucket.count}</div>
+                    <div className="absolute -top-10 left-[27px] -translate-x-1/2 text-sm font-bold text-slate-800 dark:text-white">{bucket.count}</div>
                   </div>
                 </div>
-                <div className="mt-5 text-center text-xs font-bold text-slate-300">{bucket.label}</div>
+                <div className="mt-5 text-center text-xs font-bold text-slate-700 dark:text-slate-300">{bucket.label}</div>
               </div>
             );
           })}

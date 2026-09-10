@@ -70,6 +70,81 @@ const getTicketDate = (t) => {
   return isNaN(d.getTime()) ? null : d;
 };
 
+function getTicketTimestamp(t) {
+  if (!t) return 0;
+  const val = t.createdTime || t.created_at || t.createdAt || t.created_time || t.time || t.modifiedTime || t.modified_time || t.closedTime || t.closed_at;
+  if (!val) return 0;
+  const d = new Date(val);
+  return isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+function getTicketNumericId(t) {
+  if (!t) return 0;
+  const raw = String(t.ticketNumber || t.ticket_no || t.number || t.id || '');
+  const digits = raw.replace(/\D/g, '');
+  return digits ? parseInt(digits, 10) : 0;
+}
+
+function formatTicketNumber(t, idx = 0) {
+  if (!t) return `#${idx + 10450}`;
+  const raw = String(t.ticketNumber || t.ticket_no || t.number || t.id || '').trim();
+  if (raw.includes('-') || raw.startsWith('#')) return raw;
+  const dept = String(t.department?.name || t.departmentName || '').trim();
+  if (/^\d+$/.test(raw)) {
+    return dept && dept.length <= 6 ? `${dept}-${raw}` : `TJSB-${raw}`;
+  }
+  return raw || `#${idx + 10450}`;
+}
+
+function formatTicketDateTime(t) {
+  const dateVal = t?.createdTime || t?.created_at || t?.createdAt || t?.created_time || t?.time;
+  if (!dateVal) return 'Recent';
+  const d = new Date(dateVal);
+  if (isNaN(d.getTime())) return 'Recent';
+  return d.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
+function getPriorityBadgeStyle(priority) {
+  const p = normalizePriority(priority);
+  switch (p) {
+    case 'Critical':
+      return 'bg-red-500/15 text-red-500 dark:text-red-400 border border-red-500/30';
+    case 'High':
+      return 'bg-orange-500/15 text-orange-500 dark:text-orange-400 border border-orange-500/30';
+    case 'Medium':
+      return 'bg-amber-500/15 text-amber-500 dark:text-amber-400 border border-amber-500/30';
+    case 'Low':
+      return 'bg-emerald-500/15 text-emerald-500 dark:text-emerald-400 border border-emerald-500/30';
+    default:
+      return 'bg-slate-500/15 text-slate-500 dark:text-slate-400 border border-slate-500/30';
+  }
+}
+
+function getStatusBadgeStyle(status) {
+  const s = normalizeStatus(status);
+  switch (s) {
+    case 'Open':
+      return 'bg-blue-500/15 text-blue-500 dark:text-blue-400 border border-blue-500/30';
+    case 'In Progress':
+      return 'bg-purple-500/15 text-purple-500 dark:text-purple-400 border border-purple-500/30';
+    case 'On Hold':
+    case 'Revert Awaited':
+      return 'bg-amber-500/15 text-amber-500 dark:text-amber-400 border border-amber-500/30';
+    case 'Escalated':
+      return 'bg-red-500/15 text-red-500 dark:text-red-400 border border-red-500/30';
+    case 'Closed':
+      return 'bg-emerald-500/15 text-emerald-500 dark:text-emerald-400 border border-emerald-500/30';
+    default:
+      return 'bg-slate-500/15 text-slate-500 dark:text-slate-400 border border-slate-500/30';
+  }
+}
+
 function getResolutionHours(t) {
   const c = getCreatedDate(t);
   const cl = getClosedDate(t);
@@ -317,30 +392,41 @@ export default function ZohoServiceDeskWidgets({
     });
   }, [agingTickets, tickets, agingDays, refDate]);
 
-  // 5. Active & Escalated Incident Queue
+  // 5. Active & Escalated Incident Queue (Sorted descending by latest incoming timestamp & ticket ID)
   const activeTicketQueue = useMemo(() => {
     const query = searchTicket.trim().toLowerCase();
-    const list = activeTicketSet.length > 0 ? activeTicketSet : [
-      { ticketNumber: "10482", subject: "Critical Endpoint EDR Isolation Request", priority: "Critical", status: "Escalated", department: { name: "Security Operations" }, createdTime: "2026-09-09T08:30:00Z" },
-      { ticketNumber: "10479", subject: "VPN Gateway Certificate Expiration Warning", priority: "High", status: "In Progress", department: { name: "Network Infrastructure" }, createdTime: "2026-09-09T07:15:00Z" },
-      { ticketNumber: "10475", subject: "Executive Phishing Simulation Report Alert", priority: "High", status: "Open", department: { name: "Security Operations" }, createdTime: "2026-09-08T16:45:00Z" },
-      { ticketNumber: "10471", subject: "MDM Profile Compliance Failure - CEO Device", priority: "Medium", status: "WIP", department: { name: "Identity & Devices" }, createdTime: "2026-09-08T14:20:00Z" },
-      { ticketNumber: "10468", subject: "New User Onboarding Access Provisioning", priority: "Low", status: "Open", department: { name: "IT Service Desk" }, createdTime: "2026-09-08T11:10:00Z" },
+    const sourceList = tickets && tickets.length > 0 ? tickets : [
+      { ticketNumber: "TJSB-18483", subject: "? BRANCH ISOLATED — BR-C222-RTNGRI", priority: "None", status: "Open", department: { name: "TJSB" }, createdTime: "2026-07-14T14:52:00Z" },
+      { ticketNumber: "TJSB-18482", subject: "Problem: Cisco SD-WAN: Interface [\"GigabitEthernet0/0/1\"]: Link down BR-C103-LOSWD", priority: "Medium", status: "Closed", department: { name: "TJSB" }, createdTime: "2026-07-14T14:02:00Z" },
+      { ticketNumber: "TJSB-18481", subject: "? BRANCH ISOLATED — BR-C164-CURHM", priority: "Medium", status: "Closed", department: { name: "TJSB" }, createdTime: "2026-07-14T13:51:00Z" },
+      { ticketNumber: "TJSB-18480", subject: "Critical Endpoint EDR Isolation Request", priority: "Critical", status: "Escalated", department: { name: "TJSB" }, createdTime: "2026-07-14T12:30:00Z" },
+      { ticketNumber: "TJSB-18479", subject: "VPN Gateway Certificate Expiration Warning", priority: "High", status: "In Progress", department: { name: "Network Infrastructure" }, createdTime: "2026-07-14T11:15:00Z" },
+      { ticketNumber: "TJSB-18478", subject: "Executive Phishing Simulation Report Alert", priority: "High", status: "Open", department: { name: "Security Operations" }, createdTime: "2026-07-14T10:45:00Z" },
+      { ticketNumber: "TJSB-18477", subject: "MDM Profile Compliance Failure - CEO Device", priority: "Medium", status: "WIP", department: { name: "Identity & Devices" }, createdTime: "2026-07-14T09:20:00Z" },
+      { ticketNumber: "TJSB-18476", subject: "New User Onboarding Access Provisioning", priority: "Low", status: "Open", department: { name: "IT Service Desk" }, createdTime: "2026-07-14T08:10:00Z" },
     ];
 
-    return list
+    // Always sort by latest timestamp descending (most recent tickets first) and largest numeric ID
+    const sorted = [...sourceList].sort((a, b) => {
+      const timeA = getTicketTimestamp(a);
+      const timeB = getTicketTimestamp(b);
+      if (timeB !== timeA) return timeB - timeA;
+      return getTicketNumericId(b) - getTicketNumericId(a);
+    });
+
+    return sorted
       .filter((t) => {
         if (!query) return true;
         const dept = t.department?.name || t.departmentName || '';
-        const num = t.ticketNumber || t.number || '';
+        const num = formatTicketNumber(t);
         const subj = t.subject || t.title || '';
         const p = t.priority || '';
         const s = t.status || '';
         const hay = [dept, num, subj, p, s].join(' ').toLowerCase();
         return hay.includes(query);
       })
-      .slice(0, 6);
-  }, [activeTicketSet, searchTicket]);
+      .slice(0, 15);
+  }, [tickets, searchTicket]);
 
   return (
     <div className="space-y-4 mb-4">
@@ -539,14 +625,20 @@ export default function ZohoServiceDeskWidgets({
         </div>
       </div>
 
-      {/* Active Incident Feed & Watchlist */}
-      <div className="card-surface rounded-2xl flex flex-col overflow-hidden border border-[var(--card-border)]">
+      {/* Active Incident Feed & Watchlist (Real-Time Auto-Updated Latest Incoming Queue) */}
+      <div className="card-surface rounded-2xl flex flex-col overflow-hidden border border-[var(--card-border)] shadow-sm">
         <div className="bg-[var(--muted-bg)]/70 border-b border-[var(--card-border)] px-4 py-3 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-fuchsia-500" />
+            <span className="w-2.5 h-2.5 rounded-full bg-fuchsia-500 animate-pulse shadow-sm shadow-fuchsia-500/50" />
             <div>
-              <p className="text-[10px] font-bold text-fuchsia-500 uppercase tracking-wider">Active ITSM Queue</p>
-              <p className="text-sm font-bold text-[var(--foreground)]">High-Priority &amp; Escalated Tickets</p>
+              <div className="flex items-center gap-2">
+                <p className="text-[10px] font-bold text-fuchsia-500 uppercase tracking-wider leading-none">Active ITSM Queue</p>
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-emerald-500/15 text-emerald-500 dark:text-emerald-400 border border-emerald-500/30">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+                  Live Sync
+                </span>
+              </div>
+              <p className="text-sm font-bold text-[var(--foreground)] mt-0.5">High-Priority &amp; Escalated Tickets</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -555,11 +647,11 @@ export default function ZohoServiceDeskWidgets({
                 value={searchTicket}
                 onChange={setSearchTicket}
                 placeholder="Search ticket # or subj…"
-                inputWidth="w-36"
+                inputWidth="w-36 sm:w-48"
               />
             )}
             <button
-              onClick={() => navigate('/dashboard/detail', { state: { dataset: 'zoho', filterId: 'zohoAll', title: 'All Service Desk Tickets', rows: activeTicketSet } })}
+              onClick={() => navigate('/dashboard/detail', { state: { dataset: 'zoho', filterId: 'zohoAll', title: 'All Service Desk Tickets', rows: tickets && tickets.length > 0 ? tickets : activeTicketQueue } })}
               className="text-xs font-semibold text-fuchsia-600 dark:text-fuchsia-400 hover:underline flex items-center gap-1 cursor-pointer"
             >
               View Full Desk
@@ -567,29 +659,20 @@ export default function ZohoServiceDeskWidgets({
             </button>
           </div>
         </div>
-        <div className="flex-1 overflow-auto max-h-[250px]">
+        <div className="flex-1 overflow-y-auto max-h-[340px]">
           <div className="divide-y divide-[var(--card-border)]">
             {activeTicketQueue.map((t, idx) => {
-              const num = t.ticketNumber || t.ticket_no || t.number || `#${idx + 10450}`;
+              const num = formatTicketNumber(t, idx);
               const subj = t.subject || t.title || 'Service Desk Request';
-              const dept = t.department?.name || t.departmentName || 'General Support';
+              const dept = t.department?.name || t.departmentName || 'TJSB';
               const p = normalizePriority(t.priority);
               const s = normalizeStatus(t.status);
               const isUrgent = p === 'Critical' || p === 'High' || s === 'Escalated';
-
-              const badgeCls = p === 'Critical' ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 border-red-200 dark:border-red-800'
-                : p === 'High' ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 border-orange-200 dark:border-orange-800'
-                : p === 'Medium' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 border-amber-200 dark:border-amber-800'
-                : 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300 border-green-200 dark:border-green-800';
-
-              const statusBadgeCls = s === 'Escalated' ? 'bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400'
-                : s === 'In Progress' ? 'bg-purple-50 text-purple-600 dark:bg-purple-950/50 dark:text-purple-400'
-                : s === 'On Hold' ? 'bg-amber-50 text-amber-600 dark:bg-amber-950/50 dark:text-amber-400'
-                : 'bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-400';
+              const formattedDate = formatTicketDateTime(t);
 
               return (
                 <div
-                  key={t.id || num}
+                  key={t.id || `${num}-${idx}`}
                   onClick={() => {
                     navigate('/dashboard/detail', {
                       state: {
@@ -597,31 +680,31 @@ export default function ZohoServiceDeskWidgets({
                         filterId: 'zohoTicketNo',
                         value: num,
                         title: `Service Desk Ticket ${num}`,
-                        rows: activeTicketSet,
+                        rows: tickets && tickets.length > 0 ? tickets : activeTicketQueue,
                       },
                     });
                   }}
-                  className="p-3 hover:bg-[var(--muted-bg)]/70 transition-colors cursor-pointer flex items-center justify-between gap-3"
+                  className="p-3.5 hover:bg-[var(--muted-bg)]/70 transition-colors cursor-pointer flex items-center justify-between gap-3 group"
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-mono font-bold text-xs text-indigo-600 dark:text-indigo-400">
                         {num}
                       </span>
-                      <span className={`px-2 py-0.2 rounded-full text-[10px] font-bold border ${badgeCls}`}>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${getPriorityBadgeStyle(t.priority)}`}>
                         {p}
                       </span>
-                      <span className={`px-2 py-0.2 rounded-full text-[10px] font-semibold ${statusBadgeCls}`}>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${getStatusBadgeStyle(t.status)}`}>
                         {s}
                       </span>
                     </div>
-                    <p className="text-xs font-semibold text-[var(--foreground)] line-clamp-1 mt-0.5">
+                    <p className="text-xs font-semibold text-[var(--foreground)] line-clamp-1 mt-1">
                       {subj}
                     </p>
-                    <div className="flex items-center gap-2 text-[10px] text-[var(--muted)] mt-0.5">
-                      <span>{dept}</span>
+                    <div className="flex items-center gap-2 text-[11px] text-[var(--muted)] mt-1">
+                      <span className="font-medium">{dept}</span>
                       <span>•</span>
-                      <span>{t.createdTime ? new Date(t.createdTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Recent'}</span>
+                      <span>{formattedDate}</span>
                     </div>
                   </div>
                   <div className="text-right flex-shrink-0 flex items-center gap-2">
@@ -630,7 +713,7 @@ export default function ZohoServiceDeskWidgets({
                         SLA Alert
                       </span>
                     )}
-                    <svg className="w-4 h-4 text-[var(--muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                    <svg className="w-4 h-4 text-[var(--muted)] group-hover:text-[var(--foreground)] group-hover:translate-x-0.5 transition-all" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
                   </div>
                 </div>
               );

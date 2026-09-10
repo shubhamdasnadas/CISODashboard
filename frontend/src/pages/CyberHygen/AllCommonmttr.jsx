@@ -118,8 +118,9 @@ const AllCommonmttr = () => {
     alignItems: 'center',
     justifyContent: 'center',
     padding: '32px 16px',
-    backgroundColor: '#0f172a',
-    borderRadius: '8px',
+    backgroundColor: 'var(--card-bg)',
+    borderRadius: '16px',
+    border: '1px solid var(--card-border)',
     width: '100%',
     minHeight: 'auto'
   };
@@ -142,7 +143,7 @@ const AllCommonmttr = () => {
   };
 
   const statsStyle = {
-    color: '#94a3b8',
+    color: 'var(--muted)',
     fontSize: '12px',
     textAlign: 'center',
     margin: '4px 0 0 0'
@@ -172,8 +173,9 @@ const AllCommonmttr = () => {
   });
 
   const legendTextStyle = {
-    color: '#cbd5e1',
-    fontSize: '11px'
+    color: 'var(--foreground)',
+    fontSize: '11px',
+    fontWeight: '500'
   };
 
   // For debugging
@@ -202,11 +204,12 @@ const AllCommonmttr = () => {
             </linearGradient>
           </defs>
 
-          {/* Gauge background (dark gray track) */}
+          {/* Gauge background (theme-aware track) */}
           <path
             d="M 30 100 A 70 70 0 0 1 170 100"
             fill="none"
-            stroke="#1e293b"
+            stroke="currentColor"
+            className="text-slate-200 dark:text-slate-800"
             strokeWidth="16"
             strokeLinecap="round"
           />
@@ -226,13 +229,14 @@ const AllCommonmttr = () => {
             y1="100"
             x2={needleX}
             y2={needleY}
-            stroke="#FFFFFF"
+            stroke="currentColor"
+            className="text-slate-800 dark:text-white"
             strokeWidth="3"
             strokeLinecap="round"
           />
 
           {/* Center pivot point */}
-          <circle cx="100" cy="100" r="6" fill="#FFFFFF" />
+          <circle cx="100" cy="100" r="6" fill="currentColor" className="text-slate-800 dark:text-white" />
         </svg>
 
         {/* Percentage Display */}
