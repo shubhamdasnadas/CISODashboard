@@ -4,11 +4,20 @@ import { subscribeToActiveRequests } from '../api.js';
 /**
  * PageTransitionLoader - Animated Shield Logo Transition Loader
  * Renders Image #25 shield logo with ripple waves, heartbeat breathing, and real-time data loading progress.
- * Stays visible until all page data API requests are fully loaded.
+ * Stays visible until all page data API requests are fully loaded or during auth/OTP operations.
  */
-export default function PageTransitionLoader({ isLoading, onComplete }) {
+export default function PageTransitionLoader({
+  isLoading = true,
+  onComplete,
+  fullScreen = false,
+  title = 'SecureHub',
+  badge = 'Enterprise',
+  statusText,
+  messages,
+}) {
   const [progress, setProgress] = useState(25);
   const activeRequestsRef = useRef(0);
+  const hasSeenRequestsRef = useRef(false);
   const mountedTimeRef = useRef(Date.now());
   const hasFinishedRef = useRef(false);
 
@@ -16,20 +25,25 @@ export default function PageTransitionLoader({ isLoading, onComplete }) {
     if (!isLoading) {
       setProgress(0);
       hasFinishedRef.current = false;
+      hasSeenRequestsRef.current = false;
       return;
     }
 
     mountedTimeRef.current = Date.now();
     hasFinishedRef.current = false;
+    hasSeenRequestsRef.current = false;
     setProgress(25);
 
     // Subscribe to real-time API requests count
     const unsubscribe = subscribeToActiveRequests((count) => {
       activeRequestsRef.current = count;
+      if (count > 0) {
+        hasSeenRequestsRef.current = true;
+      }
     });
 
-    const minGracePeriod = 200; // ms to let React component mount and initiate network requests
-    const maxSafetyTimeout = 1500; // 1.5s max cap so the UI is always snappy and never stuck
+    const minGracePeriod = 450; // ms to let React child components mount and initiate network requests
+    const maxSafetyTimeout = 12000; // max time before safety finish (12s)
 
     const interval = setInterval(() => {
       const elapsed = Date.now() - mountedTimeRef.current;
@@ -37,32 +51,46 @@ export default function PageTransitionLoader({ isLoading, onComplete }) {
 
       if (hasFinishedRef.current) return;
 
-      // When requests are still in-flight or during initial grace period:
-      if (elapsed < minGracePeriod || (count > 0 && elapsed < maxSafetyTimeout)) {
-        // Smoothly advance progress between 25% and 88% while loading data
-        setProgress((prev) => {
-          if (prev < 50) return prev + 8;
-          if (prev < 75) return prev + 5;
-          if (prev < 88) return prev + 2;
-          return 88; // hold at 88% until all requests finish
-        });
-      } else {
-        // All API requests have finished or safety timeout reached! Accelerate to 100%
-        setProgress((prev) => {
-          if (prev < 100) {
-            const next = Math.min(100, prev + 18);
-            if (next >= 100 && !hasFinishedRef.current) {
-              hasFinishedRef.current = true;
-              setTimeout(() => {
-                if (onComplete) onComplete();
-              }, 120);
+      // When route/tab transitions provide an onComplete callback:
+      if (onComplete) {
+        const isRequestsPending = count > 0 || (elapsed < minGracePeriod);
+        const isWithinSafetyTimeout = elapsed < maxSafetyTimeout;
+
+        if (isRequestsPending && isWithinSafetyTimeout) {
+          // Smoothly advance progress between 25% and 88% while loading data
+          setProgress((prev) => {
+            if (prev < 50) return prev + 6;
+            if (prev < 75) return prev + 4;
+            if (prev < 88) return prev + 1.5;
+            return 88; // hold at 88% until all requests finish
+          });
+        } else {
+          // All API requests have finished or safety timeout reached! Accelerate to 100%
+          setProgress((prev) => {
+            if (prev < 100) {
+              const next = Math.min(100, prev + 16);
+              if (next >= 100 && !hasFinishedRef.current) {
+                hasFinishedRef.current = true;
+                setTimeout(() => {
+                  if (onComplete) onComplete();
+                }, 120);
+              }
+              return next;
             }
-            return next;
-          }
-          return 100;
+            return 100;
+          });
+        }
+      } else {
+        // Controlled isLoading (e.g. during Sign In / sending OTP to email)
+        setProgress((prev) => {
+          if (prev < 45) return prev + 6;
+          if (prev < 70) return prev + 3;
+          if (prev < 88) return prev + 1.5;
+          if (prev < 94) return prev + 0.5;
+          return 94; // Hold smoothly near 94% until the request completes
         });
       }
-    }, 50);
+    }, 45);
 
     return () => {
       clearInterval(interval);
@@ -72,8 +100,31 @@ export default function PageTransitionLoader({ isLoading, onComplete }) {
 
   if (!isLoading) return null;
 
+  // Determine current status message
+  let currentStatus = '';
+  if (statusText) {
+    currentStatus = statusText;
+  } else if (messages && Array.isArray(messages) && messages.length > 0) {
+    const stepIdx = Math.min(
+      messages.length - 1,
+      Math.floor((progress / 100) * messages.length)
+    );
+    currentStatus = messages[stepIdx];
+  } else {
+    currentStatus =
+      progress < 40
+        ? 'Initializing Workspace Telemetry…'
+        : progress < 75
+        ? 'Fetching Security Datasets & Threats…'
+        : progress < 95
+        ? 'Aggregating Posture & Real-Time Metrics…'
+        : 'Launching Workspace…';
+  }
+
+  const containerPosition = fullScreen ? 'fixed inset-0 z-[9999] min-h-screen' : 'absolute inset-0 z-40 min-h-full';
+
   return (
-    <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[var(--background)] bg-app-glow transition-all duration-200 animate-fadeIn min-h-full will-change-[opacity]">
+    <div className={`${containerPosition} flex flex-col items-center justify-center bg-[var(--background)] bg-app-glow transition-all duration-200 animate-fadeIn will-change-[opacity]`}>
       {/* Ambient background glow behind logo */}
       <div className="absolute w-96 h-96 rounded-full bg-indigo-600/20 blur-3xl pointer-events-none animate-pulse will-change-[transform,opacity]" />
 
@@ -104,23 +155,19 @@ export default function PageTransitionLoader({ isLoading, onComplete }) {
       </div>
 
       {/* Brand & Loading Indicator */}
-      <div className="mt-8 text-center z-10 space-y-2">
+      <div className="mt-8 text-center z-10 space-y-2 px-4 max-w-sm">
         <div className="flex items-center justify-center gap-2">
           <p className="font-extrabold text-lg text-[var(--foreground)] tracking-tight">
-            SecureHub
+            {title}
           </p>
-          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
-            Enterprise
-          </span>
+          {badge && (
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+              {badge}
+            </span>
+          )}
         </div>
         <p className="text-xs font-medium text-[var(--muted)] animate-pulse">
-          {progress < 40
-            ? 'Initializing Workspace Telemetry…'
-            : progress < 75
-            ? 'Fetching Security Datasets & Threats…'
-            : progress < 95
-            ? 'Aggregating Posture & Real-Time Metrics…'
-            : 'Launching Workspace…'}
+          {currentStatus}
         </p>
 
         {/* Real-Time Progress Bar */}

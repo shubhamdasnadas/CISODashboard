@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import * as session from '../utils/session.js';
+import PageTransitionLoader from '../components/PageTransitionLoader.jsx';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -54,8 +55,10 @@ export default function Login() {
     try {
       const { data } = await api.post('/auth/login', { username, password });
       if (data.otpRequested) {
-        // Password valid, now go to OTP screen
-        navigate('/verify-otp?username=' + encodeURIComponent(username));
+        // Password valid — dispatch OTP code to registered email while whole-page loader is active
+        await api.post('/auth/otp/send', { username });
+        // OTP code dispatched successfully to mail -> transition to verification screen
+        navigate('/verify-otp?username=' + encodeURIComponent(username) + '&sent=1');
       } else {
         // Legacy fallback - directly logged in (creates this tab's own session)
         session.setAuth({ token: data.token, user: data.user });
@@ -64,14 +67,31 @@ export default function Login() {
         navigate('/select-organisation');
       }
     } catch (err) {
-      setError(err.response?.data?.error || 'Login failed');
+      console.error('[login/otp] failed:', err);
+      setError(err.response?.data?.error || err.response?.data?.detail || 'Login failed');
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[var(--background)] p-6 transition-colors duration-200">
+    <div className="min-h-screen flex items-center justify-center bg-[var(--background)] p-6 transition-colors duration-200 relative">
+      {/* Full-page animated shield loader shown after clicking Sign In until OTP is sent to email */}
+      {loading && (
+        <PageTransitionLoader
+          isLoading={true}
+          fullScreen={true}
+          title="SecureHub"
+          badge="Enterprise"
+          messages={[
+            'Verifying credentials…',
+            'Generating secure verification code…',
+            'Sending OTP code to your registered email…',
+            'Preparing verification session…',
+          ]}
+        />
+      )}
+
       <div className="w-full max-w-md bg-[var(--card-bg)] rounded-2xl p-8 border border-[var(--card-border)] shadow-xl">
         {/* Logo */}
         <div className="flex items-center gap-3 mb-8">
@@ -149,21 +169,20 @@ export default function Login() {
           <button
             type="submit"
             disabled={!showPassword || !password || loading}
-            className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold transition-colors"
+            className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold transition-colors flex items-center justify-center gap-2"
           >
-            {loading ? 'Signing in…' : 'Sign In'}
+            {loading ? (
+              <>
+                <svg className="animate-spin w-4 h-4 text-white" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                <span>Sending OTP…</span>
+              </>
+            ) : (
+              'Sign In'
+            )}
           </button>
-
-          {/* New 2FA flow: username+password -> QR scan -> email OTP -> org select */}
-          {/* <Link
-            to="/login-2fa"
-            className="w-full mt-3 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-[var(--input-border)] bg-[var(--background)] text-[var(--foreground)] font-semibold hover:bg-[var(--muted-bg)] transition-colors"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m0 14v1m8-9h-1M5 12H4m13.657-5.657l-.707-.707M7.05 17.95l-.707.707m11.314 0l-.707-.707M7.05 6.05l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z" /></svg>
-            Sign in with QR code &amp; email verification
-          </Link> */}
-
-          
         </form>
 
         <p className="mt-6 text-xs text-[var(--muted)] text-center">

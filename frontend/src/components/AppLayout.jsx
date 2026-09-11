@@ -357,6 +357,52 @@ function TopBar({ onMenuClick }) {
   );
 }
 
+function getPageLoaderMeta(pathname) {
+  if (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) {
+    return { badge: 'Overview', statusText: 'Fetching Workspace Overview & Real-Time Security Telemetry…' };
+  }
+  if (pathname === '/security' || pathname.startsWith('/security/')) {
+    return { badge: 'SentinelOne', statusText: 'Fetching Endpoint Protection & Incident Telemetry…' };
+  }
+  if (pathname === '/checkpoint' || pathname.startsWith('/checkpoint/')) {
+    return { badge: 'Harmony Email', statusText: 'Fetching Email Security & Threat Prevention Telemetry…' };
+  }
+  if (pathname === '/nvd' || pathname.startsWith('/updated-nvd') || pathname.startsWith('/updated-cpes')) {
+    return { badge: 'NVD CVEs', statusText: 'Fetching National Vulnerability Database Telemetry…' };
+  }
+  if (pathname === '/paloalto' || pathname.startsWith('/paloalto/')) {
+    return { badge: 'Palo Alto', statusText: 'Fetching Firewall Traffic & Security Threat Telemetry…' };
+  }
+  if (pathname === '/mdm' || pathname.startsWith('/mdm/')) {
+    return { badge: 'Hexnode MDM', statusText: 'Fetching Device Fleet & Posture Telemetry…' };
+  }
+  if (pathname === '/microsoft365' || pathname.startsWith('/microsoft365/')) {
+    return { badge: 'Microsoft 365', statusText: 'Fetching Identity, Licensing & Security Telemetry…' };
+  }
+  if (pathname === '/zoho' || pathname.startsWith('/zoho/')) {
+    return { badge: 'Zoho Desk', statusText: 'Fetching Service Desk & Incident Ticket Telemetry…' };
+  }
+  if (pathname === '/reports' || pathname.startsWith('/reports/')) {
+    return { badge: 'Reports', statusText: 'Generating Security Assessment & Analytics Reports…' };
+  }
+  if (pathname === '/analytics' || pathname.startsWith('/analytics/')) {
+    return { badge: 'Analytics', statusText: 'Aggregating Analytics & Operations Telemetry…' };
+  }
+  if (pathname === '/news' || pathname.startsWith('/news/')) {
+    return { badge: 'Security News', statusText: 'Fetching Real-Time Cybersecurity News & Advisories…' };
+  }
+  if (pathname === '/settings' || pathname.startsWith('/settings/')) {
+    return { badge: 'Settings', statusText: 'Loading Configuration & Integration Settings…' };
+  }
+  if (pathname === '/members') {
+    return { badge: 'Team', statusText: 'Loading Team Members & Access Roles…' };
+  }
+  if (pathname.startsWith('/admin/')) {
+    return { badge: 'Administration', statusText: 'Loading Organizations & Management Data…' };
+  }
+  return { badge: 'Enterprise', statusText: 'Loading Security Telemetry…' };
+}
+
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -401,6 +447,8 @@ export default function AppLayout() {
     });
   }
 
+  const loaderMeta = getPageLoaderMeta(location.pathname);
+
   let guardedOutlet = outletKeyed;
   if (!isSuperAdmin && Array.isArray(allowedPages) && outletKeyed) {
     const matchedPage = PAGES.find(p => {
@@ -431,6 +479,9 @@ export default function AppLayout() {
             <PageTransitionLoader
               key={location.pathname}
               isLoading={true}
+              title="SecureHub"
+              badge={loaderMeta.badge}
+              statusText={loaderMeta.statusText}
               onComplete={() => setTransitionState(prev => ({ ...prev, isTransitioning: false }))}
             />
           )}

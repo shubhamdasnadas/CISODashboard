@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import api from '../api';
+import PageTransitionLoader from '../components/PageTransitionLoader.jsx';
 
 export default function Login2FA() {
   const navigate = useNavigate();
@@ -19,14 +20,14 @@ export default function Login2FA() {
     }
     setLoading(true);
     try {
-      // Step 1: verify username + email + password against the database.
+      // Step 1: verify username + email + password against the database and send OTP to mail
       const { data } = await api.post('/auth/2fa/login', { username, email, password });
       if (!data.sessionId) {
         setError('Login failed — no session returned.');
         return;
       }
       localStorage.setItem('ciso_2fa_email', data.emailMasked || '');
-      navigate(`/verify-otp?sessionId=${encodeURIComponent(data.sessionId)}`);
+      navigate(`/verify-otp?sessionId=${encodeURIComponent(data.sessionId)}&sent=1`);
     } catch (err) {
       const status = err.response?.status;
       if (status === 401) setError(err.response?.data?.error || 'Invalid credentials.');
@@ -38,7 +39,23 @@ export default function Login2FA() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[var(--background)] p-6 transition-colors duration-200">
+    <div className="min-h-screen flex items-center justify-center bg-[var(--background)] p-6 transition-colors duration-200 relative">
+      {/* Full-page animated shield loader shown after clicking Sign In until OTP is sent to email */}
+      {loading && (
+        <PageTransitionLoader
+          isLoading={true}
+          fullScreen={true}
+          title="SecureHub"
+          badge="Enterprise"
+          messages={[
+            'Verifying credentials…',
+            'Generating secure verification code…',
+            'Sending OTP code to your registered email…',
+            'Preparing verification session…',
+          ]}
+        />
+      )}
+
       <div className="w-full max-w-md bg-[var(--card-bg)] rounded-2xl p-8 border border-[var(--card-border)] shadow-xl">
         <div className="flex items-center gap-3 mb-8">
           <div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center flex-shrink-0">
@@ -81,9 +98,19 @@ export default function Login2FA() {
 
           <button
             type="submit" disabled={loading}
-            className="w-full px-4 py-2.5 rounded-lg text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold transition-colors flex items-center justify-center gap-2"
           >
-            {loading ? 'Verifying…' : 'Continue'}
+            {loading ? (
+              <>
+                <svg className="animate-spin w-4 h-4 text-white" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                <span>Sending OTP…</span>
+              </>
+            ) : (
+              'Continue'
+            )}
           </button>
         </form>
 

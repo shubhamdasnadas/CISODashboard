@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import api from '../api';
 import * as session from '../utils/session.js';
 import { useOrg } from '../context/OrgContext.jsx';
+import PageTransitionLoader from '../components/PageTransitionLoader.jsx';
 
 export default function SelectOrganisation() {
   const navigate = useNavigate();
@@ -54,10 +54,13 @@ export default function SelectOrganisation() {
 
   if (ctxLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[var(--background)] text-[var(--muted)]">
-        <div className="animate-spin w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full mr-3" />
-        Loading organisations…
-      </div>
+      <PageTransitionLoader
+        isLoading={true}
+        fullScreen={true}
+        title="SecureHub"
+        badge="Enterprise"
+        statusText="Loading connected organisations…"
+      />
     );
   }
 

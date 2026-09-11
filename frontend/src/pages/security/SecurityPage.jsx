@@ -4,6 +4,7 @@ import S1Cve from './S1Cve.jsx';
 import S1Agent from './S1Agent.jsx';
 import { useProviders } from '../../context/ProviderContext.jsx';
 import AnalyticsLaunchButton from '../../components/AnalyticsLaunchButton.jsx';
+import PageTransitionLoader from '../../components/PageTransitionLoader.jsx';
 
 const TABS = [
   {
@@ -35,8 +36,28 @@ const IDLE_CLS = 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[v
 
 export default function SecurityPage() {
   const [activeTab, setActiveTab] = useState('threats');
+  const [isTabTransitioning, setIsTabTransitioning] = useState(false);
   const { selectedProviders } = useProviders();
   const activeTool = selectedProviders.edr || 'SentinelOne';
+
+  const handleTabChange = (newTabId) => {
+    if (newTabId === activeTab) return;
+    setActiveTab(newTabId);
+    setIsTabTransitioning(true);
+  };
+
+  const getTabStatusText = (tabId) => {
+    switch (tabId) {
+      case 'threats':
+        return 'Fetching Threat Analytics & Incident Telemetry…';
+      case 'cve':
+        return 'Fetching Application CVEs & Vulnerability Telemetry…';
+      case 'agents':
+        return 'Fetching Agent Fleet Posture & Device Telemetry…';
+      default:
+        return 'Loading Telemetry…';
+    }
+  };
 
   return (
     <div className="flex flex-col min-h-full">
@@ -57,7 +78,7 @@ export default function SecurityPage() {
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => handleTabChange(tab.id)}
               className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold transition-all rounded-t-lg -mb-px ${
                 isActive ? ACTIVE_CLS[tab.color] : IDLE_CLS
               }`}
@@ -73,10 +94,22 @@ export default function SecurityPage() {
       </div>
 
       {/* Tab content */}
-      <div className="flex-1">
-        {activeTab === 'threats' && <Threats />}
-        {activeTab === 'cve'     && <S1Cve />}
-        {activeTab === 'agents'  && <S1Agent />}
+      <div className="flex-1 relative min-h-[500px]">
+        {isTabTransitioning && (
+          <PageTransitionLoader
+            key={activeTab}
+            isLoading={true}
+            title="SecureHub"
+            badge={activeTool}
+            statusText={getTabStatusText(activeTab)}
+            onComplete={() => setIsTabTransitioning(false)}
+          />
+        )}
+        <div className={`transition-opacity duration-200 ${isTabTransitioning ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+          {activeTab === 'threats' && <Threats />}
+          {activeTab === 'cve'     && <S1Cve />}
+          {activeTab === 'agents'  && <S1Agent />}
+        </div>
       </div>
 
     </div>

@@ -13,6 +13,7 @@ import { fetchReportData } from './report/fetchReportData.js';
 import S1Mttr from './CyberHygen/S1Mttr.jsx';
 import Ticketingmttr from './CyberHygen/Ticketingmttr.jsx';
 import Emailsecuritymttr from './CyberHygen/Emailsecuritymttr.jsx';
+import PageTransitionLoader from '../components/PageTransitionLoader.jsx';
 
 // ─── Preserved API (used by AnalyticsLaunchButton across module pages) ─────────
 export const MODULE_PATHS = {
@@ -1768,8 +1769,41 @@ export default function Analytics() {
   const [searchParams] = useSearchParams();
   const launchModule = searchParams.get('module');
   const [activeTab, setActiveTab] = useState('security');
+  const [isTabTransitioning, setIsTabTransitioning] = useState(false);
   const { currentOrg } = useOrg();
   const currentOrgName = currentOrg?.org_name || currentOrg?.name || 'Organisation';
+
+  const handleTabChange = (newTabId) => {
+    if (newTabId === activeTab) return;
+    setActiveTab(newTabId);
+    setIsTabTransitioning(true);
+  };
+
+  const getTabBadge = (tabId) => {
+    switch (tabId) {
+      case 'security':   return 'SentinelOne';
+      case 'mdm':        return 'Hexnode MDM';
+      case 'nvd':        return 'NVD CVEs';
+      case 'checkpoint': return 'Harmony Email';
+      case 'firewall':   return 'Palo Alto';
+      case 'zoho':       return 'Zoho Desk';
+      case 'microsoft':  return 'Microsoft 365';
+      default:           return 'Analytics';
+    }
+  };
+
+  const getTabStatusText = (tabId) => {
+    switch (tabId) {
+      case 'security':   return 'Fetching Endpoint Protection & Threat Analytics…';
+      case 'mdm':        return 'Fetching Device Fleet & MDM Posture Telemetry…';
+      case 'nvd':        return 'Fetching National Vulnerability Database Telemetry…';
+      case 'checkpoint': return 'Fetching Email Security & Threat Prevention Telemetry…';
+      case 'firewall':   return 'Fetching Firewall Traffic & Security Telemetry…';
+      case 'zoho':       return 'Fetching Service Desk & Incident Ticket Telemetry…';
+      case 'microsoft':  return 'Fetching Identity, Licensing & Cloud Security Telemetry…';
+      default:           return 'Loading Analytics Telemetry…';
+    }
+  };
 
   // PDF generation state
   const [generating, setGenerating] = useState(false);
@@ -1914,30 +1948,12 @@ export default function Analytics() {
 
   if (!loaded) {
     return (
-      <div className="p-5 lg:p-7 space-y-6 bg-[var(--background)]">
-        {/* Header */}
-        <div>
-          <div className="h-5 w-1/4 bg-[var(--muted-bg)] rounded animate-pulse" />
-          <div className="h-3 w-1/2 bg-[var(--muted-bg)] rounded animate-pulse mt-2" />
-        </div>
-        {/* KPI row */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-          {[0, 1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-4 shadow-sm">
-              <div className="h-3 w-1/2 bg-[var(--muted-bg)] rounded animate-pulse mb-3" />
-              <div className="h-6 w-1/3 bg-[var(--muted-bg)] rounded animate-pulse" />
-            </div>
-          ))}
-        </div>
-        {/* Charts */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-5 shadow-sm">
-              <WidgetSkeleton variant="chart" />
-            </div>
-          ))}
-        </div>
-      </div>
+      <PageTransitionLoader
+        isLoading={true}
+        title="SecureHub"
+        badge="Analytics"
+        statusText="Aggregating Analytics & Multi-Module Telemetry…"
+      />
     );
   }
 
@@ -1981,7 +1997,7 @@ export default function Analytics() {
           return (
             <button
               key={item.id}
-              onClick={() => setActiveTab(item.id)}
+              onClick={() => handleTabChange(item.id)}
               className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold rounded-t-lg transition-all whitespace-nowrap ${
                 isActive
                   ? 'bg-[var(--card-bg)] text-indigo-500 border border-[var(--card-border)] border-b-0 -mb-px shadow-sm'
@@ -2025,28 +2041,42 @@ export default function Analytics() {
         </div>
       </div>
 
-      {/* Active module section — one per tab */}
-      {activeTab === 'security' && (
-        <SecuritySection agents={agents} cves={cves} threats={threats} from={from} to={to} syncing={syncing.security} onSync={syncSecurity} />
-      )}
-      {activeTab === 'mdm' && (
-        <MdmSection devices={devices} apps={apps} from={from} to={to} syncing={syncing.mdm} onSync={syncMdm} />
-      )}
-      {activeTab === 'nvd' && (
-        <NvdSection stats={nvdStats} syncing={syncing.nvd} onSync={syncNvd} />
-      )}
-      {activeTab === 'checkpoint' && (
-        <CheckpointSection events={cpEvents} from={from} to={to} syncing={syncing.checkpoint} onSync={syncCheckpoint} />
-      )}
-      {activeTab === 'firewall' && (
-        <FirewallSection reports={fwReports} syncing={syncing.firewall} onSync={syncFirewall} />
-      )}
-      {activeTab === 'zoho' && (
-        <ZohoSection tickets={zohoTickets} from={from} to={to} syncing={syncing.zoho} onSync={syncZoho} />
-      )}
-      {activeTab === 'microsoft' && (
-        <MicrosoftSection msData={msData} from={from} to={to} syncing={syncing.microsoft} onSync={syncMicrosoft} />
-      )}
+      {/* Active module section — one per tab with animated loading transition */}
+      <div className="relative min-h-[500px]">
+        {isTabTransitioning && (
+          <PageTransitionLoader
+            key={activeTab}
+            isLoading={true}
+            title="SecureHub"
+            badge={getTabBadge(activeTab)}
+            statusText={getTabStatusText(activeTab)}
+            onComplete={() => setIsTabTransitioning(false)}
+          />
+        )}
+        <div className={`space-y-6 transition-opacity duration-200 ${isTabTransitioning ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+          {activeTab === 'security' && (
+            <SecuritySection agents={agents} cves={cves} threats={threats} from={from} to={to} syncing={syncing.security} onSync={syncSecurity} />
+          )}
+          {activeTab === 'mdm' && (
+            <MdmSection devices={devices} apps={apps} from={from} to={to} syncing={syncing.mdm} onSync={syncMdm} />
+          )}
+          {activeTab === 'nvd' && (
+            <NvdSection stats={nvdStats} syncing={syncing.nvd} onSync={syncNvd} />
+          )}
+          {activeTab === 'checkpoint' && (
+            <CheckpointSection events={cpEvents} from={from} to={to} syncing={syncing.checkpoint} onSync={syncCheckpoint} />
+          )}
+          {activeTab === 'firewall' && (
+            <FirewallSection reports={fwReports} syncing={syncing.firewall} onSync={syncFirewall} />
+          )}
+          {activeTab === 'zoho' && (
+            <ZohoSection tickets={zohoTickets} from={from} to={to} syncing={syncing.zoho} onSync={syncZoho} />
+          )}
+          {activeTab === 'microsoft' && (
+            <MicrosoftSection msData={msData} from={from} to={to} syncing={syncing.microsoft} onSync={syncMicrosoft} />
+          )}
+        </div>
+      </div>
     </div>
   );
 }

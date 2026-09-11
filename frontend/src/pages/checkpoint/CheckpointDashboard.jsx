@@ -119,7 +119,7 @@ function CategoryTimeSeriesChart({ timeSeriesData, type = 'line', storageKey = '
   );
 }
 
-function AnalyticsCard({ title, storageKey, data, onItemClick, defaultView = 'donut', summary, onClick, groups = VIEW_GROUPS, barColor, timeSeriesData, days, onDaysChange }) {
+function AnalyticsCard({ title, storageKey, data, onItemClick, defaultView = 'donut', summary, onClick, groups = VIEW_GROUPS, barColor, timeSeriesData, days, onDaysChange, yAxisWidth }) {
   const [view, setView] = useViewState(`checkpoint:${storageKey}`, defaultView);
   const showingSummary = view === 'summary';
   const isTimeSeriesView = view === 'line' || view === 'area';
@@ -145,6 +145,7 @@ function AnalyticsCard({ title, storageKey, data, onItemClick, defaultView = 'do
               viewType={view}
               onItemClick={onItemClick}
               barColor={barColor}
+              yAxisWidth={yAxisWidth}
             />
           )}
         </div>

@@ -631,6 +631,7 @@ export function MultiViewChart({
   monthlyData,
   timeSeriesData,
   storageKey,
+  yAxisWidth,
 }) {
   const currentView = viewType || view || 'donut';
   const handleClick = (item) => {
@@ -657,6 +658,14 @@ export function MultiViewChart({
   // keep their original monochrome look in every view.
   const coloredData = data.map((d) => ({ ...d, fill: d.fill || barColor }));
 
+  // Dynamically compute Y-axis width for vertical layouts so long labels (e.g. email addresses) aren't clipped
+  const dynamicYAxisWidth = (() => {
+    if (yAxisWidth) return yAxisWidth;
+    if (!coloredData || coloredData.length === 0) return 110;
+    const maxLen = Math.max(0, ...coloredData.map((d) => String(d.name || '').length));
+    return Math.max(110, Math.min(260, Math.ceil(maxLen * 7.2) + 16));
+  })();
+
   if (currentView === 'column') {
     return (
       <ResponsiveContainer width="100%" height="100%">
@@ -679,7 +688,7 @@ export function MultiViewChart({
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={coloredData} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-          <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={110} />
+          <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={dynamicYAxisWidth} interval={0} />
           <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
           <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
           <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={18} name="Count" cursor="pointer"
@@ -696,7 +705,7 @@ export function MultiViewChart({
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={coloredData} layout="vertical" margin={{ top: 8, right: 24, left: 8, bottom: 8 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-          <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={110} />
+          <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={dynamicYAxisWidth} interval={0} />
           <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
           <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
           <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={20} name="Count" cursor="pointer"
@@ -1051,7 +1060,7 @@ export function MultiViewChart({
         <ComposedChart data={coloredData} layout="vertical" margin={{ top: 8, right: 24, left: 8, bottom: 8 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" horizontal={false} />
           <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-          <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={110} />
+          <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={dynamicYAxisWidth} interval={0} />
           <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
           <Bar dataKey="value" name="Count" barSize={3} radius={[3, 3, 3, 3]} cursor="pointer" onClick={(d) => handleClick(d)}>
             {coloredData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
