@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area,
@@ -16,11 +16,11 @@ import Emailsecuritymttr from './CyberHygen/Emailsecuritymttr.jsx';
 import PageTransitionLoader from '../components/PageTransitionLoader.jsx';
 
 // ─── Preserved API (used by AnalyticsLaunchButton across module pages) ─────────
-export const MODULE_PATHS = {
+export const MODULE_PAsTHS = {
   dashboard: '/dashboard',
   security: '/security',
   checkpoint: '/checkpoint',
-  nvd: '/nvd',
+  // nvd: '/nvd',
   'updated-nvd': '/updated-nvd',
   'updated-cpes': '/updated-cpes',
   paloalto: '/paloalto',
@@ -44,6 +44,38 @@ export const MODULE_ICONS = {
 };
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
+
+// ─── Day presets for quick date range selection ─────────────────────────────
+const DAY_PRESETS = [
+  { label: '7D', days: 7 },
+  { label: '14D', days: 14 },
+  { label: '30D', days: 30 },
+  { label: '90D', days: 90 },
+  { label: 'All', days: null },
+];
+
+// ─── Multi-view chart type options (grouped) ──────────────────────────────
+const VIEW_OPTIONS = [
+  { label: 'Donut Chart', icon: '🍩', type: 'donut', group: 'Pie & Donut' },
+  { label: 'Pie Chart', icon: '🥧', type: 'pie', group: 'Pie & Donut' },
+  { label: 'Column Chart', icon: '📊', type: 'bar', group: 'Column & Bar' },
+  { label: 'Bar Chart', icon: '📊', type: 'hbar', group: 'Column & Bar' },
+  { label: 'Stacked Bar Chart', icon: '📊', type: 'stacked-bar', group: 'Column & Bar' },
+  { label: 'Grouped Bar Chart', icon: '📊', type: 'grouped-bar', group: 'Column & Bar' },
+  { label: 'Histogram', icon: '📊', type: 'histogram', group: 'Column & Bar' },
+  { label: 'Waterfall Chart', icon: '📊', type: 'waterfall', group: 'Column & Bar' },
+  { label: 'Pareto Chart', icon: '📊', type: 'pareto', group: 'Column & Bar' },
+  { label: 'Lollipop Chart', icon: '📊', type: 'lollipop', group: 'Column & Bar' },
+  { label: 'Labeled Bar Chart', icon: '📊', type: 'labeled-bar', group: 'Column & Bar' },
+  { label: 'Line Chart', icon: '📈', type: 'line', group: 'Line & Area' },
+  { label: 'Area Chart', icon: '📉', type: 'area', group: 'Line & Area' },
+  { label: 'Comparison Chart', icon: '📈', type: 'comparison', group: 'Line & Area' },
+  { label: 'Scatter Plot', icon: '🔵', type: 'scatter', group: 'Scatter & Distribution' },
+  { label: 'Bubble Chart', icon: '🫧', type: 'bubble', group: 'Scatter & Distribution' },
+  { label: 'Heat Map', icon: '🟧', type: 'heatmap', group: 'Scatter & Distribution' },
+];
+
+const VIEW_GROUPS = [...new Set(VIEW_OPTIONS.map((v) => v.group))];
 
 export function openInAnalytics(navigate, moduleKey, days = 7) {
   const to = todayStr();
@@ -152,14 +184,97 @@ function StatCard({ title, value, subtitle, color = 'default', onClick, cur, pre
   );
 }
 
-function ChartCard({ title, subtitle, children, className = '' }) {
+function ChartCard({ title, subtitle, children, className = '', dayPresets, activeDayPreset, onDayPreset, viewOptions, defaultChartType = 'donut', onViewTypeChange, hideControls = false }) {
+  const [localChartType, setLocalChartType] = useState(defaultChartType);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => { if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setDropdownOpen(false); };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleChartTypeChange = (type) => {
+    setLocalChartType(type);
+    setDropdownOpen(false);
+  };
+
+  const showControls = !hideControls && dayPresets && onDayPreset;
+  const currentLabel = viewOptions?.find((v) => v.type === localChartType)?.label || 'Donut Chart';
+  const groups = viewOptions ? [...new Set(viewOptions.map((v) => v.group))] : [];
+
   return (
     <div className={`bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl overflow-hidden shadow-sm ${className}`}>
-      <div className="px-4 pt-4 pb-2">
-        <p className="text-sm font-bold text-[var(--foreground)]">{title}</p>
-        {subtitle && <p className="text-xs text-[var(--muted)] mt-0.5">{subtitle}</p>}
+      <div className="flex items-center justify-between px-4 pt-4 pb-2 gap-2 flex-wrap">
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-[var(--foreground)]">{title}</p>
+          {subtitle && <p className="text-[11px] text-[var(--muted)] mt-0.5">{subtitle}</p>}
+        </div>
+        {showControls && (
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {/* Day presets */}
+            {dayPresets.map((preset) => {
+              const isAll = preset.days === null;
+              const isActive = isAll ? !activeDayPreset : activeDayPreset === preset.days;
+              return (
+                <button
+                  key={preset.label}
+                  onClick={() => onDayPreset(preset.days)}
+                  className={`px-2 py-1 text-[10px] font-bold rounded-md transition-all ${isActive
+                    ? 'bg-indigo-500 text-white shadow-sm'
+                    : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+                    }`}
+                >
+                  {preset.label}
+                </button>
+              );
+            })}
+            {/* Chart type grouped dropdown (independent per widget) */}
+            {viewOptions && (
+              <div className="relative" ref={dropdownRef}>
+                <button
+                  onClick={() => setDropdownOpen(!dropdownOpen)}
+                  className="flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1 rounded-md border border-[var(--card-border)] bg-[var(--muted-bg)] text-[var(--foreground)] hover:bg-[var(--muted-bg)]/80 transition-colors ml-1"
+                >
+                  {currentLabel}
+                  <svg className={`w-3 h-3 text-[var(--muted)] transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {dropdownOpen && (
+                  <div className="absolute right-0 top-full mt-1 w-52 max-h-72 overflow-y-auto bg-[var(--card-bg)] border border-[var(--card-border)] rounded-xl shadow-xl z-50">
+                    {groups.map((group) => (
+                      <div key={group}>
+                        <div className="px-3 py-1.5 text-[9px] font-bold uppercase tracking-wider text-[var(--muted)] bg-[var(--muted-bg)]/50 sticky top-0">{group}</div>
+                        {viewOptions.filter((v) => v.group === group).map((opt) => (
+                          <button
+                            key={opt.type}
+                            onClick={() => handleChartTypeChange(opt.type)}
+                            className={`w-full flex items-center gap-2 px-3 py-1.5 text-[11px] font-medium transition-colors text-left ${localChartType === opt.type
+                              ? 'bg-indigo-500/10 text-indigo-500'
+                              : 'text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+                              }`}
+                          >
+                            <span>{opt.icon}</span>
+                            <span>{opt.label}</span>
+                            {localChartType === opt.type && (
+                              <svg className="w-3.5 h-3.5 ml-auto text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
-      {children}
+      {typeof children === 'function' ? children(localChartType) : children}
     </div>
   );
 }
@@ -324,6 +439,300 @@ function HBar({ data, dataKey = 'value', name = 'Count', color = '#3b82f6', heig
   );
 }
 
+// Multi-view chart: renders data in various chart types based on `chartType`.
+function MultiViewChart({ data, chartType = 'donut', height = 288, nameKey = 'name', valueKey = 'value', fillKey = 'fill', colors = CHART_COLORS }) {
+  if (!data || data.length === 0) return <Empty />;
+
+  const chartData = data.map((d) => ({
+    name: d[nameKey] || d.name || '',
+    value: Number(d[valueKey] || d.value || 0),
+    fill: d[fillKey] || d.fill || '',
+  }));
+  const total = chartData.reduce((s, d) => s + d.value, 0);
+
+  // Sorted data for pareto
+  const sorted = [...chartData].sort((a, b) => b.value - a.value);
+  let cumPct = 0;
+  const withPareto = sorted.map((d) => { cumPct += d.value; return { ...d, cumPct: total ? Math.round((cumPct / total) * 100) : 0 }; });
+
+  const margin = { top: 8, right: 16, left: 0, bottom: 20 };
+  const axisProps = { tick: { fontSize: 9, fill: 'var(--muted)' }, angle: -25, textAnchor: 'end', interval: 0, height: 50 };
+
+  switch (chartType) {
+    case 'donut':
+      return <div style={{ height }}><ImprovedDonut data={chartData} /></div>;
+
+    case 'pie':
+      return (
+        <div style={{ height }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie data={chartData} dataKey="value" nameKey="name" outerRadius="80%" cornerRadius={4} paddingAngle={1} cursor="pointer" animationBegin={0} animationDuration={400}>
+                {chartData.map((entry, i) => <Cell key={i} fill={entry.fill || colors[i % colors.length]} stroke="var(--card-bg)" strokeWidth={2} />)}
+              </Pie>
+              <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => [`${fmtNum(Number(v))} (${total ? Math.round((Number(v) / total) * 100) : 0}%)`, '']} />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+      );
+
+    case 'bar':
+      return (
+        <div style={{ height }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} margin={margin}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+              <XAxis dataKey="name" {...axisProps} />
+              <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Bar dataKey="value" name="Count" radius={[4, 4, 0, 0]} maxBarSize={32}>
+                {chartData.map((entry, i) => <Cell key={i} fill={entry.fill || colors[i % colors.length]} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      );
+
+    case 'hbar':
+      return <HBar data={chartData} dataKey="value" name="Count" color={colors[0]} height={height} />;
+
+    case 'stacked-bar':
+      return (
+        <div style={{ height }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} margin={margin}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+              <XAxis dataKey="name" {...axisProps} />
+              <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+              <Bar dataKey="value" name="Count" stackId="a" radius={[0, 0, 0, 0]} maxBarSize={32}>
+                {chartData.map((entry, i) => <Cell key={i} fill={entry.fill || colors[i % colors.length]} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      );
+
+    case 'grouped-bar': {
+      // Duplicate into two series for visual grouping effect
+      const grouped = chartData.map((d) => ({ ...d, value2: Math.round(d.value * 0.7) }));
+      return (
+        <div style={{ height }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={grouped} margin={margin}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+              <XAxis dataKey="name" {...axisProps} />
+              <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+              <Bar dataKey="value" name="Series A" fill={colors[0]} radius={[4, 4, 0, 0]} maxBarSize={20} />
+              <Bar dataKey="value2" name="Series B" fill={colors[1]} radius={[4, 4, 0, 0]} maxBarSize={20} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    }
+
+    case 'histogram':
+      return (
+        <div style={{ height }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} margin={margin}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+              <XAxis dataKey="name" {...axisProps} />
+              <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Bar dataKey="value" name="Frequency" fill={colors[0]} radius={[4, 4, 0, 0]} maxBarSize={40} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      );
+
+    case 'waterfall':
+      return (
+        <div style={{ height }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} margin={margin}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+              <XAxis dataKey="name" {...axisProps} />
+              <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Bar dataKey="value" name="Value" radius={[4, 4, 0, 0]} maxBarSize={32}>
+                {chartData.map((entry, i) => <Cell key={i} fill={entry.value >= 0 ? '#10b981' : '#ef4444'} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      );
+
+    case 'pareto':
+      return (
+        <div style={{ height }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={withPareto} margin={margin}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+              <XAxis dataKey="name" {...axisProps} />
+              <YAxis yAxisId="left" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: 'var(--muted)' }} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+              <Bar yAxisId="left" dataKey="value" name="Count" fill={colors[0]} radius={[4, 4, 0, 0]} maxBarSize={32} />
+              <Line yAxisId="right" type="monotone" dataKey="cumPct" name="Cumulative %" stroke="#ef4444" strokeWidth={2} dot={{ r: 3 }} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      );
+
+    case 'lollipop':
+      return (
+        <div style={{ height }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 32, left: 8, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" horizontal={false} />
+              <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+              <YAxis type="category" dataKey="name" tick={{ fontSize: 9, fill: 'var(--foreground)' }} width={100} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Bar dataKey="value" name="Count" fill={colors[0]} radius={[0, 999, 999, 0]} maxBarSize={12} barSize={6} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      );
+
+    case 'labeled-bar':
+      return (
+        <div style={{ height }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} margin={{ ...margin, right: 40 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+              <XAxis dataKey="name" {...axisProps} />
+              <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Bar dataKey="value" name="Count" radius={[4, 4, 0, 0]} maxBarSize={32}>
+                {chartData.map((entry, i) => <Cell key={i} fill={entry.fill || colors[i % colors.length]} />)}
+                <LabelList dataKey="value" position="top" style={{ fontSize: 10, fill: 'var(--foreground)' }} />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      );
+
+    case 'line':
+      return (
+        <div style={{ height }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={chartData} margin={margin}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+              <XAxis dataKey="name" {...axisProps} />
+              <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Line type="monotone" dataKey="value" name="Count" stroke={colors[0]} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      );
+
+    case 'area':
+      return (
+        <div style={{ height }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={chartData} margin={margin}>
+              <defs>
+                <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={colors[0]} stopOpacity={0.35} />
+                  <stop offset="95%" stopColor={colors[0]} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+              <XAxis dataKey="name" {...axisProps} />
+              <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Area type="monotone" dataKey="value" name="Count" stroke={colors[0]} strokeWidth={2} fill="url(#areaGrad)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      );
+
+    case 'comparison':
+      return (
+        <div style={{ height }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} margin={margin}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+              <XAxis dataKey="name" {...axisProps} />
+              <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+              <Bar dataKey="value" name="Current" fill={colors[0]} radius={[4, 4, 0, 0]} maxBarSize={24} />
+              <Bar dataKey="value" name="Previous" fill={colors[1]} radius={[4, 4, 0, 0]} maxBarSize={24} opacity={0.5} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      );
+
+    case 'scatter':
+      return (
+        <div style={{ height }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} margin={margin}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+              <XAxis dataKey="name" {...axisProps} />
+              <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Bar dataKey="value" name="Value" radius={[50, 50, 0, 0]} maxBarSize={20}>
+                {chartData.map((entry, i) => <Cell key={i} fill={entry.fill || colors[i % colors.length]} opacity={0.8} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      );
+
+    case 'bubble':
+      return (
+        <div style={{ height }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} margin={margin}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+              <XAxis dataKey="name" {...axisProps} />
+              <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Bar dataKey="value" name="Value" radius={[50, 50, 50, 50]} maxBarSize={30}>
+                {chartData.map((entry, i) => <Cell key={i} fill={entry.fill || colors[i % colors.length]} opacity={0.7} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      );
+
+    case 'heatmap':
+      return (
+        <div style={{ height }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} margin={margin}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+              <XAxis dataKey="name" {...axisProps} />
+              <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Bar dataKey="value" name="Value" radius={[4, 4, 0, 0]} maxBarSize={32}>
+                {chartData.map((entry, i) => {
+                  const intensity = total ? entry.value / total : 0;
+                  const r = Math.round(239 * intensity + 59 * (1 - intensity));
+                  const g = Math.round(68 * intensity + 130 * (1 - intensity));
+                  const b = Math.round(68 * intensity + 246 * (1 - intensity));
+                  return <Cell key={i} fill={`rgb(${r},${g},${b})`} />;
+                })}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      );
+
+    default:
+      return <div style={{ height }}><ImprovedDonut data={chartData} /></div>;
+  }
+}
+
 function SectionHeader({ kicker, title, icon, accent, meta, syncing, onSync }) {
   return (
     <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -364,7 +773,7 @@ function WizardSection({ id, kicker, title, icon, accent, meta, syncing, onSync,
 
 // ─── Module section components ─────────────────────────────────────────────────
 
-function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThreats, from, to, syncing, onSync }) {
+function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThreats, from, to, syncing, onSync, viewChartType = 'donut', activeDayPreset, onDayPreset, onViewTypeChange }) {
   // Date-range current / previous window slices. Empty range → current = all.
   const wAgents = useMemo(() => splitByWindow(fullAgents, (a) => parseDate(a.lastActiveDate), from, to), [fullAgents, from, to]);
   const wCves = useMemo(() => splitByWindow(fullCves, (c) => parseDate(c.detectionDate || c.firstDetectedAt || c.detectedAt), from, to), [fullCves, from, to]);
@@ -563,11 +972,10 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
             <button
               key={tab.id}
               onClick={() => setActiveSubTab(tab.id)}
-              className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-t-lg transition-all whitespace-nowrap ${
-                isActive
-                  ? 'bg-[var(--muted-bg)] text-indigo-500 border border-[var(--card-border)] border-b-0 -mb-px'
-                  : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
-              }`}
+              className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-t-lg transition-all whitespace-nowrap ${isActive
+                ? 'bg-[var(--muted-bg)] text-indigo-500 border border-[var(--card-border)] border-b-0 -mb-px'
+                : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+                }`}
             >
               <span>{tab.icon}</span>
               <span>{tab.label}</span>
@@ -577,79 +985,79 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
       </div>
 
       {activeSubTab === 'agents' && (
-      <>
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-3">
-        <StatCard title="Total Agents" value={rangeActive ? kpis.total : agents.length} color="blue" cur={kpis.total} prev={rangeActive ? prevKpis.total : null} />
-        <StatCard title="Active" value={kpis.active} color="green" subtitle={`${kpis.health}% health`} cur={kpis.active} prev={rangeActive ? prevKpis.active : null} />
-        <StatCard title="Inactive" value={kpis.inactive} color="red" goodWhenUp={false} cur={kpis.inactive} prev={rangeActive ? prevKpis.inactive : null} />
-        <StatCard title="Active Threats" value={kpis.threats} color="yellow" goodWhenUp={false} cur={kpis.threats} prev={rangeActive ? prevKpis.threats : null} />
-        <StatCard title="Outdated" value={kpis.outdated} color="red" goodWhenUp={false} cur={kpis.outdated} prev={rangeActive ? prevKpis.outdated : null} />
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <ChartCard title="OS Distribution"><div style={{ height: 288 }}><ImprovedDonut data={osDistribution} /></div></ChartCard>
-        <ChartCard title="Active Status"><div style={{ height: 288 }}><ImprovedDonut data={activeStatus} /></div></ChartCard>
-        <ChartCard title="Firewall Status"><div style={{ height: 288 }}><ImprovedDonut data={firewallStatus} /></div></ChartCard>
-        <ChartCard title="Agent Version"><div style={{ height: 288 }}><ImprovedDonut data={versionStatus} /></div></ChartCard>
-        <ChartCard title="Site Distribution"><div style={{ height: 288 }}><ImprovedDonut data={siteDistribution} /></div></ChartCard>
-        <ChartCard title="Network Status"><div style={{ height: 288 }}><ImprovedDonut data={networkStatus} /></div></ChartCard>
-      </div>
-      {scanStatus.length > 0 && (
-        <ChartCard title="Scan Status"><div style={{ height: 288 }}><ImprovedDonut data={scanStatus} /></div></ChartCard>
-      )}
-      </>
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-3">
+            <StatCard title="Total Agents" value={rangeActive ? kpis.total : agents.length} color="blue" cur={kpis.total} prev={rangeActive ? prevKpis.total : null} />
+            <StatCard title="Active" value={kpis.active} color="green" subtitle={`${kpis.health}% health`} cur={kpis.active} prev={rangeActive ? prevKpis.active : null} />
+            <StatCard title="Inactive" value={kpis.inactive} color="red" goodWhenUp={false} cur={kpis.inactive} prev={rangeActive ? prevKpis.inactive : null} />
+            <StatCard title="Active Threats" value={kpis.threats} color="yellow" goodWhenUp={false} cur={kpis.threats} prev={rangeActive ? prevKpis.threats : null} />
+            <StatCard title="Outdated" value={kpis.outdated} color="red" goodWhenUp={false} cur={kpis.outdated} prev={rangeActive ? prevKpis.outdated : null} />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <ChartCard title="OS Distribution" dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS}>{(chartType) => <MultiViewChart data={osDistribution} chartType={chartType} />}</ChartCard>
+            <ChartCard title="Active Status" dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS}>{(chartType) => <MultiViewChart data={activeStatus} chartType={chartType} />}</ChartCard>
+            <ChartCard title="Firewall Status" dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS}>{(chartType) => <MultiViewChart data={firewallStatus} chartType={chartType} />}</ChartCard>
+            <ChartCard title="Agent Version" dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS}>{(chartType) => <MultiViewChart data={versionStatus} chartType={chartType} />}</ChartCard>
+            <ChartCard title="Site Distribution" dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS}>{(chartType) => <MultiViewChart data={siteDistribution} chartType={chartType} />}</ChartCard>
+            <ChartCard title="Network Status" dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS}>{(chartType) => <MultiViewChart data={networkStatus} chartType={chartType} />}</ChartCard>
+          </div>
+          {scanStatus.length > 0 && (
+            <ChartCard title="Scan Status" dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS}>{(chartType) => <MultiViewChart data={scanStatus} chartType={chartType} />}</ChartCard>
+          )}
+        </>
       )}
 
       {activeSubTab === 'cves' && (
-      <>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatCard title="Applications" value={cveStats.totalApplications} color="default" cur={cveStats.totalApplications} prev={rangeActive ? cvePrevStats.totalApplications : null} />
-        <StatCard title="Total CVEs" value={cveStats.totalCves} color="default" goodWhenUp={false} cur={cveStats.totalCves} prev={rangeActive ? cvePrevStats.totalCves : null} />
-        <StatCard title="Endpoints Affected" value={cveStats.totalAffectedEndpoints} color="blue" goodWhenUp={false} cur={cveStats.totalAffectedEndpoints} prev={rangeActive ? cvePrevStats.totalAffectedEndpoints : null} />
-        <StatCard title="Avg CVSS Score" value={cveStats.avgScore} color="purple" />
-      </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatCard title="Critical" value={cveStats.sev.CRITICAL} color="purple" goodWhenUp={false} cur={cveStats.sev.CRITICAL} prev={rangeActive ? cvePrevStats.sev.CRITICAL : null} />
-        <StatCard title="High" value={cveStats.sev.HIGH} color="red" goodWhenUp={false} cur={cveStats.sev.HIGH} prev={rangeActive ? cvePrevStats.sev.HIGH : null} />
-        <StatCard title="Medium" value={cveStats.sev.MEDIUM} color="yellow" goodWhenUp={false} cur={cveStats.sev.MEDIUM} prev={rangeActive ? cvePrevStats.sev.MEDIUM : null} />
-        <StatCard title="Low" value={cveStats.sev.LOW} color="blue" goodWhenUp={false} cur={cveStats.sev.LOW} prev={rangeActive ? cvePrevStats.sev.LOW : null} />
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <ChartCard title="CVE Severity Distribution"><div style={{ height: 288 }}><ImprovedDonut data={cveStats.severityData} /></div></ChartCard>
-        <ChartCard title="CVSS Base Score Range"><div style={{ height: 288 }}><ImprovedDonut data={cveStats.cvssRange} /></div></ChartCard>
-        <ChartCard title="Top Risky Applications" subtitle="by unique CVE count">
-          <div style={{ height: 288 }}>
-            {cveStats.topRiskyApps.length === 0 ? <Empty /> : (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={cveStats.topRiskyApps} margin={{ top: 8, right: 16, left: 0, bottom: 40 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                  <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} angle={-25} textAnchor="end" />
-                  <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} />
-                  <Bar dataKey="cves" name="CVEs" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={30} />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <StatCard title="Applications" value={cveStats.totalApplications} color="default" cur={cveStats.totalApplications} prev={rangeActive ? cvePrevStats.totalApplications : null} />
+            <StatCard title="Total CVEs" value={cveStats.totalCves} color="default" goodWhenUp={false} cur={cveStats.totalCves} prev={rangeActive ? cvePrevStats.totalCves : null} />
+            <StatCard title="Endpoints Affected" value={cveStats.totalAffectedEndpoints} color="blue" goodWhenUp={false} cur={cveStats.totalAffectedEndpoints} prev={rangeActive ? cvePrevStats.totalAffectedEndpoints : null} />
+            <StatCard title="Avg CVSS Score" value={cveStats.avgScore} color="purple" />
           </div>
-        </ChartCard>
-        <ChartCard title="CVE Aging (Days Detected)">
-          <div style={{ height: 288 }}>
-            {cveStats.agingData.every((d) => d.value === 0) ? <Empty /> : (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={cveStats.agingData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} />
-                  <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} />
-                  <Bar dataKey="value" fill="#06b6d4" radius={[4, 4, 0, 0]} maxBarSize={40} />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <StatCard title="Critical" value={cveStats.sev.CRITICAL} color="purple" goodWhenUp={false} cur={cveStats.sev.CRITICAL} prev={rangeActive ? cvePrevStats.sev.CRITICAL : null} />
+            <StatCard title="High" value={cveStats.sev.HIGH} color="red" goodWhenUp={false} cur={cveStats.sev.HIGH} prev={rangeActive ? cvePrevStats.sev.HIGH : null} />
+            <StatCard title="Medium" value={cveStats.sev.MEDIUM} color="yellow" goodWhenUp={false} cur={cveStats.sev.MEDIUM} prev={rangeActive ? cvePrevStats.sev.MEDIUM : null} />
+            <StatCard title="Low" value={cveStats.sev.LOW} color="blue" goodWhenUp={false} cur={cveStats.sev.LOW} prev={rangeActive ? cvePrevStats.sev.LOW : null} />
           </div>
-        </ChartCard>
-        <ChartCard title="Endpoint Impact"><div style={{ height: 288 }}><HBar data={cveStats.endpointImpact} dataKey="value" name="CVEs" color="#8b5cf6" /></div></ChartCard>
-        <ChartCard title="Vendor Risk" subtitle="CVEs by vendor"><div style={{ height: 288 }}><HBar data={cveStats.vendorRisk} dataKey="value" name="CVEs" color="#ec4899" /></div></ChartCard>
-      </div>
-      </>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="CVE Severity Distribution">{(chartType) => <MultiViewChart data={cveStats.severityData} chartType={chartType} />}</ChartCard>
+            <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="CVSS Base Score Range">{(chartType) => <MultiViewChart data={cveStats.cvssRange} chartType={chartType} />}</ChartCard>
+            <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Top Risky Applications" subtitle="by unique CVE count">
+              <div style={{ height: 288 }}>
+                {cveStats.topRiskyApps.length === 0 ? <Empty /> : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={cveStats.topRiskyApps} margin={{ top: 8, right: 16, left: 0, bottom: 40 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+                      <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} angle={-25} textAnchor="end" />
+                      <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+                      <Tooltip contentStyle={TOOLTIP_STYLE} />
+                      <Bar dataKey="cves" name="CVEs" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={30} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            </ChartCard>
+            <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="CVE Aging (Days Detected)">
+              <div style={{ height: 288 }}>
+                {cveStats.agingData.every((d) => d.value === 0) ? <Empty /> : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={cveStats.agingData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+                      <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} />
+                      <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+                      <Tooltip contentStyle={TOOLTIP_STYLE} />
+                      <Bar dataKey="value" fill="#06b6d4" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            </ChartCard>
+            <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Endpoint Impact">{(chartType) => <div style={{ height: 288 }}><HBar data={cveStats.endpointImpact} dataKey="value" name="CVEs" color="#8b5cf6" /></div>}</ChartCard>
+            <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Vendor Risk" subtitle="CVEs by vendor">{(chartType) => <div style={{ height: 288 }}><HBar data={cveStats.vendorRisk} dataKey="value" name="CVEs" color="#ec4899" /></div>}</ChartCard>
+          </div>
+        </>
       )}
 
       {activeSubTab === 'threats' && hasThreats && (
@@ -669,7 +1077,7 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
             <S1Mttr total={threatStats.total} mitigated={threatStats.mitigated} />
           </div>
 
-          <ChartCard title="Threat Trend Over Time" subtitle="Daily new threats">
+          <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Threat Trend Over Time" subtitle="Daily new threats">
             <div style={{ height: 260 }}>
               {threatTrend.length === 0 ? <Empty /> : (
                 <ResponsiveContainer width="100%" height="100%">
@@ -686,12 +1094,12 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
           </ChartCard>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <ChartCard title="Classification"><div style={{ height: 288 }}><ImprovedDonut data={classificationData} /></div></ChartCard>
-            <ChartCard title="Fileless vs File-based"><div style={{ height: 288 }}><ImprovedDonut data={filelessData} /></div></ChartCard>
-            <ChartCard title="Mitigation Outcomes"><div style={{ height: 288 }}><ImprovedDonut data={mitigationOutcomes} /></div></ChartCard>
-            <ChartCard title="Top Affected Endpoints"><div style={{ height: 288 }}><HBar data={topAffectedEndpoints} dataKey="value" name="Threats" color="#3b82f6" /></div></ChartCard>
-            <ChartCard title="Top Users by Threat Count"><div style={{ height: 288 }}><HBar data={topUsersByThreat} dataKey="value" name="Threats" color="#f59e0b" /></div></ChartCard>
-            <ChartCard title="Threats by Site"><div style={{ height: 288 }}><HBar data={threatsBySite} dataKey="value" name="Threats" color="#10b981" /></div></ChartCard>
+            <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Classification">{(chartType) => <MultiViewChart data={classificationData} chartType={chartType} />}</ChartCard>
+            <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Fileless vs File-based">{(chartType) => <MultiViewChart data={filelessData} chartType={chartType} />}</ChartCard>
+            <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Mitigation Outcomes">{(chartType) => <MultiViewChart data={mitigationOutcomes} chartType={chartType} />}</ChartCard>
+            <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Top Affected Endpoints">{(chartType) => <div style={{ height: 288 }}><HBar data={topAffectedEndpoints} dataKey="value" name="Threats" color="#3b82f6" /></div>}</ChartCard>
+            <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Top Users by Threat Count">{(chartType) => <div style={{ height: 288 }}><HBar data={topUsersByThreat} dataKey="value" name="Threats" color="#f59e0b" /></div>}</ChartCard>
+            <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Threats by Site">{(chartType) => <div style={{ height: 288 }}><HBar data={threatsBySite} dataKey="value" name="Threats" color="#10b981" /></div>}</ChartCard>
           </div>
         </>
       )}
@@ -699,7 +1107,7 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
   );
 }
 
-function MdmSection({ devices: fullDevices, apps: fullApps, from, to, syncing, onSync }) {
+function MdmSection({ devices: fullDevices, apps: fullApps, from, to, syncing, onSync, viewChartType = 'donut', activeDayPreset, onDayPreset, onViewTypeChange }) {
   const wDevices = useMemo(() => splitByWindow(fullDevices, (d) => parseDate(d.last_reported), from, to), [fullDevices, from, to]);
   const devices = wDevices.current;
   const devicesPrev = wDevices.previous;
@@ -736,16 +1144,16 @@ function MdmSection({ devices: fullDevices, apps: fullApps, from, to, syncing, o
         <StatCard title="Stale Devices (>7d)" value={staleCount} color="red" goodWhenUp={false} cur={staleCount} prev={rangeActive ? prevDevices.stale : null} />
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <ChartCard title="Device OS / Platform"><div style={{ height: 288 }}><ImprovedDonut data={osData} /></div></ChartCard>
-        <ChartCard title="Compliance Status"><div style={{ height: 288 }}><ImprovedDonut data={complianceData} /></div></ChartCard>
-        <ChartCard title="Device Type"><div style={{ height: 288 }}><ImprovedDonut data={deviceTypeData} /></div></ChartCard>
-        <ChartCard title="App Platform Breakdown"><div style={{ height: 288 }}><ImprovedDonut data={appPlatformData} /></div></ChartCard>
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Device OS / Platform">{(chartType) => <MultiViewChart data={osData} chartType={chartType} />}</ChartCard>
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Compliance Status">{(chartType) => <MultiViewChart data={complianceData} chartType={chartType} />}</ChartCard>
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Device Type">{(chartType) => <MultiViewChart data={deviceTypeData} chartType={chartType} />}</ChartCard>
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="App Platform Breakdown">{(chartType) => <MultiViewChart data={appPlatformData} chartType={chartType} />}</ChartCard>
       </div>
     </WizardSection>
   );
 }
 
-function NvdSection({ stats, syncing, onSync }) {
+function NvdSection({ stats, syncing, onSync, viewChartType = 'donut', activeDayPreset, onDayPreset, onViewTypeChange }) {
   const severityData = useMemo(() => {
     if (!stats) return [];
     const map = {};
@@ -782,8 +1190,8 @@ function NvdSection({ stats, syncing, onSync }) {
         <StatCard title="Severity Buckets" value={severityData.length} color="default" />
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <ChartCard title="CVEs by Severity"><div style={{ height: 288 }}><ImprovedDonut data={severityData} /></div></ChartCard>
-        <ChartCard title="CVEs by Status">
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="CVEs by Severity">{(chartType) => <MultiViewChart data={severityData} chartType={chartType} />}</ChartCard>
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="CVEs by Status">
           <div style={{ height: 288 }}>
             {statusData.length === 0 ? <Empty /> : (
               <ResponsiveContainer width="100%" height="100%">
@@ -805,7 +1213,7 @@ function NvdSection({ stats, syncing, onSync }) {
   );
 }
 
-function CheckpointSection({ events: fullEvents, from, to, syncing, onSync }) {
+function CheckpointSection({ events: fullEvents, from, to, syncing, onSync, viewChartType = 'donut', activeDayPreset, onDayPreset, onViewTypeChange }) {
   const wEvents = useMemo(() => splitByWindow(fullEvents, (e) => parseDate(e.eventCreated), from, to), [fullEvents, from, to]);
   const events = wEvents.current;
   const eventsPrev = wEvents.previous;
@@ -895,7 +1303,7 @@ function CheckpointSection({ events: fullEvents, from, to, syncing, onSync }) {
   const [cpTypeFilter, setCpTypeFilter] = useState('');
   const filteredForTrend = useMemo(() =>
     cpTypeFilter ? events.filter((e) => (e.type || 'unknown') === cpTypeFilter) : events
-  , [events, cpTypeFilter]);
+    , [events, cpTypeFilter]);
   const interactiveDailyTrend = useMemo(() => {
     const counts = {};
     filteredForTrend.forEach((e) => {
@@ -978,7 +1386,7 @@ function CheckpointSection({ events: fullEvents, from, to, syncing, onSync }) {
       <Emailsecuritymttr total={stats.total} remediated={stats.remediated} pending={stats.pending} />
 
       {/* Interactive Events Per Day chart */}
-      <ChartCard title="Security Events Over Time" subtitle={cpTypeFilter ? `filtered: ${cpTypeFilter}` : 'all event types'}>
+      <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Security Events Over Time" subtitle={cpTypeFilter ? `filtered: ${cpTypeFilter}` : 'all event types'}>
         <div className="flex flex-wrap items-center gap-1.5 mb-3 px-1">
           <button onClick={() => setCpTypeFilter('')}
             className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${!cpTypeFilter ? 'border-indigo-400 bg-indigo-500/10 text-indigo-500 font-semibold' : 'border-[var(--card-border)] text-[var(--muted)] hover:text-[var(--foreground)]'}`}>
@@ -1025,21 +1433,21 @@ function CheckpointSection({ events: fullEvents, from, to, syncing, onSync }) {
 
       {/* Severity / Event Type / Event State donuts */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <ChartCard title="Severity Distribution"><div style={{ height: 288 }}><ImprovedDonut data={severityData} /></div></ChartCard>
-        <ChartCard title="Event Type"><div style={{ height: 288 }}><ImprovedDonut data={eventTypes} /></div></ChartCard>
-        <ChartCard title="Event State"><div style={{ height: 288 }}><ImprovedDonut data={stateData} /></div></ChartCard>
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Severity Distribution">{(chartType) => <MultiViewChart data={severityData} chartType={chartType} />}</ChartCard>
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Event Type">{(chartType) => <MultiViewChart data={eventTypes} chartType={chartType} />}</ChartCard>
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Event State">{(chartType) => <MultiViewChart data={stateData} chartType={chartType} />}</ChartCard>
       </div>
 
       {/* Confidence Indicator + SaaS Platform donuts */}
       {confidenceData.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <ChartCard title="Confidence Indicator"><div style={{ height: 288 }}><ImprovedDonut data={confidenceData} /></div></ChartCard>
-          {saasData.length > 0 && <ChartCard title="SaaS Platform Distribution"><div style={{ height: 288 }}><ImprovedDonut data={saasData} /></div></ChartCard>}
+          <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Confidence Indicator">{(chartType) => <MultiViewChart data={confidenceData} chartType={chartType} />}</ChartCard>
+          {saasData.length > 0 && <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="SaaS Platform Distribution">{(chartType) => <MultiViewChart data={saasData} chartType={chartType} />}</ChartCard>}
         </div>
       )}
 
       {/* Event Type × Severity */}
-      <ChartCard title="Event Type × Severity" subtitle="severity mix within each event type">
+      <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Event Type × Severity" subtitle="severity mix within each event type">
         <div style={{ height: 288 }}>
           {typeSevData.length === 0 ? <Empty /> : (
             <ResponsiveContainer width="100%" height="100%">
@@ -1060,7 +1468,7 @@ function CheckpointSection({ events: fullEvents, from, to, syncing, onSync }) {
 
       {/* Cumulative Timeline + Remediation Rate Over Time */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <ChartCard title="Cumulative Events Over Time" subtitle="running total of security events">
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Cumulative Events Over Time" subtitle="running total of security events">
           <div style={{ height: 260 }}>
             {cumulativeTimeline.length === 0 ? <Empty /> : (
               <ResponsiveContainer width="100%" height="100%">
@@ -1075,7 +1483,7 @@ function CheckpointSection({ events: fullEvents, from, to, syncing, onSync }) {
             )}
           </div>
         </ChartCard>
-        <ChartCard title="Remediation Rate Over Time" subtitle="% events remediated per day">
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Remediation Rate Over Time" subtitle="% events remediated per day">
           <div style={{ height: 260 }}>
             {remediationRateOverTime.length === 0 ? <Empty /> : (
               <ResponsiveContainer width="100%" height="100%">
@@ -1182,7 +1590,7 @@ const FW_REPORTS = [
   'risky-users', 'top-attacks', 'top-connections',
 ];
 
-function FirewallSection({ reports, syncing, onSync }) {
+function FirewallSection({ reports, syncing, onSync, viewChartType = 'donut', activeDayPreset, onDayPreset, onViewTypeChange }) {
   const getRows = (name) => reports.find((r) => r.report === name)?.rows ?? [];
   const allRows = useMemo(() => reports.flatMap((r) => r.rows), [reports]);
 
@@ -1236,17 +1644,17 @@ function FirewallSection({ reports, syncing, onSync }) {
         <StatCard title="Security Score" value={dashboard.securityScore} color="green" subtitle={dashboard.riskLabel} />
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <ChartCard title="Risk-wise Distribution"><div style={{ height: 288 }}><ImprovedDonut data={dashboard.riskDistribution} /></div></ChartCard>
-        <ChartCard title="Top Attacks"><div style={{ height: 288 }}><HBar data={dashboard.topAttacks} dataKey="value" name="Count" color="#ef4444" /></div></ChartCard>
-        <ChartCard title="Top Sources"><div style={{ height: 288 }}><HBar data={dashboard.topSources} dataKey="value" name="Count" color="#3b82f6" /></div></ChartCard>
-        <ChartCard title="Top Denied Destinations"><div style={{ height: 288 }}><HBar data={dashboard.topDeniedDest} dataKey="value" name="Count" color="#f59e0b" /></div></ChartCard>
-        <ChartCard title="Top Denied Sources"><div style={{ height: 288 }}><HBar data={dashboard.topDeniedSources} dataKey="value" name="Count" color="#06b6d4" /></div></ChartCard>
-        <ChartCard title="Top Denied Applications"><div style={{ height: 288 }}><HBar data={dashboard.topDeniedApps} dataKey="value" name="Count" color="#8b5cf6" /></div></ChartCard>
-        <ChartCard title="Top Connections"><div style={{ height: 288 }}><HBar data={dashboard.topConnections} dataKey="value" name="Count" color="#ec4899" /></div></ChartCard>
-        <ChartCard title="Risky Users"><div style={{ height: 288 }}><HBar data={dashboard.riskyUsers} dataKey="value" name="Count" color="#ef4444" /></div></ChartCard>
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Risk-wise Distribution">{(chartType) => <MultiViewChart data={dashboard.riskDistribution} chartType={chartType} />}</ChartCard>
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Top Attacks">{(chartType) => <div style={{ height: 288 }}><HBar data={dashboard.topAttacks} dataKey="value" name="Count" color="#ef4444" /></div>}</ChartCard>
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Top Sources">{(chartType) => <div style={{ height: 288 }}><HBar data={dashboard.topSources} dataKey="value" name="Count" color="#3b82f6" /></div>}</ChartCard>
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Top Denied Destinations">{(chartType) => <div style={{ height: 288 }}><HBar data={dashboard.topDeniedDest} dataKey="value" name="Count" color="#f59e0b" /></div>}</ChartCard>
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Top Denied Sources">{(chartType) => <div style={{ height: 288 }}><HBar data={dashboard.topDeniedSources} dataKey="value" name="Count" color="#06b6d4" /></div>}</ChartCard>
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Top Denied Applications">{(chartType) => <div style={{ height: 288 }}><HBar data={dashboard.topDeniedApps} dataKey="value" name="Count" color="#8b5cf6" /></div>}</ChartCard>
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Top Connections">{(chartType) => <div style={{ height: 288 }}><HBar data={dashboard.topConnections} dataKey="value" name="Count" color="#ec4899" /></div>}</ChartCard>
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Risky Users">{(chartType) => <div style={{ height: 288 }}><HBar data={dashboard.riskyUsers} dataKey="value" name="Count" color="#ef4444" /></div>}</ChartCard>
       </div>
       {dashboard.riskTrend.length > 0 && (
-        <ChartCard title="Risk Trend Over Time" subtitle="bars = traffic · line = sessions">
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Risk Trend Over Time" subtitle="bars = traffic · line = sessions">
           <div style={{ height: 260 }}>
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={dashboard.riskTrend} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
@@ -1267,7 +1675,7 @@ function FirewallSection({ reports, syncing, onSync }) {
   );
 }
 
-function ZohoSection({ tickets: fullTickets, from, to, syncing, onSync }) {
+function ZohoSection({ tickets: fullTickets, from, to, syncing, onSync, viewChartType = 'donut', activeDayPreset, onDayPreset, onViewTypeChange }) {
   const wTickets = useMemo(() => splitByWindow(fullTickets, (t) => parseDate(t.created_at || t.createdTime || t.createdAt), from, to), [fullTickets, from, to]);
   const tickets = wTickets.current;
   const ticketsPrev = wTickets.previous;
@@ -1457,11 +1865,10 @@ function ZohoSection({ tickets: fullTickets, from, to, syncing, onSync }) {
             <button
               key={s.name}
               onClick={() => setFilterStatus(filterStatus === s.name ? '' : s.name)}
-              className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
-                filterStatus === s.name
-                  ? 'border-indigo-400 bg-indigo-500/10 text-indigo-500 font-semibold'
-                  : 'border-[var(--card-border)] text-[var(--muted)] hover:text-[var(--foreground)]'
-              }`}
+              className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${filterStatus === s.name
+                ? 'border-indigo-400 bg-indigo-500/10 text-indigo-500 font-semibold'
+                : 'border-[var(--card-border)] text-[var(--muted)] hover:text-[var(--foreground)]'
+                }`}
             >
               {s.name} · {s.value}
             </button>
@@ -1473,11 +1880,10 @@ function ZohoSection({ tickets: fullTickets, from, to, syncing, onSync }) {
             <button
               key={p.name}
               onClick={() => setFilterPriority(filterPriority === p.name ? '' : p.name)}
-              className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
-                filterPriority === p.name
-                  ? 'border-red-400 bg-red-500/10 text-red-500 font-semibold'
-                  : 'border-[var(--card-border)] text-[var(--muted)] hover:text-[var(--foreground)]'
-              }`}
+              className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${filterPriority === p.name
+                ? 'border-red-400 bg-red-500/10 text-red-500 font-semibold'
+                : 'border-[var(--card-border)] text-[var(--muted)] hover:text-[var(--foreground)]'
+                }`}
             >
               {p.name} · {p.value}
             </button>
@@ -1498,7 +1904,7 @@ function ZohoSection({ tickets: fullTickets, from, to, syncing, onSync }) {
 
       {/* Volume + aging */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <ChartCard title="Ticket Volume Trend" subtitle="Daily new tickets">
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Ticket Volume Trend" subtitle="Daily new tickets">
           <div style={{ height: 260 }}>
             {filteredTickets.length === 0 ? <Empty /> : (
               <ResponsiveContainer width="100%" height="100%">
@@ -1519,17 +1925,19 @@ function ZohoSection({ tickets: fullTickets, from, to, syncing, onSync }) {
             )}
           </div>
         </ChartCard>
-        <ChartCard title="Open Ticket Aging" subtitle="how long open tickets have been open">
-          <div style={{ height: 260 }}>
-            {openAging.length === 0 ? <Empty /> : <ImprovedDonut data={openAging} />}
-          </div>
+        <ChartCard dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Open Ticket Aging" subtitle="how long open tickets have been open">
+          {(chartType) => (
+            <div style={{ height: 260 }}>
+              {openAging.length === 0 ? <Empty /> : <MultiViewChart data={openAging} chartType={chartType} height={260} />}
+            </div>
+          )}
         </ChartCard>
       </div>
 
       {/* Status / priority / department */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <ChartCard title="By Status"><div style={{ height: 288 }}><ImprovedDonut data={statusData} /></div></ChartCard>
-        <ChartCard title="By Priority">
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="By Status">{(chartType) => <MultiViewChart data={statusData} chartType={chartType} />}</ChartCard>
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="By Priority">
           <div style={{ height: 288 }}>
             {priorityData.length === 0 ? <Empty /> : (
               <ResponsiveContainer width="100%" height="100%">
@@ -1546,7 +1954,7 @@ function ZohoSection({ tickets: fullTickets, from, to, syncing, onSync }) {
             )}
           </div>
         </ChartCard>
-        <ChartCard title="By Department">
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="By Department">
           <div style={{ height: 288 }}>
             {departmentData.length === 0 ? <Empty /> : (
               <ResponsiveContainer width="100%" height="100%">
@@ -1565,7 +1973,7 @@ function ZohoSection({ tickets: fullTickets, from, to, syncing, onSync }) {
 
       {/* Assignees / contacts / resolution time */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <ChartCard title="Top Assignees" subtitle="tickets per agent">
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Top Assignees" subtitle="tickets per agent">
           <div style={{ height: 288 }}>
             {assigneeData.length === 0 ? <Empty /> : (
               <ResponsiveContainer width="100%" height="100%">
@@ -1580,7 +1988,7 @@ function ZohoSection({ tickets: fullTickets, from, to, syncing, onSync }) {
             )}
           </div>
         </ChartCard>
-        <ChartCard title="Top Contacts" subtitle="tickets per reporter">
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Top Contacts" subtitle="tickets per reporter">
           <div style={{ height: 288 }}>
             {contactData.length === 0 ? <Empty /> : (
               <ResponsiveContainer width="100%" height="100%">
@@ -1595,7 +2003,7 @@ function ZohoSection({ tickets: fullTickets, from, to, syncing, onSync }) {
             )}
           </div>
         </ChartCard>
-        <ChartCard title="Avg Resolution by Department" subtitle="hours to close (open → closed)">
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Avg Resolution by Department" subtitle="hours to close (open → closed)">
           <div style={{ height: 288 }}>
             {resolutionByDept.length === 0 ? <Empty /> : (
               <ResponsiveContainer width="100%" height="100%">
@@ -1610,7 +2018,7 @@ function ZohoSection({ tickets: fullTickets, from, to, syncing, onSync }) {
             )}
           </div>
         </ChartCard>
-        <ChartCard title="Status × Priority" subtitle="ticket mix by status stacked by priority">
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Status × Priority" subtitle="ticket mix by status stacked by priority">
           <div style={{ height: 288 }}>
             {statusPriorityData.length === 0 ? <Empty /> : (
               <ResponsiveContainer width="100%" height="100%">
@@ -1633,7 +2041,7 @@ function ZohoSection({ tickets: fullTickets, from, to, syncing, onSync }) {
   );
 }
 
-function MicrosoftSection({ msData, from, to, syncing, onSync }) {
+function MicrosoftSection({ msData, from, to, syncing, onSync, viewChartType = 'donut', activeDayPreset, onDayPreset, onViewTypeChange }) {
   const arr = (key) => msData[key]?.data?.value ?? [];
   const riskyUsers = arr('riskyUsers');
   const users = arr('users');
@@ -1702,15 +2110,15 @@ function MicrosoftSection({ msData, from, to, syncing, onSync }) {
         <StatCard title="Service Issues" value={serviceIssues.length} color="orange" />
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <ChartCard title="Risk Detections by Type"><div style={{ height: 288 }}><ImprovedDonut data={riskEventData} /></div></ChartCard>
-        <ChartCard title="Risky Users by Level"><div style={{ height: 288 }}><ImprovedDonut data={riskUserLevel} /></div></ChartCard>
-        <ChartCard title="Alerts by Severity"><div style={{ height: 288 }}><ImprovedDonut data={alertSeverityData} /></div></ChartCard>
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Risk Detections by Type">{(chartType) => <MultiViewChart data={riskEventData} chartType={chartType} />}</ChartCard>
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Risky Users by Level">{(chartType) => <MultiViewChart data={riskUserLevel} chartType={chartType} />}</ChartCard>
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Alerts by Severity">{(chartType) => <MultiViewChart data={alertSeverityData} chartType={chartType} />}</ChartCard>
         {complianceState.length > 0 && (
-          <ChartCard title="Device Compliance State"><div style={{ height: 288 }}><ImprovedDonut data={complianceState} /></div></ChartCard>
+          <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Device Compliance State">{(chartType) => <MultiViewChart data={complianceState} chartType={chartType} />}</ChartCard>
         )}
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <ChartCard title="Sign-in Trend" subtitle="last 15 days — success vs failure">
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Sign-in Trend" subtitle="last 15 days — success vs failure">
           <div style={{ height: 288 }}>
             {signInTrend.length === 0 ? <Empty /> : (
               <ResponsiveContainer width="100%" height="100%">
@@ -1727,7 +2135,7 @@ function MicrosoftSection({ msData, from, to, syncing, onSync }) {
             )}
           </div>
         </ChartCard>
-        <ChartCard title="Assigned vs Unassigned Licenses">
+        <ChartCard  dayPresets={DAY_PRESETS} activeDayPreset={activeDayPreset} onDayPreset={onDayPreset} viewOptions={VIEW_OPTIONS} title="Assigned vs Unassigned Licenses">
           <div style={{ height: 288 }}>
             <div className="flex h-full items-center justify-center flex-col gap-4 px-6">
               <div className="w-full">
@@ -1781,27 +2189,27 @@ export default function Analytics() {
 
   const getTabBadge = (tabId) => {
     switch (tabId) {
-      case 'security':   return 'SentinelOne';
-      case 'mdm':        return 'Hexnode MDM';
-      case 'nvd':        return 'NVD CVEs';
+      case 'security': return 'SentinelOne';
+      case 'mdm': return 'Hexnode MDM';
+      case 'nvd': return 'NVD CVEs';
       case 'checkpoint': return 'Harmony Email';
-      case 'firewall':   return 'Palo Alto';
-      case 'zoho':       return 'Zoho Desk';
-      case 'microsoft':  return 'Microsoft 365';
-      default:           return 'Analytics';
+      case 'firewall': return 'Palo Alto';
+      case 'zoho': return 'Zoho Desk';
+      case 'microsoft': return 'Microsoft 365';
+      default: return 'Analytics';
     }
   };
 
   const getTabStatusText = (tabId) => {
     switch (tabId) {
-      case 'security':   return 'Fetching Endpoint Protection & Threat Analytics…';
-      case 'mdm':        return 'Fetching Device Fleet & MDM Posture Telemetry…';
-      case 'nvd':        return 'Fetching National Vulnerability Database Telemetry…';
+      case 'security': return 'Fetching Endpoint Protection & Threat Analytics…';
+      case 'mdm': return 'Fetching Device Fleet & MDM Posture Telemetry…';
+      case 'nvd': return 'Fetching National Vulnerability Database Telemetry…';
       case 'checkpoint': return 'Fetching Email Security & Threat Prevention Telemetry…';
-      case 'firewall':   return 'Fetching Firewall Traffic & Security Telemetry…';
-      case 'zoho':       return 'Fetching Service Desk & Incident Ticket Telemetry…';
-      case 'microsoft':  return 'Fetching Identity, Licensing & Cloud Security Telemetry…';
-      default:           return 'Loading Analytics Telemetry…';
+      case 'firewall': return 'Fetching Firewall Traffic & Security Telemetry…';
+      case 'zoho': return 'Fetching Service Desk & Incident Ticket Telemetry…';
+      case 'microsoft': return 'Fetching Identity, Licensing & Cloud Security Telemetry…';
+      default: return 'Loading Analytics Telemetry…';
     }
   };
 
@@ -1849,6 +2257,26 @@ export default function Analytics() {
   // Global date range (empty = all time). Prev window is derived automatically.
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [activeDayPreset, setActiveDayPreset] = useState(null); // null = All
+
+  // Multi-view chart type selector
+  const [activeViewType, setActiveViewType] = useState('donut');
+
+  // Quick day preset handler
+  const handleDayPreset = (days) => {
+    setActiveDayPreset(days);
+    if (days === null) {
+      setFrom('');
+      setTo('');
+      return;
+    }
+    const today = new Date();
+    const toDate = today.toISOString().slice(0, 10);
+    const fromDate = new Date();
+    fromDate.setDate(today.getDate() - (days - 1));
+    setFrom(fromDate.toISOString().slice(0, 10));
+    setTo(toDate);
+  };
 
   // Per-module syncing flags
   const [syncing, setSyncing] = useState({ security: false, mdm: false, nvd: false, checkpoint: false, firewall: false, zoho: false, microsoft: false });
@@ -1998,47 +2426,16 @@ export default function Analytics() {
             <button
               key={item.id}
               onClick={() => handleTabChange(item.id)}
-              className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold rounded-t-lg transition-all whitespace-nowrap ${
-                isActive
-                  ? 'bg-[var(--card-bg)] text-indigo-500 border border-[var(--card-border)] border-b-0 -mb-px shadow-sm'
-                  : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
-              }`}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold rounded-t-lg transition-all whitespace-nowrap ${isActive
+                ? 'bg-[var(--card-bg)] text-indigo-500 border border-[var(--card-border)] border-b-0 -mb-px shadow-sm'
+                : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+                }`}
             >
               <span>{item.icon}</span>
               <span>{item.label}</span>
             </button>
           );
         })}
-      </div>
-
-      {/* Global date range selector */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl px-4 py-3 shadow-sm">
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-[var(--foreground)] font-semibold">📅 Date Range</span>
-          <span className="text-xs text-[var(--muted)]">
-            {hasRange ? 'KPIs compare against the equal-length period before' : 'All time — set a range to see change vs previous period'}
-          </span>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5">
-            <label className="text-[10px] text-[var(--muted)] font-medium">From</label>
-            <input type="date" value={from} max={to || undefined}
-              onChange={(e) => setFrom(e.target.value)}
-              className="text-[11px] px-2 py-1.5 rounded-lg border border-[var(--card-border)] bg-[var(--muted-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
-          </div>
-          <div className="flex items-center gap-1.5">
-            <label className="text-[10px] text-[var(--muted)] font-medium">To</label>
-            <input type="date" value={to} min={from || undefined}
-              onChange={(e) => setTo(e.target.value)}
-              className="text-[11px] px-2 py-1.5 rounded-lg border border-[var(--card-border)] bg-[var(--muted-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
-          </div>
-          {hasRange && (
-            <button onClick={() => { setFrom(''); setTo(''); }}
-              className="text-[11px] px-2 py-1.5 rounded-lg font-semibold text-indigo-500 hover:text-indigo-700 hover:bg-[var(--muted-bg)] transition-colors">
-              Clear
-            </button>
-          )}
-        </div>
       </div>
 
       {/* Active module section — one per tab with animated loading transition */}
@@ -2055,25 +2452,25 @@ export default function Analytics() {
         )}
         <div className={`space-y-6 transition-opacity duration-200 ${isTabTransitioning ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
           {activeTab === 'security' && (
-            <SecuritySection agents={agents} cves={cves} threats={threats} from={from} to={to} syncing={syncing.security} onSync={syncSecurity} />
+            <SecuritySection agents={agents} cves={cves} threats={threats} from={from} to={to} syncing={syncing.security} onSync={syncSecurity} viewChartType={activeViewType} activeDayPreset={activeDayPreset} onDayPreset={handleDayPreset} onViewTypeChange={setActiveViewType} />
           )}
           {activeTab === 'mdm' && (
-            <MdmSection devices={devices} apps={apps} from={from} to={to} syncing={syncing.mdm} onSync={syncMdm} />
+            <MdmSection devices={devices} apps={apps} from={from} to={to} syncing={syncing.mdm} onSync={syncMdm} viewChartType={activeViewType} activeDayPreset={activeDayPreset} onDayPreset={handleDayPreset} onViewTypeChange={setActiveViewType} />
           )}
-          {activeTab === 'nvd' && (
+          {/* {activeTab === 'nvd' && (
             <NvdSection stats={nvdStats} syncing={syncing.nvd} onSync={syncNvd} />
-          )}
+          )} */}
           {activeTab === 'checkpoint' && (
-            <CheckpointSection events={cpEvents} from={from} to={to} syncing={syncing.checkpoint} onSync={syncCheckpoint} />
+            <CheckpointSection events={cpEvents} from={from} to={to} syncing={syncing.checkpoint} onSync={syncCheckpoint} viewChartType={activeViewType} activeDayPreset={activeDayPreset} onDayPreset={handleDayPreset} onViewTypeChange={setActiveViewType} />
           )}
           {activeTab === 'firewall' && (
-            <FirewallSection reports={fwReports} syncing={syncing.firewall} onSync={syncFirewall} />
+            <FirewallSection reports={fwReports} syncing={syncing.firewall} onSync={syncFirewall} viewChartType={activeViewType} activeDayPreset={activeDayPreset} onDayPreset={handleDayPreset} onViewTypeChange={setActiveViewType} />
           )}
           {activeTab === 'zoho' && (
-            <ZohoSection tickets={zohoTickets} from={from} to={to} syncing={syncing.zoho} onSync={syncZoho} />
+            <ZohoSection tickets={zohoTickets} from={from} to={to} syncing={syncing.zoho} onSync={syncZoho} viewChartType={activeViewType} activeDayPreset={activeDayPreset} onDayPreset={handleDayPreset} onViewTypeChange={setActiveViewType} />
           )}
           {activeTab === 'microsoft' && (
-            <MicrosoftSection msData={msData} from={from} to={to} syncing={syncing.microsoft} onSync={syncMicrosoft} />
+            <MicrosoftSection msData={msData} from={from} to={to} syncing={syncing.microsoft} onSync={syncMicrosoft} viewChartType={activeViewType} activeDayPreset={activeDayPreset} onDayPreset={handleDayPreset} onViewTypeChange={setActiveViewType} />
           )}
         </div>
       </div>
