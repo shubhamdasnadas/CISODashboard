@@ -4,6 +4,7 @@ const { syncSentinelOne } = require('../services/sentinelone');
 const { syncHexnode } = require('../services/hexnode');
 const { syncFirewall } = require('../services/firewall');
 const { syncHarmony } = require('../services/harmony');
+const { syncScalefusion } = require('../services/scalefusion');
 
 // POST /api/sync/all  — trigger all integrations for the current org
 router.post('/all', async (req, res) => {
@@ -46,6 +47,13 @@ router.post('/all', async (req, res) => {
         results.harmony = { error: e.message };
       }
     }
+    if (creds.scalefusion) {
+      try {
+        results.scalefusion = await syncScalefusion(req.orgSlug, creds.scalefusion);
+      } catch (e) {
+        results.scalefusion = { error: e.message };
+      }
+    }
 
     res.json({ success: true, orgId, results });
   } catch (err) {
@@ -83,6 +91,7 @@ router.post('/cron', async (req, res) => {
           if (creds.hexnode) await syncHexnode(orgSlug, creds.hexnode).catch(console.error);
           if (creds.firewall) await syncFirewall(orgSlug, creds.firewall).catch(console.error);
           if (creds.harmony) await syncHarmony(orgSlug, creds.harmony).catch(console.error);
+          if (creds.scalefusion) await syncScalefusion(orgSlug, creds.scalefusion).catch(console.error);
         } catch (e) {
           console.error(`[cron-sync] org ${orgSlug} failed:`, e.message);
         }

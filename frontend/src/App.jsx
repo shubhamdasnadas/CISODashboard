@@ -34,6 +34,7 @@ import DetailView from './pages/security/DetailView.jsx';
 // Provider Config Pages
 import SentinelOneConfig from './pages/settings/SentinelOneConfig.jsx';
 import HexnodeConfig from './pages/settings/HexnodeConfig.jsx';
+import ScalefusionConfig from './pages/settings/ScalefusionConfig.jsx';
 import HarmonyConfig from './pages/settings/HarmonyConfig.jsx';
 import FirewallConfig from './pages/settings/FirewallConfig.jsx';
 import ZohoConfig from './pages/settings/ZohoConfig.jsx';
@@ -175,6 +176,7 @@ export default function App() {
                 {/* Provider Config Pages */}
                 <Route path="/settings/sentinelone" element={<SentinelOneConfig />} />
                 <Route path="/settings/hexnode" element={<HexnodeConfig />} />
+                <Route path="/settings/scalefusion" element={<ScalefusionConfig />} />
                 <Route path="/settings/crowdstrike" element={<CrowdStrikeConfig />} />
                 <Route path="/settings/harmony" element={<HarmonyConfig />} />
                 <Route path="/settings/mimecast" element={<MimecastConfig />} />

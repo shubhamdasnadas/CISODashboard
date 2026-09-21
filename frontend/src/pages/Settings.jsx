@@ -27,6 +27,7 @@ export default function Settings() {
     ],
     deviceManagement: [
       { name: 'Hexnode', path: '/settings/hexnode', icon: '📱', color: 'blue' },
+      { name: 'Scale Fusion', path: '/settings/scalefusion', icon: '🛡️', color: 'purple' },
     ],
     emailSecurity: [
       { name: 'Check Point Harmony', path: '/settings/harmony', icon: checkpointImg, color: 'indigo' },

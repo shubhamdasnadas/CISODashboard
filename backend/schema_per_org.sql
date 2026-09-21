@@ -134,6 +134,28 @@ CREATE TABLE IF NOT EXISTS hexnode_device_applications (
   UNIQUE(device_id, app_key)
 );
 
+-- Scale Fusion MDM
+CREATE TABLE IF NOT EXISTS scalefusion_devices (
+  id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  device_id  TEXT        UNIQUE,
+  data       JSONB       NOT NULL,
+  synced_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS scalefusion_applications (
+  id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  app_id     TEXT        UNIQUE,
+  data       JSONB       NOT NULL,
+  synced_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS scalefusion_device_applications (
+  id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  device_id  TEXT        NOT NULL,
+  app_key    TEXT        NOT NULL,
+  data       JSONB       NOT NULL,
+  synced_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(device_id, app_key)
+);
+
 -- Palo Alto Firewall
 CREATE TABLE IF NOT EXISTS firewall_reports (
   id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -25,6 +25,7 @@ const { authMiddleware } = require('./middleware/authMiddleware');
 const { orgMiddleware } = require('./middleware/orgMiddleware');
 const sentineloneRoutes = require('./routes/sentinelone');
 const hexnodeRoutes = require('./routes/hexnode');
+const scalefusionRoutes = require('./routes/scalefusion');
 const firewallRoutes = require('./routes/firewall');
 const harmonyRoutes = require('./routes/harmony');
 const dashboardRoutes = require('./routes/dashboard');
@@ -51,6 +52,7 @@ const cacheRoutes = require('./routes/cache');
 const { syncSentinelOne } = require('./services/sentinelone');
 const { syncFirewall } = require('./services/firewall');
 const { syncHarmony } = require('./services/harmony');
+const { syncScalefusion } = require('./services/scalefusion');
 
 const app = express();
 
@@ -83,6 +85,7 @@ const withOrg = [authMiddleware, orgMiddleware];
 
 app.use('/api/sentinelone', withOrg, sentineloneRoutes);
 app.use('/api/hexnode',     withOrg, hexnodeRoutes);
+app.use('/api/scalefusion', withOrg, scalefusionRoutes);
 app.use('/api/firewall',    withOrg, firewallRoutes);
 app.use('/api/harmony',     withOrg, harmonyRoutes);
 app.use('/api/dashboard',   withOrg, dashboardRoutes);
@@ -173,6 +176,11 @@ async function runIntegrationSync() {
         if (creds.harmony) {
           await syncHarmony(orgSlug, creds.harmony).catch(e =>
             console.error(`[int-cron][org=${orgSlug}] CP error:`, e.message)
+          );
+        }
+        if (creds.scalefusion) {
+          await syncScalefusion(orgSlug, creds.scalefusion).catch(e =>
+            console.error(`[int-cron][org=${orgSlug}] ScaleFusion error:`, e.message)
           );
         }
       } catch (e) {
@@ -394,6 +402,9 @@ async function ensureCentral2faSchema() {
         expires_at      TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '10 minutes')
       )
     `);
+    await centralPool.query(
+      "ALTER TABLE login_sessions ADD COLUMN IF NOT EXISTS last_otp_sent_at TIMESTAMPTZ"
+    );
     await centralPool.query(
       "CREATE INDEX IF NOT EXISTS idx_login_sessions_expires ON login_sessions(expires_at)"
     );

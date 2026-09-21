@@ -266,6 +266,47 @@ function CardShell({ title, description, children, className = '', onHeaderClick
 }
 
 export default function MDM() {
+  // ── MDM tabs: Hexnode (the full existing dashboard) + Scale Fusion ─────────
+  const [activeTab, setActiveTab] = useState('hexnode'); // 'hexnode' | 'scalefusion'
+
+  return (
+    <div className="p-6 lg:p-8 space-y-6">
+      {/* Tab bar */}
+      <div className="flex items-center gap-2 border-b border-[var(--card-border)] pb-0">
+        {[
+          { key: 'hexnode', label: 'Hexnode MDM', icon: '📱' },
+          { key: 'scalefusion', label: 'Scale Fusion', icon: '🛡️' },
+        ].map((tab) => {
+          const active = activeTab === tab.key;
+          return (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors ${
+                active
+                  ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400'
+                  : 'border-transparent text-[var(--muted)] hover:text-[var(--foreground)] hover:border-[var(--card-border)]'
+              }`}
+            >
+              <span className="text-base leading-none">{tab.icon}</span>
+              {tab.label}
+              {tab.key === 'scalefusion' && (
+                <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300">
+                  New
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Tab content */}
+      {activeTab === 'hexnode' ? <HexnodeMdm /> : <ScaleFusionTab />}
+    </div>
+  );
+}
+
+function HexnodeMdm() {
   const navigate = useNavigate();
   const [devices, setDevices] = useState([]);
   const [devicesLoading, setDevicesLoading] = useState(true);
@@ -687,6 +728,90 @@ export default function MDM() {
           </CardShell>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ── Scale Fusion tab — shows the full raw API response
+function ScaleFusionTab() {
+  const [rawResponse, setRawResponse] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState(null);
+
+  const loadResponse = () => {
+    setLoading(true);
+    api.get('/scalefusion/response')
+      .then((r) => {
+        setRawResponse(r.data?.data || null);
+        setLastSyncedAt(r.data?.synced_at || null);
+      })
+      .catch(() => setRawResponse(null))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    loadResponse();
+    api.get('/scalefusion/credentials').then((r) => setLastSyncedAt(r.data?.lastSyncedAt ?? null)).catch(() => {});
+  }, []);
+
+  const handleSync = async () => {
+    setSyncing(true); setSyncMsg(null);
+    try {
+      const r = await api.post('/scalefusion/sync');
+      setSyncMsg({ text: r.data?.message || 'Sync complete', ok: true });
+      loadResponse();
+      setLastSyncedAt(new Date().toISOString());
+    } catch (err) {
+      setSyncMsg({ text: err.response?.data?.message || 'Sync failed — configure Scale Fusion in Settings', ok: false });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const formattedJson = rawResponse ? JSON.stringify(rawResponse, null, 2) : null;
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-[var(--foreground)]">Scale Fusion</h1>
+          <p className="text-sm text-[var(--muted)] mt-1">
+            {lastSyncedAt ? `Last synced ${new Date(lastSyncedAt).toLocaleString()}` : 'Configure Scale Fusion in Settings to start syncing'}
+          </p>
+        </div>
+        <button
+          onClick={handleSync}
+          disabled={syncing}
+          className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white px-5 py-2.5 rounded-xl text-sm font-semibold"
+        >
+          {syncing ? <><div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />Syncing…</> : 'Sync'}
+        </button>
+      </div>
+
+      {syncMsg && (
+        <div className={`rounded-xl px-4 py-3 text-sm font-medium ${
+          syncMsg.ok ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800'
+                     : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800'
+        }`}>{syncMsg.text}</div>
+      )}
+
+      {/* Full API Response */}
+      <CardShell title="Full API Response" description="Complete response from Scale Fusion API" className="min-h-[500px]">
+        <div className="h-full overflow-auto p-4">
+          {loading ? (
+            <WidgetSkeleton variant="table" />
+          ) : !formattedJson ? (
+            <Empty msg="No response yet — click Sync to fetch data from Scale Fusion" />
+          ) : (
+            <pre className="text-xs font-mono text-[var(--foreground)] whitespace-pre-wrap break-all leading-relaxed bg-[var(--muted-bg)] p-4 rounded-xl border border-[var(--card-border)]">
+              {formattedJson}
+            </pre>
+          )}
+        </div>
+      </CardShell>
     </div>
   );
 }

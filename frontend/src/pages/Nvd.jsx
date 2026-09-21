@@ -211,6 +211,15 @@ export default function Nvd() {
   const [sort, setSort] = useState('published');
   const [tableDays, setTableDays] = useState('all');
 
+  // Per-column table search filters (sent to backend /nvd/db)
+  const [colCve, setColCve] = useState('');
+  const [colPublished, setColPublished] = useState('');
+  const [colSeverity, setColSeverity] = useState('');
+  const [colScore, setColScore] = useState('');
+  const [colWeakness, setColWeakness] = useState('');
+  const [colStatus, setColStatus] = useState('');
+  const [colDescription, setColDescription] = useState('');
+
   // Modal inspection detail state
   const [detail, setDetail] = useState(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -269,6 +278,14 @@ export default function Nvd() {
       if (severity) params.set('severity', severity);
       if (status) params.set('status', status);
       if (search) params.set('search', search);
+      // Per-column filters
+      if (colCve) params.set('cve', colCve);
+      if (colPublished) params.set('published', colPublished);
+      if (colSeverity) params.set('severityLike', colSeverity);
+      if (colScore) params.set('score', colScore);
+      if (colWeakness) params.set('weakness', colWeakness);
+      if (colStatus) params.set('statusLike', colStatus);
+      if (colDescription) params.set('description', colDescription);
       const r = await api.get(`/nvd/db?${params.toString()}`);
       const items = Array.isArray(r.data?.vulnerabilities)
         ? r.data.vulnerabilities
@@ -279,7 +296,7 @@ export default function Nvd() {
       setTotal(r.data?.total || items.length);
     } catch { /* ignore */ }
     finally { setLoadingList(false); }
-  }, [page, limit, sort, severity, status, search]);
+  }, [page, limit, sort, severity, status, search, colCve, colPublished, colSeverity, colScore, colWeakness, colStatus, colDescription]);
 
   const loadAllForCharts = useCallback(async () => {
     try {
@@ -818,7 +835,12 @@ export default function Nvd() {
           title="Total CVEs"
           value={stats ? stats.total.toLocaleString() : '—'}
           color="default"
-          onClick={() => { setSeverity(''); setStatus(''); setSearch(''); setTableDays('all'); setPage(1); }}
+          onClick={() => {
+            setSeverity(''); setStatus(''); setSearch(''); setTableDays('all');
+            setColCve(''); setColPublished(''); setColSeverity('');
+            setColScore(''); setColWeakness(''); setColStatus(''); setColDescription('');
+            setPage(1);
+          }}
         />
         {SEVERITIES.map((s) => {
           const c = stats?.severityCounts?.find((x) => x.severity === s);
@@ -1037,9 +1059,14 @@ export default function Nvd() {
           </div>
         </div>
 
-        {(severity || status || search || tableDays !== 'all') && (
+        {(severity || status || search || tableDays !== 'all' || colCve || colPublished || colSeverity || colScore || colWeakness || colStatus || colDescription) && (
           <button
-            onClick={() => { setSeverity(''); setStatus(''); setSearch(''); setTableDays('all'); setPage(1); }}
+            onClick={() => {
+              setSeverity(''); setStatus(''); setSearch(''); setTableDays('all');
+              setColCve(''); setColPublished(''); setColSeverity('');
+              setColScore(''); setColWeakness(''); setColStatus(''); setColDescription('');
+              setPage(1);
+            }}
             className="text-xs font-semibold text-rose-500 hover:text-rose-600 py-2 transition-colors cursor-pointer"
           >
             Clear Filters
@@ -1061,34 +1088,105 @@ export default function Nvd() {
           <p className="text-xs text-[var(--muted)]">Page {page} of {totalPages || 1}</p>
         </div>
 
-        {loadingList ? (
-          <div className="p-8 text-center text-xs text-[var(--muted)] flex items-center justify-center gap-2">
-            <span className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-            Loading vulnerability records…
-          </div>
-        ) : filteredTableVulns.length === 0 ? (
-          <div className="p-10 text-center space-y-2">
-            <p className="text-sm font-semibold text-[var(--foreground)]">No CVE records match your criteria</p>
-            <p className="text-xs text-[var(--muted)]">
-              {hasCreds ? 'Try clearing or modifying the active search and severity filters.' : 'Configure the NVD API credentials above and run a sync.'}
-            </p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-[11px] uppercase tracking-wider text-[var(--muted)] bg-[var(--muted-bg)]/60">
-                  <th className="text-left px-4 py-2.5 font-semibold">CVE ID</th>
-                  <th className="text-left px-4 py-2.5 font-semibold">Published</th>
-                  <th className="text-left px-4 py-2.5 font-semibold">Severity</th>
-                  <th className="text-left px-4 py-2.5 font-semibold">Score</th>
-                  <th className="text-left px-4 py-2.5 font-semibold">Weakness</th>
-                  <th className="text-left px-4 py-2.5 font-semibold">Status</th>
-                  <th className="text-left px-4 py-2.5 font-semibold">Description</th>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-[11px] uppercase tracking-wider text-[var(--muted)] bg-[var(--muted-bg)]">
+                <th className="sticky top-0 z-20 text-left px-4 py-2.5 font-semibold bg-[var(--muted-bg)]">CVE ID</th>
+                <th className="sticky top-0 z-20 text-left px-4 py-2.5 font-semibold bg-[var(--muted-bg)]">Published</th>
+                <th className="sticky top-0 z-20 text-left px-4 py-2.5 font-semibold bg-[var(--muted-bg)]">Severity</th>
+                <th className="sticky top-0 z-20 text-left px-4 py-2.5 font-semibold bg-[var(--muted-bg)]">Score</th>
+                <th className="sticky top-0 z-20 text-left px-4 py-2.5 font-semibold bg-[var(--muted-bg)]">Weakness</th>
+                <th className="sticky top-0 z-20 text-left px-4 py-2.5 font-semibold bg-[var(--muted-bg)]">Status</th>
+                <th className="sticky top-0 z-20 text-left px-4 py-2.5 font-semibold bg-[var(--muted-bg)]">Description</th>
+              </tr>
+                <tr className="bg-[var(--muted-bg)]/30">
+                  <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
+                    <input
+                      type="text"
+                      value={colCve}
+                      onChange={(e) => { setColCve(e.target.value); setPage(1); }}
+                      placeholder="Search CVE ID…"
+                      className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
+                    />
+                  </th>
+                  <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
+                    <input
+                      type="text"
+                      value={colPublished}
+                      onChange={(e) => { setColPublished(e.target.value); setPage(1); }}
+                      placeholder="e.g. 2024-05, 2024-05-10…"
+                      className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
+                    />
+                  </th>
+                  <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
+                    <input
+                      type="text"
+                      value={colSeverity}
+                      onChange={(e) => { setColSeverity(e.target.value); setPage(1); }}
+                      placeholder="High, Critical…"
+                      className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
+                    />
+                  </th>
+                  <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
+                    <input
+                      type="text"
+                      value={colScore}
+                      onChange={(e) => { setColScore(e.target.value); setPage(1); }}
+                      placeholder="9.8, 7.5…"
+                      className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
+                    />
+                  </th>
+                  <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
+                    <input
+                      type="text"
+                      value={colWeakness}
+                      onChange={(e) => { setColWeakness(e.target.value); setPage(1); }}
+                      placeholder="CWE-79…"
+                      className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
+                    />
+                  </th>
+                  <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
+                    <input
+                      type="text"
+                      value={colStatus}
+                      onChange={(e) => { setColStatus(e.target.value); setPage(1); }}
+                      placeholder="Analyzed, Rejected…"
+                      className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
+                    />
+                  </th>
+                  <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
+                    <input
+                      type="text"
+                      value={colDescription}
+                      onChange={(e) => { setColDescription(e.target.value); setPage(1); }}
+                      placeholder="Search description…"
+                      className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
+                    />
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--card-border)]">
-                {filteredTableVulns.map((v) => {
+                {loadingList ? (
+                  <tr>
+                    <td colSpan={7} className="p-8 text-center text-xs text-[var(--muted)]">
+                      <span className="inline-flex items-center justify-center gap-2">
+                        <span className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                        Loading vulnerability records…
+                      </span>
+                    </td>
+                  </tr>
+                ) : filteredTableVulns.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="p-10 text-center space-y-2">
+                      <p className="text-sm font-semibold text-[var(--foreground)]">No CVE records match your criteria</p>
+                      <p className="text-xs text-[var(--muted)]">
+                        {hasCreds ? 'Try clearing or modifying the active search and severity filters.' : 'Configure the NVD API credentials above and run a sync.'}
+                      </p>
+                    </td>
+                  </tr>
+                ) : (
+                  filteredTableVulns.map((v) => {
                   const score = parseFloat(v.cvss_base_score);
                   return (
                     <tr
@@ -1121,11 +1219,11 @@ export default function Nvd() {
                       </td>
                     </tr>
                   );
-                })}
+                })
+                )}
               </tbody>
             </table>
           </div>
-        )}
 
         {/* Pagination Controls */}
         {totalPages > 1 && (

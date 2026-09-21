@@ -13,6 +13,12 @@ function parseDate(v) {
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
+// Loose YYYY-MM-DD validator — keeps arbitrary SQL text out of the query.
+function isValidDateString(v) {
+  if (typeof v !== 'string' || !v) return false;
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) && !isNaN(new Date(v + 'T00:00:00Z').getTime());
+}
+
 // Extract first English / Spanish description from the descriptions array.
 function extractDescriptions(descriptions = []) {
   let en = '';
@@ -314,10 +320,12 @@ router.post('/sync', async (req, res) => {
 });
 
 // GET /api/nvd/db or /api/nvd/cves — list stored CVEs with optional filters + pagination.
-// Query: severity, status, search, page, limit, sort (published|score)
+// Query: severity, status, search, page, limit, sort (published|score),
+//         cve, published, severityLike, score, weakness, statusLike, description (per-column),
+//         from, to (date range on `published` — used by the Analytics day filter)
 const handleListCves = async (req, res) => {
   try {
-    const { severity, status, search } = req.query;
+    const { severity, status, search, cve, published, severityLike, score, weakness, statusLike, description, from, to } = req.query;
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(500, parseInt(req.query.limit, 10) || 50);
     const offset = (page - 1) * limit;
@@ -337,6 +345,55 @@ const handleListCves = async (req, res) => {
     if (search) {
       params.push(`%${search}%`);
       conditions.push(`(description_en ILIKE $${params.length} OR cve_id ILIKE $${params.length})`);
+    }
+    // Per-column search filters (plain text search across the whole database, not just current page)
+    if (cve) {
+      params.push(`%${cve}%`);
+      conditions.push(`cve_id ILIKE $${params.length}`);
+    }
+    if (published) {
+      const pub = published.trim().toLowerCase();
+      if (pub) {
+        params.push(`%${pub}%`);
+        conditions.push(`to_char(published, 'YYYY-MM-DD') ILIKE $${params.length} OR to_char(published, 'Mon DD, YYYY') ILIKE $${params.length}`);
+      }
+    }
+    if (severityLike) {
+      params.push(`%${severityLike}%`);
+      conditions.push(`cvss_base_severity ILIKE $${params.length}`);
+    }
+    if (score) {
+      const scoreNum = parseFloat(score);
+      if (!isNaN(scoreNum)) {
+        params.push(scoreNum);
+        conditions.push(`cvss_base_score = $${params.length}`);
+      }
+    }
+    if (weakness) {
+      params.push(`%${weakness}%`);
+      conditions.push(`weaknesses ILIKE $${params.length}`);
+    }
+    if (statusLike) {
+      params.push(`%${statusLike}%`);
+      conditions.push(`vuln_status ILIKE $${params.length}`);
+    }
+    if (description) {
+      params.push(`%${description}%`);
+      conditions.push(`description_en ILIKE $${params.length}`);
+    }
+    // Date-range filter on `published` (used by the Analytics day preset).
+    // Accepts YYYY-MM-DD; `from` is inclusive, `to` is inclusive to end-of-day.
+    if (from) {
+      if (isValidDateString(from)) {
+        params.push(from);
+        conditions.push(`published >= $${params.length}::date`);
+      }
+    }
+    if (to) {
+      if (isValidDateString(to)) {
+        params.push(to);
+        conditions.push(`published < ($${params.length}::date + INTERVAL '1 day')`);
+      }
     }
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -388,18 +445,31 @@ router.get('/db/:cve_id', async (req, res) => {
   }
 });
 
-// GET /api/nvd/stats — summary counts for dashboard header
+// GET /api/nvd/stats — summary counts for dashboard header.
+// Accepts optional from/to (YYYY-MM-DD) to scope counts to a published-date window
+// (used by the Analytics NVD day filter). Without them, returns all-time totals.
 router.get('/stats', async (req, res) => {
   try {
+    const { from, to } = req.query;
+    const rangeParams = [];
+    let rangeCond = '';
+    if (from && isValidDateString(from)) { rangeParams.push(from); rangeCond += ` AND published >= $${rangeParams.length}::date`; }
+    if (to && isValidDateString(to)) { rangeParams.push(to); rangeCond += ` AND published < ($${rangeParams.length}::date + INTERVAL '1 day')`; }
+
     const sev = await req.orgPool.query(
       `SELECT cvss_base_severity AS severity, COUNT(*)::int AS count
-         FROM nvd GROUP BY cvss_base_severity`
+         FROM nvd WHERE true ${rangeCond} GROUP BY cvss_base_severity`,
+      rangeParams
     );
     const statusRes = await req.orgPool.query(
       `SELECT vuln_status AS status, COUNT(*)::int AS count
-         FROM nvd GROUP BY vuln_status`
+         FROM nvd WHERE true ${rangeCond} GROUP BY vuln_status`,
+      rangeParams
     );
-    const totalRes = await req.orgPool.query(`SELECT COUNT(*)::int AS count FROM nvd`);
+    const totalRes = await req.orgPool.query(
+      `SELECT COUNT(*)::int AS count FROM nvd WHERE true ${rangeCond}`,
+      rangeParams
+    );
     const latestRes = await req.orgPool.query(
       `SELECT MAX(synced_at) AS last_synced FROM nvd`
     );
@@ -409,6 +479,23 @@ router.get('/stats', async (req, res) => {
       severityCounts: sev.rows,
       statusCounts: statusRes.rows,
     });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET /api/nvd/analytics-rows — lightweight projection (no descriptions/raw JSONB) of
+// every stored CVE, ordered newest-first. Used by the Analytics NVD section so each
+// widget can run its own independent client-side FilterByDays over the full dataset.
+router.get('/analytics-rows', async (req, res) => {
+  try {
+    const result = await req.orgPool.query(
+      `SELECT cve_id, published, last_modified, synced_at,
+              cvss_base_severity, cvss_base_score, vuln_status, weaknesses
+         FROM nvd
+        ORDER BY published DESC NULLS LAST`
+    );
+    res.json({ rows: result.rows });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

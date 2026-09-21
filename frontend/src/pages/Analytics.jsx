@@ -1229,61 +1229,125 @@ function MdmSection({ devices: fullDevices, apps: fullApps, syncing, onSync }) {
 }
 
 function NvdSection({ stats, syncing, onSync }) {
-  const severityData = useMemo(() => {
-    if (!stats) return [];
-    const map = {};
-    (stats.severityCounts || []).forEach((s) => { map[s.severity] = s.count; });
-    return ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
-      .filter((s) => map[s] != null)
-      .map((s) => ({ name: s, value: map[s], fill: SEVERITY_COLORS[s] }));
-  }, [stats]);
-  const statusData = useMemo(() => {
-    if (!stats) return [];
-    return (stats.statusCounts || [])
-      .filter((s) => s.status)
-      .sort((a, b) => b.count - a.count)
-      .map((s, i) => ({ name: s.status, value: s.count, fill: CHART_COLORS[i % CHART_COLORS.length] }));
-  }, [stats]);
-  const sevCount = (name) => ((stats?.severityCounts || []).find((s) => s.severity === name))?.count ?? 0;
-  const highRisk = sevCount('CRITICAL') + sevCount('HIGH');
-  const highRiskPct = stats?.total ? Math.round((highRisk / stats.total) * 100) : 0;
+  // Full lightweight row set (no descriptions/raw JSONB) fetched once — each widget
+  // below filters it independently with its own FilterByDays, like the other sections.
+  const [rows, setRows] = useState([]);
+  const [loadingRows, setLoadingRows] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    api.get('/nvd/analytics-rows')
+      .then((r) => { if (alive) setRows(r.data?.rows || []); })
+      .catch(() => { if (alive) setRows([]); })
+      .finally(() => { if (alive) setLoadingRows(false); });
+    return () => { alive = false; };
+  }, []);
+
+  // Date used by each widget's independent day filter.
+  const nvdDateFn = (v) => v.published || v.last_modified || v.synced_at;
+
+  const severityOf = (v) => {
+    const s = String(v.cvss_base_severity || '').toUpperCase();
+    if (s) return s;
+    const sc = Number(v.cvss_base_score);
+    if (sc >= 9) return 'CRITICAL';
+    if (sc >= 7) return 'HIGH';
+    if (sc >= 4) return 'MEDIUM';
+    if (sc > 0) return 'LOW';
+    return 'UNKNOWN';
+  };
+
+  // Severity breaks by proper severity colors.
+
+  // CVSS score buckets (critical/high/medium/low by numeric range).
+  const scoreRangeData = (arr) => {
+    const buckets = { 'Critical (9.0-10)': 0, 'High (7.0-8.9)': 0, 'Medium (4.0-6.9)': 0, 'Low (0.1-3.9)': 0, 'None': 0 };
+    arr.forEach((v) => {
+      const sc = Number(v.cvss_base_score);
+      if (isNaN(sc) || sc === 0) { buckets['None']++; return; }
+      if (sc >= 9) buckets['Critical (9.0-10)']++;
+      else if (sc >= 7) buckets['High (7.0-8.9)']++;
+      else if (sc >= 4) buckets['Medium (4.0-6.9)']++;
+      else buckets['Low (0.1-3.9)']++;
+    });
+    return Object.entries(buckets)
+      .filter(([, value]) => value > 0)
+      .map(([name, value], i) => ({ name, value, fill: ['#a855f7', '#ef4444', '#eab308', '#3b82f6', '#94a3b8'][i % 5] }));
+  };
+
+  const totalAll = stats?.total ?? rows.length;
 
   return (
     <WizardSection id="nvd" kicker="National Vulnerability Database" title="NVD CVEs" icon="🌐" accent="#8b5cf6"
-      meta={stats ? `${fmtNum(stats.total)} CVEs stored` : 'No data synced yet'} syncing={syncing} onSync={onSync}>
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        <StatCard title="Total CVEs" value={stats ? stats.total : '—'} color="default" />
-        <StatCard title="CRITICAL" value={sevCount('CRITICAL')} color="purple" />
-        <StatCard title="HIGH" value={sevCount('HIGH')} color="red" />
-        <StatCard title="MEDIUM" value={sevCount('MEDIUM')} color="yellow" />
-        <StatCard title="LOW" value={sevCount('LOW')} color="blue" />
-      </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatCard title="Critical + High" value={highRisk} color="red" subtitle={`${highRiskPct}% of total`} />
-        <StatCard title="Last Synced" value={stats?.lastSynced ? new Date(stats.lastSynced).toLocaleDateString() : '—'} color="default" />
-        <StatCard title="Status Buckets" value={statusData.length} color="default" />
-        <StatCard title="Severity Buckets" value={severityData.length} color="default" />
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <ChartCard dayPresets={DAY_PRESETS} viewOptions={VIEW_OPTIONS} title="CVEs by Severity">{(chartType) => <MultiViewChart data={severityData} chartType={chartType} />}</ChartCard>
-        <ChartCard dayPresets={DAY_PRESETS} viewOptions={VIEW_OPTIONS} title="CVEs by Status">
-          <div style={{ height: 288 }}>
-            {statusData.length === 0 ? <Empty /> : (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={statusData} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                  <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-                  <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={120} />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} />
-                  <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={18}>
-                    {statusData.map((e, i) => <Cell key={i} fill={e.fill} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            )}
+      meta={loadingRows ? 'Loading CVE records…' : `${fmtNum(totalAll)} CVEs stored`}
+      syncing={syncing} onSync={onSync}>
+
+      {loadingRows && rows.length === 0 ? (
+        <div className="flex items-center justify-center py-16">
+          <span className="animate-spin w-6 h-6 border-2 border-[var(--foreground)] border-t-transparent rounded-full" />
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <FilterByDays key="nvd-total" data={rows} dateFn={nvdDateFn}>
+              {({ filtered, dayPreset, setDayPreset }) => (
+                <StatCard title={dayPreset ? `CVEs (last ${dayPreset}d)` : 'Total CVEs'} value={fmtNum(filtered.length)} color="default" subtitle={totalAll ? `${Math.round((filtered.length / totalAll) * 100)}% of all-time` : ''} />
+              )}
+            </FilterByDays>
+            {['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map((s) => (
+              <FilterByDays key={`nvd-${s}`} data={rows} dateFn={nvdDateFn}>
+                {({ filtered }) => <StatCard title={s} value={fmtNum(filtered.filter((v) => severityOf(v) === s).length)} color={{ CRITICAL: 'purple', HIGH: 'red', MEDIUM: 'yellow', LOW: 'blue' }[s]} />}
+              </FilterByDays>
+            ))}
           </div>
-        </ChartCard>
-      </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <FilterByDays key="nvd-hi" data={rows} dateFn={nvdDateFn}>
+              {({ filtered }) => {
+                const n = filtered.length;
+                const critHigh = filtered.filter((v) => ['CRITICAL', 'HIGH'].includes(severityOf(v))).length;
+                return <StatCard title="Critical + High" value={fmtNum(critHigh)} color="red" subtitle={n ? `${Math.round((critHigh / n) * 100)}% of window` : ''} />;
+              }}
+            </FilterByDays>
+            <FilterByDays key="nvd-avg" data={rows} dateFn={nvdDateFn}>
+              {({ filtered }) => {
+                const scs = filtered.map((v) => Number(v.cvss_base_score)).filter((s) => !isNaN(s));
+                const avg = scs.length ? (scs.reduce((a, b) => a + b, 0) / scs.length) : null;
+                return <StatCard title="Avg CVSS Score" value={avg != null ? avg.toFixed(1) : '—'} color="default" subtitle={`${scs.length} scored CVEs`} />;
+              }}
+            </FilterByDays>
+            <FilterByDays key="nvd-weak" data={rows} dateFn={nvdDateFn}>
+              {({ filtered }) => <StatCard title="With Weakness" value={fmtNum(filtered.filter((v) => v.weaknesses).length)} color="green" subtitle={filtered.length ? `${Math.round((filtered.filter((v) => v.weaknesses).length / filtered.length) * 100)}% of window` : ''} />}
+            </FilterByDays>
+            <FilterByDays key="nvd-unknown" data={rows} dateFn={nvdDateFn}>
+              {({ filtered }) => <StatCard title="UNKNOWN Severity" value={fmtNum(filtered.filter((v) => severityOf(v) === 'UNKNOWN').length)} color="default" subtitle="no CVSS mapping" />}
+            </FilterByDays>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <FilterByDays data={rows} dateFn={nvdDateFn}>
+              {({ filtered, dayPreset, setDayPreset }) => (
+                <ChartCard title="CVEs by Severity" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+                  {(chartType) => <MultiViewChart data={severityData(filtered)} chartType={chartType} />}
+                </ChartCard>
+              )}
+            </FilterByDays>
+            <FilterByDays data={rows} dateFn={nvdDateFn}>
+              {({ filtered, dayPreset, setDayPreset }) => (
+                <ChartCard title="CVEs by Status" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+                  {(chartType) => <MultiViewChart data={bucket(filtered, (v) => v.vuln_status || 'Analyzed')} chartType={chartType} />}
+                </ChartCard>
+              )}
+            </FilterByDays>
+            <FilterByDays data={rows} dateFn={nvdDateFn}>
+              {({ filtered, dayPreset, setDayPreset }) => (
+                <ChartCard title="CVEs by CVSS Score Range" subtitle="critical · high · medium · low buckets" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+                  {(chartType) => <MultiViewChart data={scoreRangeData(filtered)} chartType={chartType} />}
+                </ChartCard>
+              )}
+            </FilterByDays>
+          </div>
+        </>
+      )}
     </WizardSection>
   );
 }
@@ -2803,9 +2867,9 @@ export default function Analytics() {
           {activeTab === 'mdm' && (
             <MdmSection devices={devices} apps={apps} syncing={syncing.mdm} onSync={syncMdm} />
           )}
-          {/* {activeTab === 'nvd' && (
+          {activeTab === 'nvd' && (
             <NvdSection stats={nvdStats} syncing={syncing.nvd} onSync={syncNvd} />
-          )} */}
+          )}
           {activeTab === 'checkpoint' && (
             <CheckpointSection events={cpEvents} syncing={syncing.checkpoint} onSync={syncCheckpoint} />
           )}

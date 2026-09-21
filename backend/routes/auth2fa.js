@@ -10,6 +10,7 @@ const router = express.Router();
 const SESSION_TTL_MS = 10 * 60 * 1000; // login session valid 10 min
 const OTP_TTL_MS = 5 * 60 * 1000;      // OTP valid 5 min
 const MAX_OTP_ATTEMPTS = 5;
+const RESEND_COOLDOWN_MS = 30 * 1000;  // min gap between OTP sends
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '8h';
 const APP_URL = process.env.APP_URL || 'http://localhost:5173';
 
@@ -78,7 +79,8 @@ router.post('/2fa/login', async (req, res) => {
     await centralPool.query(
       `UPDATE login_sessions
          SET status = 'otp_sent', otp_hash = $1, otp_code = $2,
-             otp_expires_at = NOW() + INTERVAL '5 minutes', otp_attempts = 0
+             otp_expires_at = NOW() + INTERVAL '5 minutes', otp_attempts = 0,
+             last_otp_sent_at = NOW()
        WHERE id = $3`,
       [otpHash, otp, sessionId]   // otp_code kept only for dev fallback (no SMTP)
     );
@@ -159,7 +161,15 @@ router.post('/2fa/verify-otp', async (req, res) => {
       [accessToken, sessionId]
     );
 
-    res.json({ accessToken });
+    res.json({
+      accessToken,
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        org_ids: user.org_ids || [],
+      },
+    });
   } catch (err) {
     console.error('[2fa] verify-otp error:', err.message);
     res.status(500).json({ error: 'Server error' });
@@ -201,8 +211,13 @@ router.post('/2fa/resend-otp', async (req, res) => {
       return res.status(400).json({ error: 'Invalid session state.' });
     }
 
-    // Check if we can resend (optional: add cooldown logic here)
-    // For now, just generate a new OTP and send it
+    // Server-side resend cooldown — survives refresh and can't be bypassed on the client.
+    if (isWithinCooldown(session.last_otp_sent_at)) {
+      return res.status(429).json({
+        error: `Please wait ${cooldownWaitSec(session.last_otp_sent_at)}s before requesting another code.`,
+        retryAfterSec: cooldownWaitSec(session.last_otp_sent_at),
+      });
+    }
 
     const { rows: userRows } = await centralPool.query(
       'SELECT id, username, email FROM users WHERE id = $1',
@@ -217,7 +232,8 @@ router.post('/2fa/resend-otp', async (req, res) => {
     const otpHash = await bcrypt.hash(otp, 10);
     await centralPool.query(
       `UPDATE login_sessions
-         SET otp_hash = $1, otp_code = $2, otp_expires_at = NOW() + INTERVAL '5 minutes', otp_attempts = 0
+         SET otp_hash = $1, otp_code = $2, otp_expires_at = NOW() + INTERVAL '5 minutes',
+             otp_attempts = 0, last_otp_sent_at = NOW()
        WHERE id = $3`,
       [otpHash, otp, sessionId]
     );
@@ -232,7 +248,7 @@ router.post('/2fa/resend-otp', async (req, res) => {
              <p>It expires in 5 minutes. If you did not request this, you can ignore this email.</p>`,
     });
 
-    res.json({ message: 'OTP resent', dev: smtp.dev });
+    res.json({ message: 'OTP resent', emailMasked: maskEmail(user.email), dev: smtp.dev });
   } catch (err) {
     console.error('[2fa] resend-otp error:', err.message);
     res.status(500).json({ error: 'Server error' });
@@ -307,6 +323,16 @@ function maskEmail(email) {
   const [u, d] = email.split('@');
   if (u.length <= 2) return `${u[0]}***@${d}`;
   return `${u.slice(0, 2)}${'*'.repeat(Math.max(1, u.length - 2))}@${d}`;
+}
+
+function isWithinCooldown(lastSentAt) {
+  if (!lastSentAt) return false;
+  return Date.now() - new Date(lastSentAt).getTime() < RESEND_COOLDOWN_MS;
+}
+
+function cooldownWaitSec(lastSentAt) {
+  if (!lastSentAt) return 0;
+  return Math.ceil((RESEND_COOLDOWN_MS - (Date.now() - new Date(lastSentAt).getTime())) / 1000);
 }
 
 module.exports = router;
