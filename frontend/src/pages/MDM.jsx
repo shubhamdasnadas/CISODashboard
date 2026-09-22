@@ -732,35 +732,86 @@ function HexnodeMdm() {
   );
 }
 
-// ── Scale Fusion tab — shows the full raw API response
+// ── Scale Fusion tab — complete MDM dashboard matching Hexnode ────────────────
 function ScaleFusionTab() {
+  const navigate = useNavigate();
+  const [devices, setDevices] = useState([]);
+  const [devicesLoading, setDevicesLoading] = useState(true);
+  const [apps, setApps] = useState([]);
+  const [appsLoading, setAppsLoading] = useState(true);
+  const [flaggedApps, setFlaggedApps] = useState([]);
+  const [flaggedAppsLoading, setFlaggedAppsLoading] = useState(true);
   const [rawResponse, setRawResponse] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [showRaw, setShowRaw] = useState(false);
+
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState(null);
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
 
+  // Days filter state for each chart
+  const [osDays, setOsDays] = useState(30);
+  const [complianceDays, setComplianceDays] = useState(30);
+  const [deviceTypeDays, setDeviceTypeDays] = useState(30);
+  const [platformDays, setPlatformDays] = useState(30);
+
+  // View type state for each chart
+  const [osView, setOsView] = useViewState('scalefusion:os', 'donut');
+  const [complianceView, setComplianceView] = useViewState('scalefusion:compliance', 'donut');
+  const [deviceTypeView, setDeviceTypeView] = useViewState('scalefusion:deviceType', 'donut');
+  const [platformView, setPlatformView] = useViewState('scalefusion:platform', 'donut');
+
+  const loadDevices = () => {
+    setDevicesLoading(true);
+    api.get('/scalefusion/db/devices')
+      .then((r) => setDevices(Array.isArray(r.data?.data) ? r.data.data : []))
+      .catch(() => setDevices([]))
+      .finally(() => setDevicesLoading(false));
+  };
+
+  const loadApps = () => {
+    setAppsLoading(true);
+    api.get('/scalefusion/db/applications')
+      .then((r) => setApps(Array.isArray(r.data?.data) ? r.data.data : []))
+      .catch(() => setApps([]))
+      .finally(() => setAppsLoading(false));
+  };
+
+  const loadFlaggedApps = () => {
+    setFlaggedAppsLoading(true);
+    api.get('/scalefusion/db/device-applications/flagged')
+      .then((r) => setFlaggedApps(Array.isArray(r.data?.data) ? r.data.data : []))
+      .catch(() => setFlaggedApps([]))
+      .finally(() => setFlaggedAppsLoading(false));
+  };
+
   const loadResponse = () => {
-    setLoading(true);
     api.get('/scalefusion/response')
       .then((r) => {
         setRawResponse(r.data?.data || null);
-        setLastSyncedAt(r.data?.synced_at || null);
+        if (r.data?.synced_at) setLastSyncedAt(r.data.synced_at);
       })
-      .catch(() => setRawResponse(null))
-      .finally(() => setLoading(false));
+      .catch(() => setRawResponse(null));
   };
 
   useEffect(() => {
+    loadDevices();
+    loadApps();
+    loadFlaggedApps();
     loadResponse();
-    api.get('/scalefusion/credentials').then((r) => setLastSyncedAt(r.data?.lastSyncedAt ?? null)).catch(() => {});
+    api.get('/scalefusion/credentials').then((r) => {
+      if (r.data?.lastSyncedAt) setLastSyncedAt(r.data.lastSyncedAt);
+    }).catch(() => {});
   }, []);
 
   const handleSync = async () => {
     setSyncing(true); setSyncMsg(null);
     try {
       const r = await api.post('/scalefusion/sync');
-      setSyncMsg({ text: r.data?.message || 'Sync complete', ok: true });
+      const msg = r.data?.message || `Synced ${r.data?.devices ?? 0} devices, ${r.data?.applications ?? 0} applications`;
+      setSyncMsg({ text: msg, ok: true });
+      loadDevices();
+      loadApps();
+      loadFlaggedApps();
       loadResponse();
       setLastSyncedAt(new Date().toISOString());
     } catch (err) {
@@ -770,25 +821,137 @@ function ScaleFusionTab() {
     }
   };
 
+  // Helper to filter items by days based on a date field
+  const filterByDays = (items, dateField, days) => {
+    if (!items || items.length === 0) return [];
+    const now = new Date();
+    const start = new Date(now);
+    start.setDate(start.getDate() - days);
+    return items.filter((item) => {
+      const val = item[dateField] || item.last_connected_at || item.last_seen || item.updated_at || item.created_at;
+      const d = val ? new Date(val) : null;
+      return d && !isNaN(d.getTime()) && d >= start && d <= now;
+    });
+  };
+
+  // Filtered data by days
+  const filteredDevicesOs = useMemo(() => filterByDays(devices, 'last_reported', osDays), [devices, osDays]);
+  const filteredDevicesCompliance = useMemo(() => filterByDays(devices, 'last_reported', complianceDays), [devices, complianceDays]);
+  const filteredDevicesType = useMemo(() => filterByDays(devices, 'last_reported', deviceTypeDays), [devices, deviceTypeDays]);
+  const filteredAppsPlatform = useMemo(() => filterByDays(apps, 'updated_at', platformDays), [apps, platformDays]);
+
+  const osCounts = {};
+  filteredDevicesOs.forEach((d) => {
+    const os = d.os_name || d.os || d.platform || d.os_type || 'Unknown';
+    osCounts[os] = (osCounts[os] || 0) + 1;
+  });
+  const osData = Object.entries(osCounts).map(([name, value], i) => ({ name, value, fill: COLORS[i % COLORS.length] }));
+
+  const compliantCount = filteredDevicesCompliance.filter((d) => d.compliant === true).length;
+  const nonCompliantCount = filteredDevicesCompliance.length - compliantCount;
+  const complianceData = filteredDevicesCompliance.length === 0 ? [] : [
+    { name: 'Compliant', value: compliantCount, fill: '#10b981' },
+    { name: 'Non-compliant', value: nonCompliantCount, fill: '#ef4444' },
+  ];
+
+  const deviceTypeCounts = {};
+  filteredDevicesType.forEach((d) => {
+    const type = d.device_type || d.device_type_name || (d.platform ? `${d.platform} Device` : 'Device');
+    deviceTypeCounts[type] = (deviceTypeCounts[type] || 0) + 1;
+  });
+  const deviceTypeData = Object.entries(deviceTypeCounts).map(([name, value], i) => ({ name, value, fill: COLORS[i % COLORS.length] }));
+
+  const STALE_DAYS = 7;
+  const staleDevices = devices
+    .filter((d) => {
+      const dateVal = d.last_reported || d.last_connected_at || d.last_seen || d.updated_at;
+      return dateVal && (Date.now() - new Date(dateVal).getTime()) > STALE_DAYS * 24 * 60 * 60 * 1000;
+    })
+    .sort((a, b) => {
+      const da = new Date(a.last_reported || a.last_connected_at || a.last_seen || 0);
+      const db = new Date(b.last_reported || b.last_connected_at || b.last_seen || 0);
+      return da - db;
+    });
+
+  const platformCounts = {};
+  filteredAppsPlatform.forEach((a) => {
+    const platform = a.platform || a.os_type || 'Unknown';
+    platformCounts[platform] = (platformCounts[platform] || 0) + 1;
+  });
+  const platformData = Object.entries(platformCounts).map(([name, value], i) => ({ name, value, fill: COLORS[i % COLORS.length] }));
+
+  // Category time series data for Line/Area views
+  const osTimeSeries = useMemo(() => {
+    if (!devices || devices.length === 0) return null;
+    return categoryTimeSeries(devices, {
+      keyOf: (d) => d.os_name || d.os || d.platform || d.os_type || 'Unknown',
+      dateOf: (d) => {
+        const val = d.last_reported || d.last_connected_at || d.last_seen || d.updated_at;
+        return val ? new Date(val) : null;
+      },
+      days: osDays,
+    });
+  }, [devices, osDays]);
+
+  const complianceTimeSeries = useMemo(() => {
+    if (!devices || devices.length === 0) return null;
+    return categoryTimeSeries(devices, {
+      keyOf: (d) => d.compliant === true ? 'Compliant' : 'Non-compliant',
+      dateOf: (d) => {
+        const val = d.last_reported || d.last_connected_at || d.last_seen || d.updated_at;
+        return val ? new Date(val) : null;
+      },
+      days: complianceDays,
+    });
+  }, [devices, complianceDays]);
+
+  const deviceTypeTimeSeries = useMemo(() => {
+    if (!devices || devices.length === 0) return null;
+    return categoryTimeSeries(devices, {
+      keyOf: (d) => d.device_type || d.device_type_name || (d.platform ? `${d.platform} Device` : 'Device'),
+      dateOf: (d) => {
+        const val = d.last_reported || d.last_connected_at || d.last_seen || d.updated_at;
+        return val ? new Date(val) : null;
+      },
+      days: deviceTypeDays,
+    });
+  }, [devices, deviceTypeDays]);
+
+  const platformTimeSeries = useMemo(() => {
+    if (!apps || apps.length === 0) return null;
+    return categoryTimeSeries(apps, {
+      keyOf: (a) => a.platform || a.os_type || 'Unknown',
+      dateOf: (a) => a.updated_at ? new Date(a.updated_at) : null,
+      days: platformDays,
+    });
+  }, [apps, platformDays]);
+
+  const compliancePercent = devices.length > 0
+    ? Math.round((devices.filter((d) => d.compliant === true).length / devices.length) * 100)
+    : 100;
+
   const formattedJson = rawResponse ? JSON.stringify(rawResponse, null, 2) : null;
 
   return (
-    <div className="space-y-6">
+    <div className="p-6 lg:p-8 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-[var(--foreground)]">Scale Fusion</h1>
+          <h1 className="text-2xl font-bold text-[var(--foreground)]">Scale Fusion MDM</h1>
           <p className="text-sm text-[var(--muted)] mt-1">
-            {lastSyncedAt ? `Last synced ${new Date(lastSyncedAt).toLocaleString()}` : 'Configure Scale Fusion in Settings to start syncing'}
+            {lastSyncedAt ? `Last synced ${new Date(lastSyncedAt).toLocaleString()}` : 'Scale Fusion mobile device management'}
           </p>
         </div>
-        <button
-          onClick={handleSync}
-          disabled={syncing}
-          className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white px-5 py-2.5 rounded-xl text-sm font-semibold"
-        >
-          {syncing ? <><div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />Syncing…</> : 'Sync'}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-sm transition-all"
+          >
+            {syncing ? <><div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />Syncing…</> : 'Sync'}
+          </button>
+          <AnalyticsLaunchButton moduleKey="mdm" />
+        </div>
       </div>
 
       {syncMsg && (
@@ -798,20 +961,312 @@ function ScaleFusionTab() {
         }`}>{syncMsg.text}</div>
       )}
 
-      {/* Full API Response */}
-      <CardShell title="Full API Response" description="Complete response from Scale Fusion API" className="min-h-[500px]">
-        <div className="h-full overflow-auto p-4">
-          {loading ? (
-            <WidgetSkeleton variant="table" />
-          ) : !formattedJson ? (
-            <Empty msg="No response yet — click Sync to fetch data from Scale Fusion" />
-          ) : (
-            <pre className="text-xs font-mono text-[var(--foreground)] whitespace-pre-wrap break-all leading-relaxed bg-[var(--muted-bg)] p-4 rounded-xl border border-[var(--card-border)]">
-              {formattedJson}
-            </pre>
-          )}
+      {/* Summary stats */}
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+        <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-5 shadow-sm">
+          <p className="text-3xl font-bold text-[var(--foreground)] leading-none">{devicesLoading ? '—' : devices.length}</p>
+          <p className="text-xs text-[var(--muted)] mt-1.5 font-medium">Enrolled devices</p>
         </div>
-      </CardShell>
+        <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-5 shadow-sm">
+          <p className="text-3xl font-bold text-[var(--foreground)] leading-none">{appsLoading ? '—' : apps.length}</p>
+          <p className="text-xs text-[var(--muted)] mt-1.5 font-medium">Applications tracked</p>
+        </div>
+        <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-5 shadow-sm">
+          <p className="text-3xl font-bold text-[var(--foreground)] leading-none">{osData.length}</p>
+          <p className="text-xs text-[var(--muted)] mt-1.5 font-medium">OS / platform variants</p>
+        </div>
+        <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-5 shadow-sm">
+          <p className="text-3xl font-bold text-green-600 dark:text-green-400 leading-none">
+            {devicesLoading ? '—' : `${compliancePercent}%`}
+          </p>
+          <p className="text-xs text-[var(--muted)] mt-1.5 font-medium">Fleet compliance rate</p>
+        </div>
+      </div>
+
+      {/* Device Inventory + OS Breakdown */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <CardShell title="Device Inventory" className="lg:col-span-2 h-[420px]">
+          <div className="h-full overflow-auto">
+            {devicesLoading ? <WidgetSkeleton variant="table" /> : devices.length === 0 ? <Empty msg="No devices found — configure & sync Scale Fusion in Settings" /> : (
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 z-10 bg-[var(--muted-bg)]">
+                  <tr>
+                    <th className="text-left px-4 py-2.5 font-semibold text-[var(--muted)] border-b border-[var(--card-border)]">Device</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-[var(--muted)] border-b border-[var(--card-border)]">Model / OS</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-[var(--muted)] border-b border-[var(--card-border)]">Group / Policy</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-[var(--muted)] border-b border-[var(--card-border)]">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {devices.map((d, i) => {
+                    const name = d.device_name || d.name || d.model_name || d.model || `Device ${d.id ?? i}`;
+                    const model = d.model_name || d.model || '';
+                    const os = d.os_name || d.os || d.platform || '—';
+                    const osVer = d.os_version ? ` (${d.os_version})` : '';
+                    const group = d.group_name || d.policy_name || d.user?.name || '—';
+                    const status = d.compliance_state || d.compliance_status || d.status || 'Active';
+                    const isGood = /compliant|active|enrolled/i.test(String(status)) && !/non/i.test(String(status));
+                    return (
+                      <tr
+                        key={i}
+                        className={`cursor-pointer transition-colors ${i % 2 === 0 ? 'bg-[var(--card-bg)]' : 'bg-[var(--muted-bg)]'} hover:bg-indigo-50 dark:hover:bg-indigo-900/20`}
+                        onClick={() => navigate('/mdm/detail', { state: { dataset: 'devices', filterId: 'deviceId', value: d.id, title: `Device — ${name}`, provider: 'scalefusion' } })}
+                      >
+                        <td className="px-4 py-2.5 border-b border-[var(--card-border)] text-[var(--foreground)] font-medium">
+                          <div>{name}</div>
+                          {d.serial_number && <div className="text-[10px] text-[var(--muted)]">{d.serial_number}</div>}
+                        </td>
+                        <td className="px-4 py-2.5 border-b border-[var(--card-border)] text-[var(--muted)]">
+                          <div>{os}{osVer}</div>
+                          {model && model !== name && <div className="text-[10px] text-[var(--muted)]">{model}</div>}
+                        </td>
+                        <td className="px-4 py-2.5 border-b border-[var(--card-border)] text-[var(--muted)]">{group}</td>
+                        <td className="px-4 py-2.5 border-b border-[var(--card-border)]">
+                          <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium capitalize ${
+                            isGood ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
+                                   : 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300'
+                          }`}>
+                            {String(status).replace(/_/g, ' ')}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </CardShell>
+
+        <CardShell
+          title="Device OS / Platform Breakdown"
+          className="h-[420px]"
+          days={osDays}
+          onDaysChange={setOsDays}
+          view={osView}
+          onViewChange={setOsView}
+        >
+          <div className="h-full p-3">
+            {devicesLoading ? <WidgetSkeleton variant="table" /> : osData.length === 0 ? <Empty msg="No device data" /> : (
+              (osView === 'line' || osView === 'area') && osTimeSeries ? (
+                <CategoryTimeSeriesChart timeSeriesData={osTimeSeries} type={osView} storageKey="sf-os" />
+              ) : (
+                <MultiViewChart
+                  data={osData}
+                  viewType={osView}
+                  onItemClick={(d) => navigate('/mdm/detail', { state: { dataset: 'devices', filterId: 'os', value: d.name, title: `Devices — ${d.name}`, provider: 'scalefusion' } })}
+                  barColor="#3b82f6"
+                />
+              )
+            )}
+          </div>
+        </CardShell>
+      </div>
+
+      {/* Compliance Status + Device Type Breakdown + Stale Devices */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <CardShell
+          title="Compliance Status"
+          className="h-[340px]"
+          days={complianceDays}
+          onDaysChange={setComplianceDays}
+          view={complianceView}
+          onViewChange={setComplianceView}
+        >
+          <div className="h-full p-3">
+            {devicesLoading ? <WidgetSkeleton variant="table" /> : complianceData.length === 0 ? <Empty msg="No device data" /> : (
+              (complianceView === 'line' || complianceView === 'area') && complianceTimeSeries ? (
+                <CategoryTimeSeriesChart timeSeriesData={complianceTimeSeries} type={complianceView} storageKey="sf-compliance" />
+              ) : (
+                <MultiViewChart
+                  data={complianceData}
+                  viewType={complianceView}
+                  onItemClick={(d) => navigate('/mdm/detail', { state: { dataset: 'devices', filterId: 'compliant', value: d.name === 'Compliant', title: `${d.name} Devices`, provider: 'scalefusion' } })}
+                  barColor="#3b82f6"
+                />
+              )
+            )}
+          </div>
+        </CardShell>
+
+        <CardShell
+          title="Device Type Breakdown"
+          className="h-[340px]"
+          days={deviceTypeDays}
+          onDaysChange={setDeviceTypeDays}
+          view={deviceTypeView}
+          onViewChange={setDeviceTypeView}
+        >
+          <div className="h-full p-3">
+            {devicesLoading ? <WidgetSkeleton variant="table" /> : deviceTypeData.length === 0 ? <Empty msg="No device data" /> : (
+              (deviceTypeView === 'line' || deviceTypeView === 'area') && deviceTypeTimeSeries ? (
+                <CategoryTimeSeriesChart timeSeriesData={deviceTypeTimeSeries} type={deviceTypeView} storageKey="sf-deviceType" />
+              ) : (
+                <MultiViewChart
+                  data={deviceTypeData}
+                  viewType={deviceTypeView}
+                  barColor="#3b82f6"
+                />
+              )
+            )}
+          </div>
+        </CardShell>
+
+        <CardShell title="Stale Devices" description={`(inactive for >${STALE_DAYS}d)`} className="h-[340px]">
+          <div className="h-full overflow-auto">
+            {devicesLoading ? <WidgetSkeleton variant="table" /> : staleDevices.length === 0 ? <Empty msg="No stale devices — all reporting recently" /> : (
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 z-10 bg-[var(--muted-bg)]">
+                  <tr>
+                    <th className="text-left px-4 py-2.5 font-semibold text-[var(--muted)] border-b border-[var(--card-border)]">Device</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-[var(--muted)] border-b border-[var(--card-border)]">Last Connected</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {staleDevices.map((d, i) => {
+                    const dateVal = d.last_reported || d.last_connected_at || d.last_seen || d.updated_at;
+                    return (
+                      <tr key={i} className={i % 2 === 0 ? 'bg-[var(--card-bg)]' : 'bg-[var(--muted-bg)]'}>
+                        <td className="px-4 py-2.5 border-b border-[var(--card-border)] text-[var(--foreground)] font-medium">
+                          {d.device_name || d.name || `Device ${d.id}`}
+                        </td>
+                        <td className="px-4 py-2.5 border-b border-[var(--card-border)] text-[var(--muted)]">
+                          {dateVal ? new Date(dateVal).toLocaleDateString() : '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </CardShell>
+      </div>
+
+      {/* Application Inventory */}
+      <div className="grid grid-cols-1 gap-4">
+        <CardShell title="Application Inventory" className="h-[420px]">
+          <div className="h-full overflow-auto">
+            {appsLoading ? <WidgetSkeleton variant="table" /> : apps.length === 0 ? <Empty msg="No applications found — configure & sync Scale Fusion in Settings" /> : (
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 z-10 bg-[var(--muted-bg)]">
+                  <tr>
+                    <th className="text-left px-4 py-2.5 font-semibold text-[var(--muted)] border-b border-[var(--card-border)]">Application</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-[var(--muted)] border-b border-[var(--card-border)]">Package / Bundle</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-[var(--muted)] border-b border-[var(--card-border)]">Platform</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-[var(--muted)] border-b border-[var(--card-border)]">Version</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {apps.map((a, i) => {
+                    const name = a.name || a.app_name || 'Unknown';
+                    return (
+                      <tr
+                        key={i}
+                        className={`cursor-pointer transition-colors ${i % 2 === 0 ? 'bg-[var(--card-bg)]' : 'bg-[var(--muted-bg)]'} hover:bg-indigo-50 dark:hover:bg-indigo-900/20`}
+                        onClick={() => navigate('/mdm/detail', { state: { dataset: 'apps', filterId: 'appId', value: a.id, title: `App — ${name}`, provider: 'scalefusion' } })}
+                      >
+                        <td className="px-4 py-2.5 border-b border-[var(--card-border)] text-[var(--foreground)] font-medium">{name}</td>
+                        <td className="px-4 py-2.5 border-b border-[var(--card-border)] text-[var(--muted)]">{a.package_name || a.bundle_id || '—'}</td>
+                        <td className="px-4 py-2.5 border-b border-[var(--card-border)] text-[var(--muted)]">{a.platform || a.os_type || '—'}</td>
+                        <td className="px-4 py-2.5 border-b border-[var(--card-border)] text-[var(--muted)]">{a.version || a.app_version || '—'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </CardShell>
+      </div>
+
+      {/* App Platform Breakdown + Device Groups & Policies */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <CardShell
+          title="App Platform Breakdown"
+          className="h-[420px]"
+          days={platformDays}
+          onDaysChange={setPlatformDays}
+          view={platformView}
+          onViewChange={setPlatformView}
+        >
+          <div className="h-full grid grid-cols-1 gap-2 p-3">
+            <div className="h-full min-w-0">
+              <p className="text-[10px] font-semibold text-[var(--muted)] uppercase tracking-wider text-center mb-1">Platform</p>
+              {appsLoading ? <WidgetSkeleton variant="table" /> : platformData.length === 0 ? <Empty msg="No app data" /> : (
+                (platformView === 'line' || platformView === 'area') && platformTimeSeries ? (
+                  <CategoryTimeSeriesChart timeSeriesData={platformTimeSeries} type={platformView} storageKey="sf-platform" />
+                ) : (
+                  <MultiViewChart
+                    data={platformData}
+                    viewType={platformView}
+                    onItemClick={(d) => navigate('/mdm/detail', { state: { dataset: 'apps', filterId: 'platform', value: d.name, title: `Apps — ${d.name}`, provider: 'scalefusion' } })}
+                    barColor="#3b82f6"
+                  />
+                )
+              )}
+            </div>
+          </div>
+        </CardShell>
+
+        <CardShell title="Device Policies & Management Groups" className="h-[420px]">
+          <div className="h-full overflow-auto">
+            {devicesLoading ? <WidgetSkeleton variant="table" /> : devices.length === 0 ? <Empty msg="No policy or group data found" /> : (
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 z-10 bg-[var(--muted-bg)]">
+                  <tr>
+                    <th className="text-left px-4 py-2.5 font-semibold text-[var(--muted)] border-b border-[var(--card-border)]">Device</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-[var(--muted)] border-b border-[var(--card-border)]">Policy</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-[var(--muted)] border-b border-[var(--card-border)]">Group</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {devices.map((d, i) => (
+                    <tr key={i} className={i % 2 === 0 ? 'bg-[var(--card-bg)]' : 'bg-[var(--muted-bg)]'}>
+                      <td className="px-4 py-2.5 border-b border-[var(--card-border)] text-[var(--foreground)] font-medium">
+                        {d.device_name || d.name || `Device ${d.id}`}
+                      </td>
+                      <td className="px-4 py-2.5 border-b border-[var(--card-border)] text-[var(--muted)]">
+                        {d.policy_name || 'Default Policy'}
+                      </td>
+                      <td className="px-4 py-2.5 border-b border-[var(--card-border)] text-[var(--muted)]">
+                        {d.group_name || 'Default Group'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </CardShell>
+      </div>
+
+      {/* Raw API Response Inspector (Collapsible) */}
+      <div className="border border-[var(--card-border)] bg-[var(--card-bg)] rounded-2xl overflow-hidden shadow-sm">
+        <div
+          onClick={() => setShowRaw((prev) => !prev)}
+          className="px-5 py-3.5 flex items-center justify-between cursor-pointer bg-[var(--muted-bg)] hover:bg-[var(--card-border)]/40 transition-colors"
+        >
+          <div>
+            <h3 className="text-sm font-bold text-[var(--foreground)]">Raw API Response Diagnostics</h3>
+            <p className="text-xs text-[var(--muted)] mt-0.5">View raw JSON response from Scale Fusion API</p>
+          </div>
+          <button className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline">
+            {showRaw ? 'Hide JSON ▲' : 'Show JSON ▼'}
+          </button>
+        </div>
+        {showRaw && (
+          <div className="p-4 overflow-auto max-h-[400px]">
+            {!formattedJson ? (
+              <Empty msg="No response yet — click Sync to fetch data from Scale Fusion" />
+            ) : (
+              <pre className="text-xs font-mono text-[var(--foreground)] whitespace-pre-wrap break-all leading-relaxed bg-[var(--muted-bg)] p-4 rounded-xl border border-[var(--card-border)]">
+                {formattedJson}
+              </pre>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

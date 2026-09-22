@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { syncScalefusion } = require('../services/scalefusion');
+const { syncScalefusion, extractDevices, extractApplications } = require('../services/scalefusion');
 
 // GET /api/scalefusion/credentials
 router.get('/credentials', async (req, res) => {
@@ -47,7 +47,7 @@ router.post('/sync', async (req, res) => {
     const result = await syncScalefusion(req.orgSlug, rows[0].credentials);
     res.json({
       success: true,
-      message: 'Scale Fusion response synced',
+      message: `Synced ${result.devices ?? 0} devices, ${result.applications ?? 0} applications`,
       ...result,
     });
   } catch (err) {
@@ -63,6 +63,71 @@ router.get('/response', async (req, res) => {
     );
     if (!rows[0]) return res.json({ data: null, synced_at: null });
     res.json({ data: rows[0].data, synced_at: rows[0].synced_at });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET /api/scalefusion/db/devices — enrolled devices
+router.get('/db/devices', async (req, res) => {
+  try {
+    const { rows } = await req.orgPool.query(
+      "SELECT data FROM scalefusion_devices WHERE device_id != '__raw_response__' ORDER BY synced_at DESC"
+    );
+    if (rows.length > 0) {
+      return res.json({ data: rows.map((r) => r.data) });
+    }
+
+    // Fallback: extract from __raw_response__ if individual records not yet inserted
+    const raw = await req.orgPool.query(
+      "SELECT data FROM scalefusion_devices WHERE device_id = '__raw_response__' LIMIT 1"
+    );
+    if (raw.rows[0]?.data) {
+      const extracted = extractDevices(raw.rows[0].data);
+      return res.json({ data: extracted });
+    }
+
+    res.json({ data: [] });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET /api/scalefusion/db/applications — tracked applications
+router.get('/db/applications', async (req, res) => {
+  try {
+    const { rows } = await req.orgPool.query(
+      'SELECT data FROM scalefusion_applications ORDER BY synced_at DESC'
+    );
+    if (rows.length > 0) {
+      return res.json({ data: rows.map((r) => r.data) });
+    }
+
+    // Fallback: extract from __raw_response__
+    const raw = await req.orgPool.query(
+      "SELECT data FROM scalefusion_devices WHERE device_id = '__raw_response__' LIMIT 1"
+    );
+    if (raw.rows[0]?.data) {
+      const devs = extractDevices(raw.rows[0].data);
+      const apps = extractApplications(raw.rows[0].data, devs);
+      return res.json({ data: apps });
+    }
+
+    res.json({ data: [] });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET /api/scalefusion/db/device-applications/flagged — flagged/blacklisted/mandatory device applications
+router.get('/db/device-applications/flagged', async (req, res) => {
+  try {
+    const { rows } = await req.orgPool.query(
+      `SELECT device_id, data FROM scalefusion_device_applications
+       WHERE (data->>'black_listed')::boolean = true OR (data->>'mandatory_app')::boolean = true
+       ORDER BY synced_at DESC`
+    );
+    res.json({ data: rows.map((r) => ({ deviceId: r.device_id, ...r.data })) });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

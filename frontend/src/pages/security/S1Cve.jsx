@@ -4,7 +4,7 @@ import api from '../../api.js';
 import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 import {
   MultiViewChart, ChartViewDropdown, useViewState, rangeComparison, CompareRangeSelector, withinRange,
-  categoryTimeSeries,
+  categoryTimeSeries, KpiCard, DeltaBadge, splitByWindow,
 } from './widgetViews.jsx';
 
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
@@ -18,27 +18,6 @@ function parseDate(v) {
   if (!v) return null;
   const d = new Date(v);
   return isNaN(d.getTime()) ? null : d;
-}
-
-
-function StatCard({ title, value, color, onClick }) {
-  const cls = {
-    default: 'text-[var(--foreground)]',
-    red:     'text-red-500',
-    yellow:  'text-yellow-500',
-    purple:  'text-purple-500',
-    blue:    'text-blue-500',
-    green:   'text-green-500',
-  };
-  return (
-    <div
-      onClick={onClick}
-      className={`bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-4 shadow-sm ${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
-    >
-      <p className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-widest mb-1">{title}</p>
-      <p className={`text-3xl font-bold ${cls[color] || cls.default}`}>{value}</p>
-    </div>
-  );
 }
 
 function ChartCard({ title, controls, children }) {
@@ -101,30 +80,62 @@ export default function S1Cve() {
 
   const goToDetail = (state) => navigate('/security/detail', { state: { ...state, dateFrom, dateTo } });
 
-  // Memoized filtered raw CVE records for DetailView navigation
-  const filteredRawCves = useMemo(() => {
-    return apps.filter((r) => {
-      if (!hasDateFilter) return true;
-      const d = parseDate(r.detectionDate);
-      if (!d) return false;
-      const key = d.toISOString().slice(0, 10);
-      if (dateFrom && key < dateFrom) return false;
-      if (dateTo && key > dateTo) return false;
-      return true;
-    });
-  }, [apps, dateFrom, dateTo, hasDateFilter]);
+  const computeCveMetrics = (rows) => {
+    if (!rows || rows.length === 0) {
+      return {
+        totalApplications: 0,
+        totalCves: 0,
+        critical: 0,
+        high: 0,
+        medium: 0,
+        totalEndpoints: 0,
+        avgScore: 0,
+      };
+    }
+    const appSet = new Set();
+    const cveSet = new Set();
+    const endpointSet = new Set();
+    let critical = 0, high = 0, medium = 0;
+    let scoreSum = 0, scoreCount = 0;
 
-  const filteredApps = useMemo(() => {
-    if (!hasDateFilter) return apps;
-    return apps.filter((r) => {
-      const d = parseDate(r.detectionDate);
-      if (!d) return false;
-      const key = d.toISOString().slice(0, 10);
-      if (dateFrom && key < dateFrom) return false;
-      if (dateTo && key > dateTo) return false;
-      return true;
+    rows.forEach((r) => {
+      if (!r) return;
+      const app = r.applicationName || r.application;
+      if (app) appSet.add(app);
+      if (r.cveId) cveSet.add(r.cveId);
+      const ep = r.endpointId || r.endpointName;
+      if (ep) endpointSet.add(ep);
+      const sev = (r.severity || '').toUpperCase();
+      if (sev === 'CRITICAL') critical++;
+      else if (sev === 'HIGH') high++;
+      else if (sev === 'MEDIUM') medium++;
+      const s = parseFloat(r.baseScore);
+      if (!isNaN(s)) {
+        scoreSum += s;
+        scoreCount++;
+      }
     });
-  }, [apps, dateFrom, dateTo, hasDateFilter]);
+
+    return {
+      totalApplications: appSet.size,
+      totalCves: cveSet.size || rows.length,
+      critical,
+      high,
+      medium,
+      totalEndpoints: endpointSet.size,
+      avgScore: scoreCount > 0 ? Number((scoreSum / scoreCount).toFixed(1)) : 0,
+    };
+  };
+
+  const { current: windowCurrent, previous: windowPrevious, isFiltered } = useMemo(
+    () => splitByWindow(apps, (r) => r.detectionDate, dateFrom, dateTo),
+    [apps, dateFrom, dateTo]
+  );
+  const curKpis = useMemo(() => computeCveMetrics(windowCurrent), [windowCurrent]);
+  const prevKpis = useMemo(() => isFiltered ? computeCveMetrics(windowPrevious) : null, [windowPrevious, isFiltered]);
+
+  const filteredApps = windowCurrent;
+  const filteredRawCves = windowCurrent;
 
   const dateOfCve = (r) => parseDate(r.detectionDate);
 
@@ -400,33 +411,74 @@ export default function S1Cve() {
   return (
     <div className="p-4 sm:p-6 space-y-6">
 
-      {/* Header */}
-      <div className="flex items-start justify-between flex-wrap gap-2">
+      {/* Header + Global Date Filter */}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-[var(--foreground)]">Application CVE Analytics</h1>
           <p className="text-sm text-[var(--muted)] mt-0.5">
-            {totalApplications} applications · {totalCves} CVE records
-            {hasDateFilter && ` (filtered by detection date)`}
+            {curKpis.totalApplications} applications · {curKpis.totalCves} CVE records
+            {(dateFrom || dateTo) && (
+              <span className="ml-2 text-indigo-500 font-medium">
+                {dateFrom && dateTo ? `${dateFrom} → ${dateTo}` : dateFrom ? `From ${dateFrom}` : `Until ${dateTo}`}
+              </span>
+            )}
             {lastSync && <span> · Last sync: {new Date(lastSync).toLocaleString()}</span>}
           </p>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-lg p-0.5">
+            {[
+              { label: '7D', days: 7 },
+              { label: '14D', days: 14 },
+              { label: '30D', days: 30 },
+              { label: '90D', days: 90 },
+            ].map(({ label, days }) => {
+              const to = new Date().toISOString().slice(0, 10);
+              const fromD = new Date();
+              fromD.setDate(fromD.getDate() - days);
+              const from = fromD.toISOString().slice(0, 10);
+              const isActive = dateFrom === from && dateTo === to;
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => {
+                    if (isActive) {
+                      setDateFrom('');
+                      setDateTo('');
+                    } else {
+                      setDateFrom(from);
+                      setDateTo(to);
+                    }
+                  }}
+                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-md transition-all ${
+                    isActive
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
           <div className="flex items-center gap-1.5">
-            <label className="text-[10px] text-[var(--muted)] font-medium">From</label>
+            <label className="text-[11px] text-[var(--muted)] font-medium">From</label>
             <input type="date" value={dateFrom} max={dateTo || undefined}
               onChange={(e) => setDateFrom(e.target.value)}
-              className="text-[10px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+              className="text-[11px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
           </div>
           <div className="flex items-center gap-1.5">
-            <label className="text-[10px] text-[var(--muted)] font-medium">To</label>
+            <label className="text-[11px] text-[var(--muted)] font-medium">To</label>
             <input type="date" value={dateTo} min={dateFrom || undefined}
               onChange={(e) => setDateTo(e.target.value)}
-              className="text-[10px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+              className="text-[11px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
           </div>
-          {hasDateFilter && (
-            <button onClick={() => { setDateFrom(''); setDateTo(''); }}
-              className="text-[10px] text-indigo-500 hover:text-indigo-700 font-semibold">Clear</button>
+          {(dateFrom || dateTo) && (
+            <button
+              onClick={() => { setDateFrom(''); setDateTo(''); }}
+              className="text-[11px] text-indigo-500 hover:text-indigo-700 font-semibold">Clear</button>
           )}
         </div>
       </div>
@@ -439,19 +491,68 @@ export default function S1Cve() {
       ) : (
       <>
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
-        <StatCard title="Applications"  value={totalApplications}         color="default" />
-        <StatCard title="Total CVEs"    value={totalCves}                 color="default"
-          onClick={() => goToDetail({ dataset: 'cve', filterId: 'all', title: 'All CVEs' })} />
-        <StatCard title="Critical Severity Apps" value={severityMap.CRITICAL}      color="red"
-          onClick={() => goToDetail({ dataset: 'cve', filterId: 'severity', value: 'CRITICAL', title: 'Critical Severity CVEs' })} />
-        <StatCard title="High Severity Apps"     value={severityMap.HIGH}          color="red"
-          onClick={() => goToDetail({ dataset: 'cve', filterId: 'severity', value: 'HIGH', title: 'High Severity CVEs' })} />
-        <StatCard title="Medium Severity Apps"   value={severityMap.MEDIUM}        color="yellow"
-          onClick={() => goToDetail({ dataset: 'cve', filterId: 'severity', value: 'MEDIUM', title: 'Medium Severity CVEs' })} />
-        <StatCard title="Endpoints"     value={totalEndpoints}            color="blue" />
-        <StatCard title="Avg Score"     value={avgScore}                  color="default" />
+      {/* KPI row */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
+        <KpiCard
+          title="Applications"
+          value={curKpis.totalApplications}
+          cur={curKpis.totalApplications}
+          prev={prevKpis?.totalApplications}
+          accent="#3b82f6"
+          goodWhenUp={false}
+        />
+        <KpiCard
+          title="Total CVEs"
+          value={curKpis.totalCves}
+          cur={curKpis.totalCves}
+          prev={prevKpis?.totalCves}
+          accent="#ef4444"
+          goodWhenUp={false}
+          onClick={() => goToDetail({ dataset: 'cve', filterId: 'all', title: 'All CVEs' })}
+        />
+        <KpiCard
+          title="Critical Severity"
+          value={curKpis.critical}
+          cur={curKpis.critical}
+          prev={prevKpis?.critical}
+          accent="#a855f7"
+          goodWhenUp={false}
+          onClick={() => goToDetail({ dataset: 'cve', filterId: 'severity', value: 'CRITICAL', title: 'Critical Severity CVEs' })}
+        />
+        <KpiCard
+          title="High Severity"
+          value={curKpis.high}
+          cur={curKpis.high}
+          prev={prevKpis?.high}
+          accent="#ef4444"
+          goodWhenUp={false}
+          onClick={() => goToDetail({ dataset: 'cve', filterId: 'severity', value: 'HIGH', title: 'High Severity CVEs' })}
+        />
+        <KpiCard
+          title="Medium Severity"
+          value={curKpis.medium}
+          cur={curKpis.medium}
+          prev={prevKpis?.medium}
+          accent="#eab308"
+          goodWhenUp={false}
+          onClick={() => goToDetail({ dataset: 'cve', filterId: 'severity', value: 'MEDIUM', title: 'Medium Severity CVEs' })}
+        />
+        <KpiCard
+          title="Endpoints"
+          value={curKpis.totalEndpoints}
+          cur={curKpis.totalEndpoints}
+          prev={prevKpis?.totalEndpoints}
+          accent="#3b82f6"
+          goodWhenUp={false}
+        />
+        <KpiCard
+          title="Avg Score"
+          value={curKpis.avgScore}
+          cur={curKpis.avgScore}
+          prev={prevKpis?.avgScore}
+          accent="#6366f1"
+          goodWhenUp={false}
+        />
       </div>
 
       {/* Charts 2-col grid */}

@@ -12,6 +12,7 @@ import {
   MultiViewChart, ChartViewDropdown, useViewState,
   rangeComparison, CompareRangeSelector, withinRange,
   CategoryTimeSeriesChart, categoryTimeSeries,
+  KpiCard, DeltaBadge, splitByWindow,
 } from './widgetViews.jsx';
 
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
@@ -124,19 +125,6 @@ function monthComparison(series, refDate, days = 30) {
     currentLabel: `Last ${days} days (${fmt(curStart)} – ${fmt(curEnd)})`,
     previousLabel: `${days} days before`,
   };
-}
-
-function KpiCard({ title, value, subtitle, accent, onClick }) {
-  return (
-    <div
-      onClick={onClick}
-      className={`bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-4 flex flex-col gap-1 shadow-sm ${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
-    >
-      <p className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-widest">{title}</p>
-      <p className="text-3xl font-bold" style={{ color: accent }}>{value}</p>
-      {subtitle && <p className="text-[11px] text-[var(--muted)]">{subtitle}</p>}
-    </div>
-  );
 }
 
 function DateFilter({ from, to, onFromChange, onToChange, onClear, compact = true }) {
@@ -349,15 +337,16 @@ export default function Threats() {
   // Line/Area/Comparison views.
   const dateOf = useMemo(() => (t) => parseDate(t.threatInfo?.createdAt), []);
 
-  const kpis = useMemo(() => {
-    const total = filteredThreats.length;
-    const mitigated = filteredThreats.filter((t) => t.threatInfo?.mitigationStatus === 'mitigated').length;
-    const unresolved = filteredThreats.filter((t) => ['unresolved', 'active'].includes(t.threatInfo?.incidentStatus)).length;
-    const fileless = filteredThreats.filter((t) => t.threatInfo?.isFileless).length;
+  const computeThreatMetrics = (arr) => {
+    if (!arr || arr.length === 0) return { total: 0, mitigated: 0, unresolved: 0, fileless: 0, avgMttd: 0, avgMttm: 0 };
+    const total = arr.length;
+    const mitigated = arr.filter((t) => t.threatInfo?.mitigationStatus === 'mitigated').length;
+    const unresolved = arr.filter((t) => ['unresolved', 'active'].includes(t.threatInfo?.incidentStatus)).length;
+    const fileless = arr.filter((t) => t.threatInfo?.isFileless).length;
 
     let mttdSum = 0, mttdCount = 0;
     let mttmSum = 0, mttmCount = 0;
-    filteredThreats.forEach((t) => {
+    arr.forEach((t) => {
       const created = parseDate(t.threatInfo?.createdAt);
       const identified = parseDate(t.threatInfo?.identifiedAt);
       if (created && identified) { mttdSum += (created - identified) / 60000; mttdCount++; }
@@ -372,7 +361,15 @@ export default function Threats() {
       avgMttd: mttdCount > 0 ? mttdSum / mttdCount : 0,
       avgMttm: mttmCount > 0 ? mttmSum / mttmCount : 0,
     };
-  }, [filteredThreats]);
+  };
+
+  const { current: windowCurrent, previous: windowPrevious, isFiltered } = useMemo(
+    () => splitByWindow(threats, (t) => t.threatInfo?.createdAt, dateFrom, dateTo),
+    [threats, dateFrom, dateTo]
+  );
+  const curKpis = useMemo(() => computeThreatMetrics(windowCurrent), [windowCurrent]);
+  const prevKpis = useMemo(() => isFiltered ? computeThreatMetrics(windowPrevious) : null, [windowPrevious, isFiltered]);
+  const kpis = curKpis;
 
   const trendFilter = useCardFilter(threats);
   const endpointFilter = useCardFilter(threats);
@@ -703,6 +700,42 @@ export default function Threats() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-lg p-0.5">
+            {[
+              { label: '7D', days: 7 },
+              { label: '14D', days: 14 },
+              { label: '30D', days: 30 },
+              { label: '90D', days: 90 },
+            ].map(({ label, days }) => {
+              const to = new Date().toISOString().slice(0, 10);
+              const fromD = new Date();
+              fromD.setDate(fromD.getDate() - days);
+              const from = fromD.toISOString().slice(0, 10);
+              const isActive = dateFrom === from && dateTo === to;
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => {
+                    if (isActive) {
+                      setDateFrom('');
+                      setDateTo('');
+                    } else {
+                      setDateFrom(from);
+                      setDateTo(to);
+                    }
+                  }}
+                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-md transition-all ${
+                    isActive
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
           <div className="flex items-center gap-1.5">
             <label className="text-[11px] text-[var(--muted)] font-medium">From</label>
             <input type="date" value={dateFrom} max={dateTo || undefined}
@@ -725,24 +758,68 @@ export default function Threats() {
 
       {/* KPI row */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <KpiCard title="Total Threats" value={kpis.total} accent="#3b82f6"
-          onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'total_threats', title: 'Total threats' } })} />
+        <KpiCard
+          title="Total Threats"
+          value={curKpis.total}
+          cur={curKpis.total}
+          prev={prevKpis?.total}
+          accent="#3b82f6"
+          goodWhenUp={false}
+          onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'total_threats', title: 'Total threats' } })}
+        />
 
-        <KpiCard title="Mitigated" value={kpis.mitigated} accent="#10b981"
-          subtitle={`${kpis.total > 0 ? Math.round((kpis.mitigated / kpis.total) * 100) : 0}% of total`}
-          onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mitigated', value: 'mitigated', title: 'Mitigated Threats' } })} />
+        <KpiCard
+          title="Mitigated"
+          value={curKpis.mitigated}
+          cur={curKpis.mitigated}
+          prev={prevKpis?.mitigated}
+          accent="#10b981"
+          subtitle={`${curKpis.total > 0 ? Math.round((curKpis.mitigated / curKpis.total) * 100) : 0}% of total`}
+          goodWhenUp={true}
+          onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mitigated', value: 'mitigated', title: 'Mitigated Threats' } })}
+        />
 
-        <KpiCard title="Unresolved" value={kpis.unresolved} accent="#ef4444"
-          onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'unresolved_threats', title: 'Unresolved Threats' } })} />
+        <KpiCard
+          title="Unresolved"
+          value={curKpis.unresolved}
+          cur={curKpis.unresolved}
+          prev={prevKpis?.unresolved}
+          accent="#ef4444"
+          goodWhenUp={false}
+          onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'unresolved_threats', title: 'Unresolved Threats' } })}
+        />
 
-        <KpiCard title="Fileless" value={kpis.fileless} accent="#f59e0b"
-          onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'fileless', value: 'true', title: 'Fileless Threats' } })} />
+        <KpiCard
+          title="Fileless"
+          value={curKpis.fileless}
+          cur={curKpis.fileless}
+          prev={prevKpis?.fileless}
+          accent="#f59e0b"
+          goodWhenUp={false}
+          onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'fileless', value: 'true', title: 'Fileless Threats' } })}
+        />
 
-        <KpiCard title="Avg MTTD" value={formatDuration(kpis.avgMttd)} accent="#8b5cf6" subtitle="time to detect"
-          onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mttd', title: 'Mean Time to Detect' } })} />
+        <KpiCard
+          title="Avg MTTD"
+          value={formatDuration(curKpis.avgMttd)}
+          cur={Math.round(curKpis.avgMttd)}
+          prev={prevKpis ? Math.round(prevKpis.avgMttd) : null}
+          accent="#8b5cf6"
+          subtitle="time to detect"
+          goodWhenUp={false}
+          onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mttd', title: 'Mean Time to Detect' } })}
+        />
 
-        <KpiCard title="Avg MTTM" value={formatDuration(kpis.avgMttm)} accent="#06b6d4" subtitle="time to mitigate"
-          onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mttm', title: 'Mean Time to Mitigate' } })} />
+        <KpiCard
+          title="Avg MTTM"
+          value={formatDuration(curKpis.avgMttm)}
+          cur={Math.round(curKpis.avgMttm)}
+          prev={prevKpis ? Math.round(prevKpis.avgMttm) : null}
+          accent="#06b6d4"
+          subtitle="time to mitigate"
+          goodWhenUp={false}
+          onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mttm', title: 'Mean Time to Mitigate' } })}
+        />
       </div>
 
 

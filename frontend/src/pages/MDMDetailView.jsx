@@ -11,45 +11,47 @@ const yesNo = (v) => v === true ? 'Yes' : v === false ? 'No' : '—';
 const DATASET_CONFIG = {
   devices: {
     endpoint: '/hexnode/db/devices',
+    scalefusionEndpoint: '/scalefusion/db/devices',
     extract: (r) => r.data?.data || [],
-    cols: ['Device Name', 'Model', 'OS', 'OS Version', 'Type', 'Owner', 'Compliant', 'Enrollment Status', 'Serial Number', 'Last Reported'],
+    cols: ['Device Name', 'Model', 'OS', 'OS Version', 'Type', 'Owner / Group', 'Compliant', 'Status', 'Serial Number', 'Last Reported'],
     rowFn: (d) => [
       d.device_name || d.name || `Device ${d.id}`,
-      d.model_name,
-      d.os_name || d.os_type || d.platform,
-      d.os_version,
-      d.device_type,
-      d.user?.name,
+      d.model_name || d.model || '—',
+      d.os_name || d.os_type || d.platform || d.os || '—',
+      d.os_version || '—',
+      d.device_type || '—',
+      d.user?.name || d.group_name || d.policy_name || '—',
       yesNo(d.compliant),
-      d.enrollment_status,
-      d.serial_number,
-      fmt(d.last_reported),
+      d.status || d.compliance_state || d.enrollment_status || '—',
+      d.serial_number || d.serial_no || '—',
+      fmt(d.last_reported || d.last_connected_at || d.last_seen),
     ],
   },
   apps: {
     endpoint: '/hexnode/db/applications',
+    scalefusionEndpoint: '/scalefusion/db/applications',
     extract: (r) => r.data?.data || [],
-    cols: ['Name', 'Platform', 'Category', 'Vendor', 'Version', 'Price', 'License', 'Device Count', 'Rating'],
+    cols: ['Name', 'Platform', 'Category', 'Vendor / Package', 'Version', 'Price', 'License', 'Device Count', 'Rating'],
     rowFn: (a) => [
-      a.name,
-      a.platform,
-      a.category,
-      a.vendor,
-      a.version,
-      a.price,
-      a.license,
-      a.device_count,
-      a.average_user_rating?.trim?.() || a.average_user_rating,
+      a.name || a.app_name,
+      a.platform || a.os_type || '—',
+      a.category || '—',
+      a.vendor || a.package_name || '—',
+      a.version || '—',
+      a.price || '—',
+      a.license || '—',
+      a.device_count || '—',
+      a.average_user_rating?.trim?.() || a.average_user_rating || '—',
     ],
   },
 };
 
 const FILTERS = {
-  os: (d, value) => (d.os_name || d.os_type || d.platform || 'Unknown') === value,
+  os: (d, value) => (d.os_name || d.os_type || d.platform || d.os || 'Unknown') === value,
   compliant: (d, value) => d.compliant === value,
-  platform: (a, value) => (a.platform || 'unknown') === value,
-  deviceId: (d, value) => String(d.id) === String(value),
-  appId: (a, value) => String(a.id) === String(value),
+  platform: (a, value) => (a.platform || a.os_type || 'unknown') === value,
+  deviceId: (d, value) => String(d.id || d.device_id) === String(value),
+  appId: (a, value) => String(a.id || a.app_id || a.package_name) === String(value),
 };
 
 // Single-record drill-downs (filterId: 'deviceId' / 'appId') show every field
@@ -57,33 +59,35 @@ const FILTERS = {
 // 10+ columns would be unreadable, a key/value list isn't.
 const DEVICE_FIELDS = [
   ['Device Name', (d) => d.device_name || d.name || `Device ${d.id}`],
-  ['Model', (d) => d.model_name],
-  ['OS', (d) => d.os_name || d.os_type || d.platform],
-  ['OS Version', (d) => d.os_version],
+  ['Model', (d) => d.model_name || d.model],
+  ['OS', (d) => d.os_name || d.os_type || d.platform || d.os],
+  ['OS Version', (d) => d.os_version || d.os_version_name],
   ['Type', (d) => d.device_type],
-  ['Owner', (d) => d.user?.name],
+  ['Owner / Group', (d) => d.user?.name || d.group_name || d.policy_name],
   ['Compliant', (d) => yesNo(d.compliant)],
-  ['Enrollment Status', (d) => d.enrollment_status],
-  ['Serial Number', (d) => d.serial_number],
-  ['IMEI', (d) => d.imei],
+  ['Status', (d) => d.status || d.compliance_state || d.enrollment_status],
+  ['Serial Number', (d) => d.serial_number || d.serial_no],
+  ['IMEI', (d) => d.imei || d.imei_no],
   ['UDID', (d) => d.udid],
-  ['WiFi MAC', (d) => d.wifi_mac],
+  ['WiFi MAC', (d) => d.wifi_mac || d.mac_address],
+  ['IP Address', (d) => d.ip_address || d.ip],
+  ['Battery Level', (d) => d.battery_level != null ? `${d.battery_level}%` : undefined],
   ['Asset Tag', (d) => d.asset_tag],
   ['Device Notes', (d) => d.device_notes],
-  ['Enrolled Time', (d) => fmt(d.enrolled_time)],
-  ['Last Reported', (d) => fmt(d.last_reported)],
+  ['Enrolled Time', (d) => fmt(d.enrolled_time || d.created_at)],
+  ['Last Reported', (d) => fmt(d.last_reported || d.last_connected_at || d.last_seen)],
 ];
 
 const APP_FIELDS = [
-  ['Name', (a) => a.name],
-  ['Platform', (a) => a.platform],
+  ['Name', (a) => a.name || a.app_name],
+  ['Platform', (a) => a.platform || a.os_type],
   ['Category', (a) => a.category],
+  ['Package / Bundle ID', (a) => a.package_name || a.bundle_id || a.identifier],
   ['Vendor', (a) => a.vendor],
   ['Version', (a) => a.version],
   ['Price', (a) => a.price],
   ['License', (a) => a.license],
   ['App Type', (a) => a.app_type],
-  ['Identifier', (a) => a.identifier],
   ['Device Count', (a) => a.device_count],
   ['Uploaded Status', (a) => a.uploaded_status],
   ['Rating', (a) => a.average_user_rating?.trim?.() || a.average_user_rating],
@@ -97,7 +101,7 @@ const SINGLE_RECORD_FILTERS = { deviceId: DEVICE_FIELDS, appId: APP_FIELDS };
 export default function MDMDetailView() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { dataset, filterId, value, title } = location.state || {};
+  const { dataset, filterId, value, title, provider } = location.state || {};
 
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -109,11 +113,12 @@ export default function MDMDetailView() {
   useEffect(() => {
     if (!config) { setLoading(false); return; }
     setLoading(true);
-    api.get(config.endpoint)
+    const targetEndpoint = provider === 'scalefusion' ? config.scalefusionEndpoint : config.endpoint;
+    api.get(targetEndpoint)
       .then((r) => setRows(config.extract(r)))
       .catch(() => setRows([]))
       .finally(() => setLoading(false));
-  }, [dataset]);
+  }, [dataset, provider]);
 
   useEffect(() => { setPage(1); }, [filterId, value]);
 

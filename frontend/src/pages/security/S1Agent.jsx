@@ -4,7 +4,7 @@ import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 import api from '../../api.js';
 import {
   MultiViewChart, ChartViewDropdown, useViewState, rangeComparison, CompareRangeSelector, withinRange,
-  categoryTimeSeries,
+  categoryTimeSeries, KpiCard, DeltaBadge, splitByWindow,
 } from './widgetViews.jsx';
 
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
@@ -49,19 +49,6 @@ function useCardFilter(agents) {
   }, [agents, from, to]);
   const clear = () => { setFrom(''); setTo(''); };
   return { from, to, setFrom, setTo, clear, filtered };
-}
-
-function KpiCard({ title, value, subtitle, accent, onClick }) {
-  return (
-    <div
-      onClick={onClick}
-      className={`bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-4 flex flex-col gap-1 shadow-sm ${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
-    >
-      <p className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-widest">{title}</p>
-      <p className="text-3xl font-bold" style={{ color: accent }}>{value}</p>
-      {subtitle && <p className="text-[11px] text-[var(--muted)]">{subtitle}</p>}
-    </div>
-  );
 }
 
 function SectionCard({ title, count, controls, children }) {
@@ -154,19 +141,27 @@ export default function S1Agent() {
   const scanAgeDays = (a) => a.lastSuccessfulScanDate ? Math.floor((Date.now() - new Date(a.lastSuccessfulScanDate)) / 86400000) : null;
   const fmt = (d) => d ? new Date(d).toLocaleDateString() : '—';
 
-  // Global filtered agents by header date
-  const filteredAgents = useMemo(() => {
-    if (!dateFrom && !dateTo) return agents;
-    const f = dateFrom ? new Date(dateFrom) : null;
-    const t = dateTo ? new Date(dateTo + 'T23:59:59') : null;
-    return agents.filter((a) => {
-      const d = parseDate(a.lastActiveDate);
-      if (!d) return false;
-      if (f && d < f) return false;
-      if (t && d > t) return false;
-      return true;
-    });
-  }, [agents, dateFrom, dateTo]);
+  const computeAgentMetrics = (arr) => {
+    if (!arr || arr.length === 0) {
+      return { total: 0, active: 0, inactive: 0, threats: 0, outdated: 0, health: 0 };
+    }
+    const total = arr.length;
+    const active = arr.filter((a) => a.isActive).length;
+    const inactive = total - active;
+    const threats = arr.filter((a) => (a.activeThreats || 0) > 0).length;
+    const outdated = arr.filter((a) => !a.isUpToDate).length;
+    const health = Math.round((active / Math.max(1, total)) * 100);
+    return { total, active, inactive, threats, outdated, health };
+  };
+
+  const { current: windowCurrent, previous: windowPrevious, isFiltered } = useMemo(
+    () => splitByWindow(agents, (a) => a.lastActiveDate, dateFrom, dateTo),
+    [agents, dateFrom, dateTo]
+  );
+  const curKpis = useMemo(() => computeAgentMetrics(windowCurrent), [windowCurrent]);
+  const prevKpis = useMemo(() => isFiltered ? computeAgentMetrics(windowPrevious) : null, [windowPrevious, isFiltered]);
+  const filteredAgents = windowCurrent;
+  const kpis = curKpis;
 
   // Per-card filters
   const inactiveFilter = useCardFilter(agents);
@@ -179,16 +174,6 @@ export default function S1Agent() {
   const osFilter = useCardFilter(agents);
   const networkFilter = useCardFilter(agents);
   const riskyFilter = useCardFilter(agents);
-
-  const kpis = useMemo(() => {
-    const total = filteredAgents.length;
-    const active = filteredAgents.filter((a) => a.isActive).length;
-    const inactive = total - active;
-    const threats = filteredAgents.filter((a) => (a.activeThreats || 0) > 0).length;
-    const outdated = filteredAgents.filter((a) => !a.isUpToDate).length;
-    const health = Math.round((active / Math.max(1, total)) * 100);
-    return { total, active, inactive, threats, outdated, health };
-  }, [filteredAgents]);
 
   const inactiveMachines = useMemo(() =>
     inactiveFilter.filtered.filter((a) => !a.isActive && inactiveDays(a) > 7)
@@ -444,7 +429,7 @@ export default function S1Agent() {
         <div>
           <h1 className="text-xl font-bold text-[var(--foreground)]">Agent Analytics</h1>
           <p className="text-sm text-[var(--muted)] mt-0.5">
-            {kpis.total} agents · SentinelOne
+            {curKpis.total} agents · SentinelOne
             {(dateFrom || dateTo) && (
               <span className="ml-2 text-indigo-500 font-medium">
                 {dateFrom && dateTo ? `${dateFrom} → ${dateTo}` : dateFrom ? `From ${dateFrom}` : `Until ${dateTo}`}
@@ -453,6 +438,42 @@ export default function S1Agent() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-lg p-0.5">
+            {[
+              { label: '7D', days: 7 },
+              { label: '14D', days: 14 },
+              { label: '30D', days: 30 },
+              { label: '90D', days: 90 },
+            ].map(({ label, days }) => {
+              const to = new Date().toISOString().slice(0, 10);
+              const fromD = new Date();
+              fromD.setDate(fromD.getDate() - days);
+              const from = fromD.toISOString().slice(0, 10);
+              const isActive = dateFrom === from && dateTo === to;
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => {
+                    if (isActive) {
+                      setDateFrom('');
+                      setDateTo('');
+                    } else {
+                      setDateFrom(from);
+                      setDateTo(to);
+                    }
+                  }}
+                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-md transition-all ${
+                    isActive
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
           <div className="flex items-center gap-1.5">
             <label className="text-[11px] text-[var(--muted)] font-medium">From</label>
             <input type="date" value={dateFrom} max={dateTo || undefined}
@@ -466,7 +487,8 @@ export default function S1Agent() {
               className="text-[11px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
           </div>
           {(dateFrom || dateTo) && (
-            <button onClick={() => { setDateFrom(''); setDateTo(''); }}
+            <button
+              onClick={() => { setDateFrom(''); setDateTo(''); }}
               className="text-[11px] text-indigo-500 hover:text-indigo-700 font-semibold">Clear</button>
           )}
         </div>
@@ -474,17 +496,61 @@ export default function S1Agent() {
 
       {/* KPI row */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <KpiCard title="Total Agents" value={kpis.total} accent="#3b82f6"
-          onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'all', title: 'All Agents' } })} />
-        <KpiCard title="Active" value={kpis.active} accent="#10b981" subtitle={`${kpis.health}% health`}
-          onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'active', title: 'Active Agents' } })} />
-        <KpiCard title="Inactive" value={kpis.inactive} accent="#ef4444"
-          onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'inactive', title: 'Inactive Agents' } })} />
-        <KpiCard title="Active Threats" value={kpis.threats} accent="#f59e0b"
-          onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'activeThreats', title: 'Endpoints with Active Threats' } })} />
-        <KpiCard title="Outdated" value={kpis.outdated} accent="#8b5cf6"
-          onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'outdated', title: 'Outdated Agents' } })} />
-        <KpiCard title="Health Score" value={`${kpis.health}%`} accent="#06b6d4" subtitle="active/total" />
+        <KpiCard
+          title="Total Agents"
+          value={curKpis.total}
+          cur={curKpis.total}
+          prev={prevKpis?.total}
+          accent="#3b82f6"
+          goodWhenUp={true}
+          onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'all', title: 'All Agents' } })}
+        />
+        <KpiCard
+          title="Active"
+          value={curKpis.active}
+          cur={curKpis.active}
+          prev={prevKpis?.active}
+          accent="#10b981"
+          subtitle={`${curKpis.health}% health`}
+          goodWhenUp={true}
+          onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'active', title: 'Active Agents' } })}
+        />
+        <KpiCard
+          title="Inactive"
+          value={curKpis.inactive}
+          cur={curKpis.inactive}
+          prev={prevKpis?.inactive}
+          accent="#ef4444"
+          goodWhenUp={false}
+          onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'inactive', title: 'Inactive Agents' } })}
+        />
+        <KpiCard
+          title="Active Threats"
+          value={curKpis.threats}
+          cur={curKpis.threats}
+          prev={prevKpis?.threats}
+          accent="#f59e0b"
+          goodWhenUp={false}
+          onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'activeThreats', title: 'Endpoints with Active Threats' } })}
+        />
+        <KpiCard
+          title="Outdated"
+          value={curKpis.outdated}
+          cur={curKpis.outdated}
+          prev={prevKpis?.outdated}
+          accent="#8b5cf6"
+          goodWhenUp={false}
+          onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'outdated', title: 'Outdated Agents' } })}
+        />
+        <KpiCard
+          title="Health Score"
+          value={`${curKpis.health}%`}
+          cur={curKpis.health}
+          prev={prevKpis?.health}
+          accent="#06b6d4"
+          subtitle="active/total"
+          goodWhenUp={true}
+        />
       </div>
 
       {/* Pie Chart Overview */}

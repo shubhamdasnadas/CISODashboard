@@ -508,6 +508,150 @@ export function ChartViewDropdown({ value, onChange, groups = VIEW_GROUPS, compa
   );
 }
 
+export function parseRecordDate(v) {
+  if (!v) return null;
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  if (typeof v === 'number') {
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (!s || s === '-' || s.toLowerCase() === 'unknown' || s.toLowerCase() === 'null') return null;
+    if (/^\d{10,13}$/.test(s)) {
+      const num = Number(s);
+      const d = new Date(s.length === 10 ? num * 1000 : num);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
+export function splitByWindow(arr, dateFn, from, to) {
+  if (!Array.isArray(arr) || arr.length === 0) return { current: [], previous: [], isFiltered: false };
+  if (!from && !to) return { current: arr, previous: [], isFiltered: false };
+  const start = from ? new Date(from + 'T00:00:00') : null;
+  const end = to ? new Date(to + 'T23:59:59.999') : null;
+  const hasStart = !!start, hasEnd = !!end;
+  if (!hasStart && !hasEnd) return { current: arr, previous: [], isFiltered: false };
+
+  const s = start || (end ? new Date(end.getTime() - 30 * 86400000) : new Date(0));
+  const e = end || new Date();
+  const duration = Math.max(86400000, e.getTime() - s.getTime());
+  const prevEnd = s.getTime();
+  const prevStart = prevEnd - duration;
+
+  const current = [], previous = [];
+  arr.forEach((x) => {
+    if (!x) return;
+    const raw = dateFn ? dateFn(x) : (x.createdAt || x.created_at || x.timestamp || x.date || x.installTime || x.lastActiveDate);
+    if (!raw) {
+      current.push(x);
+      return;
+    }
+    const d = parseRecordDate(raw);
+    if (!d) {
+      current.push(x);
+      return;
+    }
+    const t = d.getTime();
+    if (t >= s.getTime() && t <= e.getTime()) current.push(x);
+    else if (t >= prevStart && t < prevEnd) previous.push(x);
+  });
+  return { current, previous, isFiltered: true };
+}
+
+export function deltaPct(cur, prev) {
+  if (prev == null || isNaN(prev)) return null;
+  const c = Number(cur) || 0;
+  const p = Number(prev) || 0;
+  const diff = c - p;
+  if (p === 0) {
+    if (c === 0) return { pct: 0, diff: 0, dir: 'flat' };
+    return { pct: 100, diff: c, dir: 'up' };
+  }
+  const rawPct = ((c - p) / p) * 100;
+  const pct = Math.round(rawPct);
+  return {
+    pct: Math.abs(pct),
+    diff,
+    dir: diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat',
+  };
+}
+
+export function DeltaBadge({ cur, prev, goodWhenUp = true, label = 'prior period' }) {
+  const d = deltaPct(cur, prev);
+  if (!d) return null;
+
+  if (d.dir === 'flat') {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[11px] font-bold text-[var(--muted)] bg-[var(--muted-bg)] border-[var(--card-border)] transition-all shrink-0"
+        title={`No change vs ${label} (current: ${cur}, prior: ${prev})`}
+      >
+        <span>0%</span>
+        <span className="text-[10px] font-semibold opacity-85 border-l border-current/25 pl-1.5">prev: {prev}</span>
+      </span>
+    );
+  }
+
+  const good = d.dir === 'up' ? goodWhenUp : !goodWhenUp;
+  const arrow = d.dir === 'up' ? '↑' : '↓';
+  const colorCls = good
+    ? 'text-emerald-500 bg-emerald-500/10 border-emerald-500/25 dark:text-emerald-400 dark:bg-emerald-500/10 dark:border-emerald-500/30'
+    : 'text-rose-500 bg-rose-500/10 border-rose-500/25 dark:text-rose-400 dark:bg-rose-500/10 dark:border-rose-500/30';
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[11px] font-bold ${colorCls} transition-all shrink-0`}
+      title={`vs ${label}: ${d.dir === 'up' ? 'Increased' : 'Decreased'} ${d.pct}% (${d.diff > 0 ? '+' : ''}${d.diff}) · This period: ${cur} vs Prior: ${prev}`}
+    >
+      <span className="flex items-center gap-0.5">
+        <span>{arrow}</span>
+        <span>{d.pct}%</span>
+      </span>
+      <span className="text-[10px] font-semibold opacity-85 border-l border-current/25 pl-1.5">
+        prev: {prev}
+      </span>
+    </span>
+  );
+}
+
+export function KpiCard({ title, value, subtitle, accent, color = 'default', cur, prev, goodWhenUp = true, onClick }) {
+  const colorMap = {
+    default: 'text-[var(--foreground)]',
+    blue: 'text-blue-500',
+    green: 'text-green-500',
+    emerald: 'text-emerald-500',
+    red: 'text-red-500',
+    yellow: 'text-yellow-500',
+    amber: 'text-amber-500',
+    purple: 'text-purple-500',
+    cyan: 'text-cyan-500',
+    orange: 'text-orange-500',
+  };
+  const valueColorClass = color !== 'default' ? (colorMap[color] || colorMap.default) : '';
+  const inlineStyle = accent ? { color: accent } : {};
+
+  return (
+    <div
+      onClick={onClick}
+      className={`bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-4 flex flex-col justify-between shadow-sm min-h-[105px] ${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
+    >
+      <div>
+        <p className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-widest leading-none">{title}</p>
+        <p className={`text-3xl font-bold leading-tight mt-2 ${valueColorClass}`} style={inlineStyle}>{value}</p>
+      </div>
+      <div className="flex items-center justify-between gap-2 flex-wrap min-h-[22px] mt-2">
+        {subtitle ? <p className="text-[11px] text-[var(--muted)]">{subtitle}</p> : <div />}
+        {(cur != null && prev != null) ? <DeltaBadge cur={cur} prev={prev} goodWhenUp={goodWhenUp} /> : null}
+      </div>
+    </div>
+  );
+}
+
 // Common rolling-window presets offered by CompareRangeSelector.
 export const RANGE_PRESETS = [7, 14, 30, 90];
 

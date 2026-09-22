@@ -709,7 +709,7 @@ function topN(arr, keyFn, n = 8) {
 }
 
 // Horizontal single-series bar with category labels on the Y axis.
-function HBar({ data, dataKey = 'value', name = 'Count', color = '#3b82f6', height = 288 }) {
+function HBar({ data, dataKey = 'value', name = 'Count', color = '#3b82f6', height = 288, colors }) {
   return (
     <div style={{ height }}>
       {data.length === 0 ? <Empty /> : (
@@ -719,7 +719,11 @@ function HBar({ data, dataKey = 'value', name = 'Count', color = '#3b82f6', heig
             <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} tickLine={false} axisLine={false} allowDecimals={false} />
             <YAxis type="category" dataKey="name" tick={{ fontSize: 9, fill: 'var(--foreground)' }} tickLine={false} axisLine={false} width={110} />
             <Tooltip contentStyle={TOOLTIP_STYLE} />
-            <Bar dataKey={dataKey} name={name} fill={color} radius={[0, 4, 4, 0]} maxBarSize={18} />
+            <Bar dataKey={dataKey} name={name} fill={color} radius={[0, 4, 4, 0]} maxBarSize={18}>
+              {data.map((entry, i) => (
+                <Cell key={i} fill={entry.fill || (colors && colors[i % colors.length]) || color || '#3b82f6'} />
+              ))}
+            </Bar>
           </BarChart>
         </ResponsiveContainer>
       )}
@@ -731,10 +735,10 @@ function HBar({ data, dataKey = 'value', name = 'Count', color = '#3b82f6', heig
 function MultiViewChart({ data, chartType = 'donut', height = 288, nameKey = 'name', valueKey = 'value', fillKey = 'fill', colors = CHART_COLORS }) {
   if (!data || data.length === 0) return <Empty />;
 
-  const chartData = data.map((d) => ({
+  const chartData = data.map((d, i) => ({
     name: d[nameKey] || d.name || '',
     value: Number(d[valueKey] || d.value || 0),
-    fill: d[fillKey] || d.fill || '',
+    fill: d[fillKey] || d.fill || (colors && colors[i % colors.length]) || CHART_COLORS[i % CHART_COLORS.length],
   }));
   const total = chartData.reduce((s, d) => s + d.value, 0);
 
@@ -783,7 +787,7 @@ function MultiViewChart({ data, chartType = 'donut', height = 288, nameKey = 'na
       );
 
     case 'hbar':
-      return <HBar data={chartData} dataKey="value" name="Count" color={colors[0]} height={height} />;
+      return <HBar data={chartData} dataKey="value" name="Count" color={colors[0]} height={height} colors={colors} />;
 
     case 'stacked-bar':
       return (
@@ -1417,15 +1421,19 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
               { title: 'Classification', fn: (a) => computeThreatCharts(a).classificationData },
               { title: 'Fileless vs File-based', fn: (a) => computeThreatCharts(a).filelessData },
               { title: 'Mitigation Outcomes', fn: (a) => computeThreatCharts(a).mitigationOutcomes },
-              { title: 'Top Affected Endpoints', fn: (a) => computeThreatCharts(a).topAffectedEndpoints, hbar: true, color: '#3b82f6' },
-              { title: 'Top Users by Threat Count', fn: (a) => computeThreatCharts(a).topUsersByThreat, hbar: true, color: '#f59e0b' },
+              { title: 'Top Affected Endpoints', fn: (a) => computeThreatCharts(a).topAffectedEndpoints, defaultType: 'hbar', color: '#3b82f6' },
+              { title: 'Top Users by Threat Count', fn: (a) => computeThreatCharts(a).topUsersByThreat, defaultType: 'hbar', color: '#f59e0b' },
             ].map((w) => (
               <FilterByDays key={w.title} data={fullThreats} dateFn={(t) => t.threatInfo?.createdAt}>
                 {({ filtered }) => (
-                  <ChartCard title={w.title} viewOptions={w.hbar ? null : VIEW_OPTIONS}>
-                    {(ct) => w.hbar
-                      ? <div style={{ height: 288 }}><HBar data={w.fn(filtered)} dataKey="value" name="Threats" color={w.color} /></div>
-                      : <MultiViewChart data={w.fn(filtered)} chartType={ct} />}
+                  <ChartCard title={w.title} viewOptions={VIEW_OPTIONS} defaultChartType={w.defaultType || 'donut'}>
+                    {(ct) => (
+                      <MultiViewChart
+                        data={w.fn(filtered)}
+                        chartType={ct}
+                        colors={w.color ? [w.color, '#3b82f6', '#f59e0b', '#10b981', '#8b5cf6'] : undefined}
+                      />
+                    )}
                   </ChartCard>
                 )}
               </FilterByDays>
@@ -2125,8 +2133,8 @@ const fwRiskDistribution = (rows) => {
 
 const FW_REPORTS = [
   'risk-trend', 'top-attacker-sources', 'top-attacker-destinations',
-  'top-denied-destinations', 'top-denied-sources', 'top-denied-applications',
-  'risky-users', 'top-attacks', 'top-connections',
+  'top-denied-destinations', 'top-denied-sources',
+  'top-attacks', 'top-connections',
 ];
 
 function FirewallSection({ reports, syncing, onSync }) {
@@ -2140,9 +2148,7 @@ function FirewallSection({ reports, syncing, onSync }) {
     const destRows = [...getRows('top-attacker-destinations'), ...getRows('top-denied-destinations')];
     const deniedDestRows = getRows('top-denied-destinations');
     const deniedSourceRows = getRows('top-denied-sources');
-    const deniedAppRows = getRows('top-denied-applications');
     const connRows = getRows('top-connections');
-    const riskyUserRows = getRows('risky-users');
     const totalSessions = fwSum(allRows, ['nsess', 'sessions', 'session', 'count']);
     const totalTraffic = fwSum(allRows, ['nbytes', 'bytes', 'byte']);
     const highRiskEvents = riskRows.reduce((sum, row) => {
@@ -2161,9 +2167,7 @@ function FirewallSection({ reports, syncing, onSync }) {
       topSources: fwTopChart(sourceRows.length ? sourceRows : allRows, ['src', 'source', 'source_ip', 'name']),
       topDeniedDest: fwTopChart(deniedDestRows.length ? deniedDestRows : allRows, ['dst', 'destination', 'destination_ip', 'name']),
       topDeniedSources: fwTopChart(deniedSourceRows.length ? deniedSourceRows : allRows, ['src', 'source', 'source_ip', 'name']),
-      topDeniedApps: fwTopChart(deniedAppRows.length ? deniedAppRows : allRows, ['application', 'category', 'name']),
       topConnections: fwTopChart(connRows.length ? connRows : allRows, ['source', 'destination', 'name', 'src', 'dst']),
-      riskyUsers: fwTopChart(riskyUserRows.length ? riskyUserRows : allRows, ['user', 'username', 'source_user', 'name'], 8),
       riskTrend: riskRows.map((row) => ({
         name: String(fwFirst(row, ['date', 'day', 'name', 'time'], '')),
         traffic: fwSum([row], ['nbytes', 'bytes']),
@@ -2211,77 +2215,127 @@ function FirewallSection({ reports, syncing, onSync }) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
           {({ filtered }) => (
-            <ChartCard title="Risk-wise Distribution" viewOptions={VIEW_OPTIONS}>
+            <ChartCard title="Risk-wise Distribution" viewOptions={VIEW_OPTIONS} defaultChartType="donut">
               {(chartType) => <MultiViewChart data={fwRiskDistribution(filtered)} chartType={chartType} />}
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
           {({ filtered }) => (
-            <ChartCard title="Top Attacks">
-              <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['threatid', 'threat', 'name', 'category'])} dataKey="value" name="Count" color="#ef4444" /></div>
+            <ChartCard title="Top Attacks" viewOptions={VIEW_OPTIONS} defaultChartType="hbar">
+              {(chartType) => (
+                <MultiViewChart
+                  data={fwTopChart(filtered, ['threatid', 'threat', 'name', 'category'])}
+                  chartType={chartType}
+                  colors={['#ef4444', '#f97316', '#f59e0b', '#3b82f6', '#8b5cf6']}
+                />
+              )}
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
           {({ filtered }) => (
-            <ChartCard title="Top Sources">
-              <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['src', 'source', 'source_ip', 'name'])} dataKey="value" name="Count" color="#3b82f6" /></div>
+            <ChartCard title="Top Sources" viewOptions={VIEW_OPTIONS} defaultChartType="hbar">
+              {(chartType) => (
+                <MultiViewChart
+                  data={fwTopChart(filtered, ['src', 'source', 'source_ip', 'name'])}
+                  chartType={chartType}
+                  colors={['#3b82f6', '#06b6d4', '#10b981', '#f59e0b', '#8b5cf6']}
+                />
+              )}
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
           {({ filtered }) => (
-            <ChartCard title="Top Denied Destinations">
-              <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['dst', 'destination', 'destination_ip', 'name'])} dataKey="value" name="Count" color="#f59e0b" /></div>
+            <ChartCard title="Top Denied Destinations" viewOptions={VIEW_OPTIONS} defaultChartType="hbar">
+              {(chartType) => (
+                <MultiViewChart
+                  data={fwTopChart(filtered, ['dst', 'destination', 'destination_ip', 'name'])}
+                  chartType={chartType}
+                  colors={['#f59e0b', '#f97316', '#ef4444', '#3b82f6', '#8b5cf6']}
+                />
+              )}
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
           {({ filtered }) => (
-            <ChartCard title="Top Denied Sources">
-              <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['src', 'source', 'source_ip', 'name'])} dataKey="value" name="Count" color="#06b6d4" /></div>
+            <ChartCard title="Top Denied Sources" viewOptions={VIEW_OPTIONS} defaultChartType="hbar">
+              {(chartType) => (
+                <MultiViewChart
+                  data={fwTopChart(filtered, ['src', 'source', 'source_ip', 'name'])}
+                  chartType={chartType}
+                  colors={['#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b']}
+                />
+              )}
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
           {({ filtered }) => (
-            <ChartCard title="Top Denied Applications">
-              <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['application', 'category', 'name'])} dataKey="value" name="Count" color="#8b5cf6" /></div>
-            </ChartCard>
-          )}
-        </FilterByDays>
-        <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
-          {({ filtered }) => (
-            <ChartCard title="Top Connections">
-              <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['source', 'destination', 'name', 'src', 'dst'])} dataKey="value" name="Count" color="#ec4899" /></div>
-            </ChartCard>
-          )}
-        </FilterByDays>
-        <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
-          {({ filtered }) => (
-            <ChartCard title="Risky Users">
-              <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['user', 'username', 'source_user', 'name'], 8)} dataKey="value" name="Count" color="#ef4444" /></div>
+            <ChartCard title="Top Connections" viewOptions={VIEW_OPTIONS} defaultChartType="hbar">
+              {(chartType) => (
+                <MultiViewChart
+                  data={fwTopChart(filtered, ['source', 'destination', 'name', 'src', 'dst'])}
+                  chartType={chartType}
+                  colors={['#ec4899', '#f43f5e', '#f97316', '#3b82f6', '#8b5cf6']}
+                />
+              )}
             </ChartCard>
           )}
         </FilterByDays>
       </div>
       {dashboard.riskTrend.length > 0 && (
-        <ChartCard viewOptions={VIEW_OPTIONS} title="Risk Trend Over Time" subtitle="bars = traffic · line = sessions">
-          <div style={{ height: 260 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={dashboard.riskTrend} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} />
-                <YAxis yAxisId="left" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-                <Tooltip contentStyle={TOOLTIP_STYLE} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar yAxisId="left" dataKey="traffic" name="Traffic (bytes)" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={30} />
-                <Line yAxisId="right" type="monotone" dataKey="sessions" name="Sessions" stroke="#f59e0b" strokeWidth={2} dot={false} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
+        <ChartCard viewOptions={VIEW_OPTIONS} defaultChartType="line" title="Risk Trend Over Time" subtitle="bars = traffic · line = sessions">
+          {(chartType) => (
+            <div style={{ height: 260 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                {chartType === 'area' ? (
+                  <AreaChart data={dashboard.riskTrend} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+                    <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} />
+                    <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+                    <Tooltip contentStyle={TOOLTIP_STYLE} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Area type="monotone" dataKey="traffic" name="Traffic" fill="#3b82f6" stroke="#3b82f6" fillOpacity={0.3} />
+                    <Area type="monotone" dataKey="sessions" name="Sessions" fill="#f59e0b" stroke="#f59e0b" fillOpacity={0.3} />
+                  </AreaChart>
+                ) : chartType === 'bar' ? (
+                  <BarChart data={dashboard.riskTrend} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+                    <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} />
+                    <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+                    <Tooltip contentStyle={TOOLTIP_STYLE} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Bar dataKey="traffic" name="Traffic" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={30} />
+                    <Bar dataKey="sessions" name="Sessions" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={30} />
+                  </BarChart>
+                ) : chartType === 'line' ? (
+                  <LineChart data={dashboard.riskTrend} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+                    <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} />
+                    <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+                    <Tooltip contentStyle={TOOLTIP_STYLE} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Line type="monotone" dataKey="traffic" name="Traffic" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="sessions" name="Sessions" stroke="#f59e0b" strokeWidth={2} dot={false} />
+                  </LineChart>
+                ) : (
+                  <ComposedChart data={dashboard.riskTrend} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+                    <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} />
+                    <YAxis yAxisId="left" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+                    <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+                    <Tooltip contentStyle={TOOLTIP_STYLE} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Bar yAxisId="left" dataKey="traffic" name="Traffic (bytes)" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={30} />
+                    <Line yAxisId="right" type="monotone" dataKey="sessions" name="Sessions" stroke="#f59e0b" strokeWidth={2} dot={false} />
+                  </ComposedChart>
+                )}
+              </ResponsiveContainer>
+            </div>
+          )}
         </ChartCard>
       )}
     </WizardSection>
@@ -2507,49 +2561,23 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
         </FilterByDays>
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
           {({ filtered }) => (
-            <ChartCard title="By Priority" viewOptions={VIEW_OPTIONS}>
-              <div style={{ height: 288 }}>
-                {(() => {
-                  const pArr = Object.entries(filtered.reduce((acc, t) => { const p = t.priority || 'Unknown'; acc[p] = (acc[p] || 0) + 1; return acc; }, {}))
-                    .map(([name, value]) => ({ name, value, fill: PRIORITY_COLORS[name] || '#6b7280' })).sort((a, b) => b.value - a.value);
-                  return pArr.length === 0 ? <Empty /> : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={pArr} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                        <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'var(--muted)' }} />
-                        <YAxis tick={{ fontSize: 11, fill: 'var(--muted)' }} allowDecimals={false} />
-                        <Tooltip contentStyle={TOOLTIP_STYLE} />
-                        <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                          {pArr.map((e, i) => <Cell key={i} fill={e.fill} />)}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  );
-                })()}
-              </div>
+            <ChartCard title="By Priority" viewOptions={VIEW_OPTIONS} defaultChartType="bar">
+              {(chartType) => {
+                const pArr = Object.entries(filtered.reduce((acc, t) => { const p = t.priority || 'Unknown'; acc[p] = (acc[p] || 0) + 1; return acc; }, {}))
+                  .map(([name, value]) => ({ name, value, fill: PRIORITY_COLORS[name] || '#6b7280' })).sort((a, b) => b.value - a.value);
+                return <MultiViewChart data={pArr} chartType={chartType} />;
+              }}
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
           {({ filtered }) => (
-            <ChartCard title="By Department" viewOptions={VIEW_OPTIONS}>
-              <div style={{ height: 288 }}>
-                {(() => {
-                  const dArr = Object.entries(filtered.reduce((acc, t) => { const d = getDept(t); acc[d] = (acc[d] || 0) + 1; return acc; }, {}))
-                    .map(([name, value]) => ({ name: truncateLabel(name), fullName: name, value })).sort((a, b) => b.value - a.value).slice(0, 8);
-                  return dArr.length === 0 ? <Empty /> : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={dArr} layout="vertical" margin={{ top: 4, right: 32, left: 8, bottom: 4 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" horizontal={false} />
-                        <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} tickLine={false} axisLine={false} allowDecimals={false} />
-                        <YAxis type="category" dataKey="name" tick={{ fontSize: 9, fill: 'var(--foreground)' }} tickLine={false} axisLine={false} width={110} />
-                        <Tooltip contentStyle={TOOLTIP_STYLE} />
-                        <Bar dataKey="value" fill="#8b5cf6" radius={[0, 4, 4, 0]} maxBarSize={18} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  );
-                })()}
-              </div>
+            <ChartCard title="By Department" viewOptions={VIEW_OPTIONS} defaultChartType="hbar">
+              {(chartType) => {
+                const dArr = Object.entries(filtered.reduce((acc, t) => { const d = getDept(t); acc[d] = (acc[d] || 0) + 1; return acc; }, {}))
+                  .map(([name, value]) => ({ name: truncateLabel(name), fullName: name, value })).sort((a, b) => b.value - a.value).slice(0, 8);
+                return <MultiViewChart data={dArr} chartType={chartType} colors={['#8b5cf6', '#a855f7', '#ec4899', '#3b82f6', '#06b6d4']} />;
+              }}
             </ChartCard>
           )}
         </FilterByDays>
@@ -2559,70 +2587,34 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
           {({ filtered }) => (
-            <ChartCard title="Top Assignees" subtitle="tickets per agent" viewOptions={VIEW_OPTIONS}>
-              <div style={{ height: 288 }}>
-                {(() => {
-                  const c = {}; filtered.forEach((t) => { const a = `${normText(t.assignee?.firstName)} ${normText(t.assignee?.lastName)}`.trim() || 'Unassigned'; c[a] = (c[a] || 0) + 1; });
-                  const arr = Object.entries(c).map(([name, value]) => ({ name: truncateLabel(name), fullName: name, value })).sort((a, b) => b.value - a.value).slice(0, 8);
-                  return arr.length === 0 ? <Empty /> : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={arr} layout="vertical" margin={{ top: 4, right: 32, left: 8, bottom: 4 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" horizontal={false} />
-                        <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} tickLine={false} axisLine={false} allowDecimals={false} />
-                        <YAxis type="category" dataKey="name" tick={{ fontSize: 9, fill: 'var(--foreground)' }} tickLine={false} axisLine={false} width={120} />
-                        <Tooltip contentStyle={TOOLTIP_STYLE} />
-                        <Bar dataKey="value" fill="#06b6d4" radius={[0, 4, 4, 0]} maxBarSize={18} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  );
-                })()}
-              </div>
+            <ChartCard title="Top Assignees" subtitle="tickets per agent" viewOptions={VIEW_OPTIONS} defaultChartType="hbar">
+              {(chartType) => {
+                const c = {}; filtered.forEach((t) => { const a = `${normText(t.assignee?.firstName)} ${normText(t.assignee?.lastName)}`.trim() || 'Unassigned'; c[a] = (c[a] || 0) + 1; });
+                const arr = Object.entries(c).map(([name, value]) => ({ name: truncateLabel(name), fullName: name, value })).sort((a, b) => b.value - a.value).slice(0, 8);
+                return <MultiViewChart data={arr} chartType={chartType} colors={['#06b6d4', '#3b82f6', '#8b5cf6', '#10b981', '#f59e0b']} />;
+              }}
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
           {({ filtered }) => (
-            <ChartCard title="Top Contacts" subtitle="tickets per reporter" viewOptions={VIEW_OPTIONS}>
-              <div style={{ height: 288 }}>
-                {(() => {
-                  const c = {}; filtered.forEach((t) => { const x = `${normText(t.contact?.firstName)} ${normText(t.contact?.lastName)}`.trim() || normText(t.contact?.email) || 'Unknown'; c[x] = (c[x] || 0) + 1; });
-                  const arr = Object.entries(c).map(([name, value]) => ({ name: truncateLabel(name), fullName: name, value })).sort((a, b) => b.value - a.value).slice(0, 8);
-                  return arr.length === 0 ? <Empty /> : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={arr} layout="vertical" margin={{ top: 4, right: 32, left: 8, bottom: 4 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" horizontal={false} />
-                        <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} tickLine={false} axisLine={false} allowDecimals={false} />
-                        <YAxis type="category" dataKey="name" tick={{ fontSize: 9, fill: 'var(--foreground)' }} tickLine={false} axisLine={false} width={120} />
-                        <Tooltip contentStyle={TOOLTIP_STYLE} />
-                        <Bar dataKey="value" fill="#ec4899" radius={[0, 4, 4, 0]} maxBarSize={18} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  );
-                })()}
-              </div>
+            <ChartCard title="Top Contacts" subtitle="tickets per reporter" viewOptions={VIEW_OPTIONS} defaultChartType="hbar">
+              {(chartType) => {
+                const c = {}; filtered.forEach((t) => { const x = `${normText(t.contact?.firstName)} ${normText(t.contact?.lastName)}`.trim() || normText(t.contact?.email) || 'Unknown'; c[x] = (c[x] || 0) + 1; });
+                const arr = Object.entries(c).map(([name, value]) => ({ name: truncateLabel(name), fullName: name, value })).sort((a, b) => b.value - a.value).slice(0, 8);
+                return <MultiViewChart data={arr} chartType={chartType} colors={['#ec4899', '#f43f5e', '#f97316', '#3b82f6', '#8b5cf6']} />;
+              }}
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
           {({ filtered }) => (
-            <ChartCard title="Avg Resolution by Department" subtitle="hours to close (open → closed)" viewOptions={VIEW_OPTIONS}>
-              <div style={{ height: 288 }}>
-                {(() => {
-                  const m = {}; filtered.forEach((t) => { const c = getCreated(t); const cl = getClosed(t); if (!c || !cl || !isClosed(t)) return; const d = getDept(t); m[d] = m[d] || { sum: 0, count: 0 }; m[d].sum += (cl.getTime() - c.getTime()) / 60000; m[d].count++; });
-                  const arr = Object.entries(m).map(([name, { sum, count }]) => ({ name: truncateLabel(name), fullName: name, value: sum / count })).sort((a, b) => b.value - a.value).slice(0, 8);
-                  return arr.length === 0 ? <Empty /> : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={arr} layout="vertical" margin={{ top: 4, right: 40, left: 8, bottom: 4 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" horizontal={false} />
-                        <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} tickLine={false} axisLine={false} tickFormatter={(v) => formatDuration(v / 60)} />
-                        <YAxis type="category" dataKey="name" tick={{ fontSize: 9, fill: 'var(--foreground)' }} tickLine={false} axisLine={false} width={120} />
-                        <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => [formatDuration(Number(v) / 60), 'Avg resolve']} />
-                        <Bar dataKey="value" fill="#f59e0b" radius={[0, 4, 4, 0]} maxBarSize={18} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  );
-                })()}
-              </div>
+            <ChartCard title="Avg Resolution by Department" subtitle="hours to close (open → closed)" viewOptions={VIEW_OPTIONS} defaultChartType="hbar">
+              {(chartType) => {
+                const m = {}; filtered.forEach((t) => { const c = getCreated(t); const cl = getClosed(t); if (!c || !cl || !isClosed(t)) return; const d = getDept(t); m[d] = m[d] || { sum: 0, count: 0 }; m[d].sum += (cl.getTime() - c.getTime()) / 60000; m[d].count++; });
+                const arr = Object.entries(m).map(([name, { sum, count }]) => ({ name: truncateLabel(name), fullName: name, value: Math.round((sum / count) / 60) })).sort((a, b) => b.value - a.value).slice(0, 8);
+                return <MultiViewChart data={arr} chartType={chartType} colors={['#f59e0b', '#f97316', '#ef4444', '#3b82f6', '#8b5cf6']} />;
+              }}
             </ChartCard>
           )}
         </FilterByDays>

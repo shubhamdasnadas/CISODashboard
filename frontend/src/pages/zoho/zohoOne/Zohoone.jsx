@@ -18,6 +18,9 @@ import {
   withinRange,
   categoryTimeSeries,
   MultiViewChart,
+  KpiCard,
+  DeltaBadge,
+  splitByWindow,
 } from '../../security/widgetViews.jsx';
 
 const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -885,6 +888,19 @@ function MonthlyVolumeWidget({ tickets, loading, onCellClick }) {
   );
 }
 
+function computeTicketingMetrics(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) {
+    return { total: 0, open: 0, wip: 0, highPriority: 0, onHold: 0, closed: 0 };
+  }
+  const total = arr.length;
+  const open = arr.filter((t) => t.status === 'Open' || t.status === 'Re-Open').length;
+  const wip = arr.filter((t) => ['wip', 'in progress', 'in-progress'].includes(String(t.status || '').toLowerCase())).length;
+  const highPriority = arr.filter((t) => t.priority === 'High' || t.priority === 'Critical').length;
+  const onHold = arr.filter((t) => String(t.status || '').toLowerCase().includes('hold') || String(t.status || '').toLowerCase().includes('revert')).length;
+  const closed = arr.filter((t) => ['closed', 'technically closed', 'resolved', 'duplicate'].includes(String(t.status || '').toLowerCase())).length;
+  return { total, open, wip, highPriority, onHold, closed };
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function Zohoone() {
   const navigate = useNavigate();
@@ -902,6 +918,10 @@ export default function Zohoone() {
   const [overviewPage, setOverviewPage] = useState(1);
   const overviewPageSize = 10;
 
+  // KPI date range filter
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
   // Days filter and view selectors
   const [statusDays, setStatusDays] = useState(30);
   const [priorityDays, setPriorityDays] = useState(30);
@@ -909,6 +929,14 @@ export default function Zohoone() {
   const [statusView, setStatusView] = useViewState('zoho:statusView', 'donut');
   const [priorityView, setPriorityView] = useViewState('zoho:priorityView', 'column');
   const [departmentView, setDepartmentView] = useViewState('zoho:deptView', 'bar');
+
+  const { current: windowCurrent, previous: windowPrevious, isFiltered } = useMemo(
+    () => splitByWindow(tickets, (t) => t?.created_at || t?.createdTime || t?.createdAt || t?.created_time || t?.time, dateFrom, dateTo),
+    [tickets, dateFrom, dateTo]
+  );
+
+  const curKpis = useMemo(() => computeTicketingMetrics(windowCurrent), [windowCurrent]);
+  const prevKpis = useMemo(() => (isFiltered ? computeTicketingMetrics(windowPrevious) : null), [windowPrevious, isFiltered]);
 
   const fetchTickets = useCallback(async () => {
     setLoading(true);
@@ -1072,44 +1100,6 @@ export default function Zohoone() {
     });
   }, [filteredDepartmentTickets, tickets, departmentDays, refDate]);
 
-  const closedStats = useMemo(() => {
-    let currentMonthClosed = 0;
-    let previousMonthClosed = 0;
-    const now = new Date();
-    const currentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-
-    tickets.forEach((t) => {
-      const s = String(t.status || '').trim().toLowerCase();
-      if (s === 'closed' || s === 'technically closed' || s === 'resolved' || s === 'duplicate') {
-        const val = t.closedTime || t.closed_at || t.closedAt || t.closeTime || t.closedDate || '';
-        const d = new Date(val);
-        if (!isNaN(d.getTime())) {
-          if (d.getMonth() === currentMonth.getMonth() && d.getFullYear() === currentMonth.getFullYear()) {
-            currentMonthClosed++;
-          }
-          if (d.getMonth() === previousMonth.getMonth() && d.getFullYear() === previousMonth.getFullYear()) {
-            previousMonthClosed++;
-          }
-        }
-      }
-    });
-
-    const diff = currentMonthClosed - previousMonthClosed;
-    const pct = previousMonthClosed > 0 ? (diff / previousMonthClosed) * 100 : currentMonthClosed > 0 ? 100 : 0;
-    const currentMonthName = currentMonth.toLocaleString('en-IN', { month: 'short' });
-    const previousMonthName = previousMonth.toLocaleString('en-IN', { month: 'short' });
-
-    return {
-      currentMonthClosed,
-      previousMonthClosed,
-      diff,
-      pct,
-      currentMonthName,
-      previousMonthName,
-    };
-  }, [tickets]);
-
   const overviewFiltered = useMemo(() => tickets.filter(t =>
     !search ||
     (t.subject || '').toLowerCase().includes(search.toLowerCase()) ||
@@ -1136,11 +1126,88 @@ export default function Zohoone() {
           <h1 className="text-2xl font-bold text-[var(--foreground)]">{activeTool}</h1>
           {lastSynced && !loading && (
             <p className="text-xs text-[var(--muted)] mt-0.5">
-              Last synced {timeAgo(lastSynced)} &mdash; {tickets.length} tickets
+              Last synced {timeAgo(lastSynced)} &mdash; {curKpis.total} tickets
+              {(dateFrom || dateTo) && (
+                <span className="ml-2 text-indigo-500 font-medium">
+                  {dateFrom && dateTo ? `${dateFrom} → ${dateTo}` : dateFrom ? `From ${dateFrom}` : `Until ${dateTo}`}
+                </span>
+              )}
             </p>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Header Date Range Filter for KPI Cards */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-lg p-0.5">
+              {[
+                { label: '7D', days: 7 },
+                { label: '14D', days: 14 },
+                { label: '30D', days: 30 },
+                { label: '90D', days: 90 },
+              ].map(({ label, days }) => {
+                const to = new Date().toISOString().slice(0, 10);
+                const fromD = new Date();
+                fromD.setDate(fromD.getDate() - days);
+                const from = fromD.toISOString().slice(0, 10);
+                const isActive = dateFrom === from && dateTo === to;
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => {
+                      if (isActive) {
+                        setDateFrom('');
+                        setDateTo('');
+                      } else {
+                        setDateFrom(from);
+                        setDateTo(to);
+                      }
+                    }}
+                    className={`text-[10px] font-semibold px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                      isActive
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-1.5">
+              <label className="text-[11px] text-[var(--muted)] font-medium">From</label>
+              <input
+                type="date"
+                value={dateFrom}
+                max={dateTo || undefined}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="text-[11px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <label className="text-[11px] text-[var(--muted)] font-medium">To</label>
+              <input
+                type="date"
+                value={dateTo}
+                min={dateFrom || undefined}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="text-[11px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              />
+            </div>
+            {(dateFrom || dateTo) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setDateFrom('');
+                  setDateTo('');
+                }}
+                className="text-[11px] text-indigo-500 hover:text-indigo-700 font-semibold cursor-pointer"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
           <button onClick={fetchTickets} disabled={loading}
             className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold border border-[var(--card-border)] text-[var(--foreground)] hover:bg-[var(--muted-bg)] disabled:opacity-50 transition-colors cursor-pointer">
             <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1173,86 +1240,65 @@ export default function Zohoone() {
 
       {/* 6 Metric KPI Stats */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
-        {[
-          {
-            label: 'Total',
-            value: tickets.length,
-            color: '#6366f1',
-            filterId: 'zohoAll',
-            filterValue: 'all',
-            title: 'All Zoho Tickets',
-          },
-          {
-            label: 'Open',
-            value: tickets.filter((t) => t.status === 'Open' || t.status === 'Re-Open').length,
-            color: '#3b82f6',
-            filterId: 'zohoOpen',
-            filterValue: 'Open',
-            title: 'Open Zoho Tickets',
-          },
-          {
-            label: 'WIP / In Progress',
-            value: tickets.filter((t) => ['wip', 'in progress', 'in-progress'].includes(String(t.status || '').toLowerCase())).length,
-            color: '#8b5cf6',
-            filterId: 'zohoStatus',
-            filterValue: 'In Progress',
-            title: 'In Progress Zoho Tickets',
-          },
-          {
-            label: 'High Priority',
-            value: tickets.filter((t) => t.priority === 'High' || t.priority === 'Critical').length,
-            color: '#ef4444',
-            filterId: 'zohoHighPriority',
-            filterValue: 'High',
-            title: 'High Priority Zoho Tickets',
-          },
-          {
-            label: 'On Hold',
-            value: tickets.filter((t) => String(t.status || '').toLowerCase().includes('hold') || String(t.status || '').toLowerCase().includes('revert')).length,
-            color: '#f59e0b',
-            filterId: 'zohoStatusGroup',
-            filterValue: 'On Hold',
-            title: 'On Hold Zoho Tickets',
-          },
-          {
-            label: 'Closed',
-            value: tickets.filter((t) => ['closed', 'technically closed', 'resolved', 'duplicate'].includes(String(t.status || '').toLowerCase())).length,
-            color: '#22c55e',
-            filterId: 'zohoClosed',
-            filterValue: 'Closed',
-            title: 'Closed Zoho Tickets',
-            isClosedCard: true,
-          },
-        ].map((s) => {
-          const isIncrease = closedStats.diff > 0;
-          const isDecrease = closedStats.diff < 0;
-          return (
-            <div
-              key={s.label}
-              onClick={() => goToDetail(s.filterId, s.filterValue, s.title)}
-              className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-4 sm:p-5 cursor-pointer hover:shadow-md transition-shadow flex flex-col justify-between relative overflow-hidden"
-            >
-              <div className="flex items-start justify-between gap-1 mb-1.5">
-                <p className="text-xs font-semibold text-[var(--muted)]">{s.label}</p>
-                {s.isClosedCard && (
-                  <div className={`flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${isIncrease ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : isDecrease ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'}`}>
-                    <span>{isIncrease ? '↑' : isDecrease ? '↓' : '→'}</span>
-                    <span>{Math.abs(closedStats.diff)}</span>
-                    <span>({Math.abs(closedStats.pct).toFixed(1)}%)</span>
-                  </div>
-                )}
-              </div>
-              <p className="text-3xl font-bold" style={{ color: s.color }}>
-                {loading ? '—' : s.value}
-              </p>
-              {s.isClosedCard && (
-                <div className="mt-2 text-[10px] font-medium text-[var(--muted)]">
-                  {closedStats.currentMonthName}: {closedStats.currentMonthClosed} | {closedStats.previousMonthName}: {closedStats.previousMonthClosed}
-                </div>
-              )}
-            </div>
-          );
-        })}
+        <KpiCard
+          title="Total"
+          value={loading ? '—' : curKpis.total}
+          cur={curKpis.total}
+          prev={prevKpis?.total}
+          accent="#6366f1"
+          goodWhenUp={false}
+          onClick={() => goToDetail('zohoAll', 'all', 'All Zoho Tickets', windowCurrent)}
+        />
+        <KpiCard
+          title="Open"
+          value={loading ? '—' : curKpis.open}
+          cur={curKpis.open}
+          prev={prevKpis?.open}
+          accent="#3b82f6"
+          subtitle={`${curKpis.total > 0 ? Math.round((curKpis.open / curKpis.total) * 100) : 0}% of total`}
+          goodWhenUp={false}
+          onClick={() => goToDetail('zohoOpen', 'Open', 'Open Zoho Tickets', windowCurrent)}
+        />
+        <KpiCard
+          title="WIP / In Progress"
+          value={loading ? '—' : curKpis.wip}
+          cur={curKpis.wip}
+          prev={prevKpis?.wip}
+          accent="#8b5cf6"
+          subtitle={`${curKpis.total > 0 ? Math.round((curKpis.wip / curKpis.total) * 100) : 0}% of total`}
+          goodWhenUp={false}
+          onClick={() => goToDetail('zohoStatus', 'In Progress', 'In Progress Zoho Tickets', windowCurrent)}
+        />
+        <KpiCard
+          title="High Priority"
+          value={loading ? '—' : curKpis.highPriority}
+          cur={curKpis.highPriority}
+          prev={prevKpis?.highPriority}
+          accent="#ef4444"
+          subtitle={`${curKpis.total > 0 ? Math.round((curKpis.highPriority / curKpis.total) * 100) : 0}% of total`}
+          goodWhenUp={false}
+          onClick={() => goToDetail('zohoHighPriority', 'High', 'High Priority Zoho Tickets', windowCurrent)}
+        />
+        <KpiCard
+          title="On Hold"
+          value={loading ? '—' : curKpis.onHold}
+          cur={curKpis.onHold}
+          prev={prevKpis?.onHold}
+          accent="#f59e0b"
+          subtitle={`${curKpis.total > 0 ? Math.round((curKpis.onHold / curKpis.total) * 100) : 0}% of total`}
+          goodWhenUp={false}
+          onClick={() => goToDetail('zohoStatusGroup', 'On Hold', 'On Hold Zoho Tickets', windowCurrent)}
+        />
+        <KpiCard
+          title="Closed"
+          value={loading ? '—' : curKpis.closed}
+          cur={curKpis.closed}
+          prev={prevKpis?.closed}
+          accent="#22c55e"
+          subtitle={`${curKpis.total > 0 ? Math.round((curKpis.closed / curKpis.total) * 100) : 0}% of total`}
+          goodWhenUp={true}
+          onClick={() => goToDetail('zohoClosed', 'Closed', 'Closed Zoho Tickets', windowCurrent)}
+        />
       </div>
 
       {/* Charts */}

@@ -9,6 +9,8 @@ import {
   categoryTimeSeries,
   withinRange,
   tooltipStyle,
+  KpiCard,
+  DeltaBadge,
 } from './security/widgetViews.jsx';
 
 const SEVERITY_COLORS = {
@@ -135,27 +137,6 @@ function getCveAgeBucket(publishedDate) {
   return '180+ Days';
 }
 
-function StatCard({ title, value, color, onClick }) {
-  const cls = {
-    default: 'text-[var(--foreground)]',
-    critical: 'text-purple-500',
-    high: 'text-red-500',
-    medium: 'text-amber-500',
-    low: 'text-blue-500',
-    green: 'text-emerald-500',
-  };
-  return (
-    <div
-      onClick={onClick}
-      className={`bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-4 shadow-sm transition-all ${onClick ? 'cursor-pointer hover:shadow-md hover:border-indigo-400/50' : ''
-        }`}
-    >
-      <p className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-widest mb-1">{title}</p>
-      <p className={`text-3xl font-extrabold tracking-tight ${cls[color] || cls.default}`}>{value}</p>
-    </div>
-  );
-}
-
 function ChartCard({ title, subtitle, controls, children }) {
   return (
     <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl overflow-hidden shadow-sm flex flex-col">
@@ -196,7 +177,10 @@ export default function Nvd() {
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState(null);
 
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [stats, setStats] = useState(null);
+  const [prevStats, setPrevStats] = useState(null);
   const [vulns, setVulns] = useState([]);
   const [allVulns, setAllVulns] = useState([]);
   const [total, setTotal] = useState(0);
@@ -266,10 +250,59 @@ export default function Nvd() {
 
   const loadStats = useCallback(async () => {
     try {
-      const r = await api.get('/nvd/stats');
-      setStats(r.data);
+      if (!dateFrom && !dateTo) {
+        const r = await api.get('/nvd/stats');
+        setStats(r.data);
+        setPrevStats(null);
+        return;
+      }
+
+      // Calculate previous equal-length window for comparison
+      const s = dateFrom ? new Date(dateFrom + 'T00:00:00') : (dateTo ? new Date(new Date(dateTo + 'T23:59:59').getTime() - 30 * 86400000) : new Date(0));
+      const e = dateTo ? new Date(dateTo + 'T23:59:59.999') : new Date();
+      const duration = Math.max(86400000, e.getTime() - s.getTime());
+      const prevEnd = new Date(s.getTime());
+      const prevStart = new Date(prevEnd.getTime() - duration);
+
+      const prevFromStr = prevStart.toISOString().slice(0, 10);
+      const prevToStr = prevEnd.toISOString().slice(0, 10);
+
+      const [curRes, prevRes] = await Promise.all([
+        api.get('/nvd/stats', { params: { from: dateFrom || undefined, to: dateTo || undefined } }),
+        api.get('/nvd/stats', { params: { from: prevFromStr, to: prevToStr } }),
+      ]);
+      setStats(curRes.data);
+      setPrevStats(prevRes.data);
     } catch { /* ignore */ }
-  }, []);
+  }, [dateFrom, dateTo]);
+
+  const curKpis = useMemo(() => {
+    if (!stats) return { total: 0, critical: 0, high: 0, medium: 0, low: 0, analyzed: 0 };
+    const getSev = (s) => stats.severityCounts?.find((x) => x.severity === s)?.count || 0;
+    const analyzed = stats.statusCounts?.find((x) => x.status === 'Analyzed')?.count ?? (stats.total ? Math.round(stats.total * 0.85) : 0);
+    return {
+      total: stats.total || 0,
+      critical: getSev('CRITICAL'),
+      high: getSev('HIGH'),
+      medium: getSev('MEDIUM'),
+      low: getSev('LOW'),
+      analyzed,
+    };
+  }, [stats]);
+
+  const prevKpis = useMemo(() => {
+    if (!prevStats || (!dateFrom && !dateTo)) return null;
+    const getSev = (s) => prevStats.severityCounts?.find((x) => x.severity === s)?.count || 0;
+    const analyzed = prevStats.statusCounts?.find((x) => x.status === 'Analyzed')?.count ?? (prevStats.total ? Math.round(prevStats.total * 0.85) : 0);
+    return {
+      total: prevStats.total || 0,
+      critical: getSev('CRITICAL'),
+      high: getSev('HIGH'),
+      medium: getSev('MEDIUM'),
+      low: getSev('LOW'),
+      analyzed,
+    };
+  }, [prevStats, dateFrom, dateTo]);
 
   const loadList = useCallback(async () => {
     setLoadingList(true);
@@ -812,29 +845,91 @@ export default function Nvd() {
         )}
       </div>
 
-      {/* Header */}
-      <div className="flex items-start justify-between flex-wrap gap-2">
+      {/* Header + Global Date Filter for KPIs */}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse" />
             <h1 className="text-xl font-bold text-[var(--foreground)]">NVD — National Vulnerability Database</h1>
           </div>
           <p className="text-sm text-[var(--muted)] mt-0.5">
-            {stats ? `${stats.total.toLocaleString()} CVEs stored in local database` : 'Loading threat intelligence telemetry…'}
-            {stats?.lastSynced && ` · Last synced ${new Date(stats.lastSynced).toLocaleString()}`}
+            {stats ? `${curKpis.total.toLocaleString()} CVEs stored in local database` : 'Loading threat intelligence telemetry…'}
+            {(dateFrom || dateTo) && (
+              <span className="ml-2 text-indigo-500 font-medium">
+                {dateFrom && dateTo ? `${dateFrom} → ${dateTo}` : dateFrom ? `From ${dateFrom}` : `Until ${dateTo}`}
+              </span>
+            )}
+            {stats?.lastSynced && <span> · Last synced {new Date(stats.lastSynced).toLocaleString()}</span>}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-lg p-0.5">
+            {[
+              { label: '7D', days: 7 },
+              { label: '14D', days: 14 },
+              { label: '30D', days: 30 },
+              { label: '90D', days: 90 },
+            ].map(({ label, days }) => {
+              const to = new Date().toISOString().slice(0, 10);
+              const fromD = new Date();
+              fromD.setDate(fromD.getDate() - days);
+              const from = fromD.toISOString().slice(0, 10);
+              const isActive = dateFrom === from && dateTo === to;
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => {
+                    if (isActive) {
+                      setDateFrom('');
+                      setDateTo('');
+                    } else {
+                      setDateFrom(from);
+                      setDateTo(to);
+                    }
+                  }}
+                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-md transition-all ${
+                    isActive
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <label className="text-[11px] text-[var(--muted)] font-medium">From</label>
+            <input type="date" value={dateFrom} max={dateTo || undefined}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="text-[11px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <label className="text-[11px] text-[var(--muted)] font-medium">To</label>
+            <input type="date" value={dateTo} min={dateFrom || undefined}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="text-[11px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+          </div>
+          {(dateFrom || dateTo) && (
+            <button
+              onClick={() => { setDateFrom(''); setDateTo(''); }}
+              className="text-[11px] text-indigo-500 hover:text-indigo-700 font-semibold">Clear</button>
+          )}
           <AnalyticsLaunchButton moduleKey="nvd" />
         </div>
       </div>
 
       {/* Hero KPI Stat Strip */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <StatCard
+        <KpiCard
           title="Total CVEs"
-          value={stats ? stats.total.toLocaleString() : '—'}
-          color="default"
+          value={stats ? curKpis.total.toLocaleString() : '—'}
+          cur={stats ? curKpis.total : null}
+          prev={prevKpis?.total}
+          accent="#3b82f6"
+          goodWhenUp={false}
           onClick={() => {
             setSeverity(''); setStatus(''); setSearch(''); setTableDays('all');
             setColCve(''); setColPublished(''); setColSeverity('');
@@ -842,25 +937,49 @@ export default function Nvd() {
             setPage(1);
           }}
         />
-        {SEVERITIES.map((s) => {
-          const c = stats?.severityCounts?.find((x) => x.severity === s);
-          return (
-            <StatCard
-              key={s}
-              title={`${s} CVEs`}
-              value={c ? c.count.toLocaleString() : (loadingList ? '…' : '0')}
-              color={s.toLowerCase()}
-              onClick={() => { setSeverity(s); setPage(1); }}
-            />
-          );
-        })}
-        <StatCard
+        <KpiCard
+          title="Critical CVEs"
+          value={stats ? curKpis.critical.toLocaleString() : '—'}
+          cur={stats ? curKpis.critical : null}
+          prev={prevKpis?.critical}
+          accent="#a855f7"
+          goodWhenUp={false}
+          onClick={() => { setSeverity('CRITICAL'); setPage(1); }}
+        />
+        <KpiCard
+          title="High CVEs"
+          value={stats ? curKpis.high.toLocaleString() : '—'}
+          cur={stats ? curKpis.high : null}
+          prev={prevKpis?.high}
+          accent="#ef4444"
+          goodWhenUp={false}
+          onClick={() => { setSeverity('HIGH'); setPage(1); }}
+        />
+        <KpiCard
+          title="Medium CVEs"
+          value={stats ? curKpis.medium.toLocaleString() : '—'}
+          cur={stats ? curKpis.medium : null}
+          prev={prevKpis?.medium}
+          accent="#f59e0b"
+          goodWhenUp={false}
+          onClick={() => { setSeverity('MEDIUM'); setPage(1); }}
+        />
+        <KpiCard
+          title="Low CVEs"
+          value={stats ? curKpis.low.toLocaleString() : '—'}
+          cur={stats ? curKpis.low : null}
+          prev={prevKpis?.low}
+          accent="#3b82f6"
+          goodWhenUp={false}
+          onClick={() => { setSeverity('LOW'); setPage(1); }}
+        />
+        <KpiCard
           title="Analyzed"
-          value={
-            stats?.statusCounts?.find((x) => x.status === 'Analyzed')?.count?.toLocaleString() ||
-            (stats?.total ? Math.round(stats.total * 0.85).toLocaleString() : '—')
-          }
-          color="green"
+          value={stats ? curKpis.analyzed.toLocaleString() : '—'}
+          cur={stats ? curKpis.analyzed : null}
+          prev={prevKpis?.analyzed}
+          accent="#10b981"
+          goodWhenUp={true}
           onClick={() => { setStatus('Analyzed'); setPage(1); }}
         />
       </div>
