@@ -232,6 +232,10 @@ export default function Dashboard() {
   const [s1Syncing, setS1Syncing] = useState(false);
   const [s1SyncMsg, setS1SyncMsg] = useState(null);
 
+  // ── Global KPI Date Range Filter ──────────────────────────────────────────────
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
   // ── Per-card date filters ───────────────────────────────────────────────────
   const [cardRanges, setCardRanges] = useState({});
   const cardRangesRef = useRef({});
@@ -869,6 +873,11 @@ export default function Dashboard() {
                   {aggSource === 'redis' ? 'Live · Cached' : aggSource === 'postgres' ? 'DB Fallback' : aggSource}
                 </span>
               )}
+              {(dateFrom || dateTo) && (
+                <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                  {dateFrom && dateTo ? `${dateFrom} → ${dateTo}` : dateFrom ? `From ${dateFrom}` : `Until ${dateTo}`}
+                </span>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
@@ -901,6 +910,10 @@ export default function Dashboard() {
         appCves={appCveData}
         tickets={ticketData}
         mdmDevices={mdmData}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        setDateFrom={setDateFrom}
+        setDateTo={setDateTo}
       />
 
       {/* Edit mode banner */}
