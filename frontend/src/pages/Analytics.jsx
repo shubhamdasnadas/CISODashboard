@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area,
@@ -7,7 +7,6 @@ import {
 } from 'recharts';
 
 import api from '../api.js';
-import WidgetSkeleton from './dashboard/WidgetSkeleton.jsx';
 import { useOrg } from '../context/OrgContext.jsx';
 import { generateAnalyticsPdf, generateAnalyticsPdfForSection } from './report/generatePdf.jsx';
 import { fetchReportData } from './report/fetchReportData.js';
@@ -48,24 +47,246 @@ export const MODULE_ICONS = {
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
-// Derive from/to dates from a day preset (null = all time)
-function presetToRange(days) {
-  if (!days) return { from: '', to: '' };
-  const today = new Date();
-  const to = today.toISOString().slice(0, 10);
-  const fromDt = new Date();
-  fromDt.setDate(today.getDate() - (days - 1));
-  return { from: fromDt.toISOString().slice(0, 10), to };
+function formatDateShort(d) {
+  if (!d) return '';
+  const dt = d instanceof Date ? d : new Date(d);
+  if (isNaN(dt.getTime())) return '';
+  return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
 // ─── Day presets for quick date range selection ─────────────────────────────
 const DAY_PRESETS = [
   { label: '7D', days: 7 },
+  { label: '10D', days: 10 },
   { label: '14D', days: 14 },
   { label: '30D', days: 30 },
   { label: '90D', days: 90 },
   { label: 'All', days: null },
 ];
+
+// Compute current and preceding comparison date windows
+function computeDateWindows(dayPreset, customFrom, customTo, isCustom) {
+  if (isCustom && customFrom && customTo) {
+    const start = new Date(customFrom + 'T00:00:00');
+    const end = new Date(customTo + 'T23:59:59.999');
+    const duration = Math.max(86400000, end.getTime() - start.getTime());
+    const prevEnd = new Date(start.getTime() - 1);
+    const prevStart = new Date(start.getTime() - duration);
+    return {
+      from: customFrom,
+      to: customTo,
+      prevFrom: prevStart.toISOString().slice(0, 10),
+      prevTo: prevEnd.toISOString().slice(0, 10),
+      isFiltered: true,
+      periodLabel: `${formatDateShort(start)} – ${formatDateShort(end)}`,
+      prevPeriodLabel: `${formatDateShort(prevStart)} – ${formatDateShort(prevEnd)}`,
+    };
+  }
+
+  if (dayPreset) {
+    const today = new Date();
+    const to = today.toISOString().slice(0, 10);
+    const fromDt = new Date();
+    fromDt.setDate(today.getDate() - (dayPreset - 1));
+    const from = fromDt.toISOString().slice(0, 10);
+
+    const prevEndDt = new Date(fromDt);
+    prevEndDt.setDate(prevEndDt.getDate() - 1);
+    const prevFromDt = new Date(prevEndDt);
+    prevFromDt.setDate(prevFromDt.getDate() - (dayPreset - 1));
+
+    return {
+      from,
+      to,
+      prevFrom: prevFromDt.toISOString().slice(0, 10),
+      prevTo: prevEndDt.toISOString().slice(0, 10),
+      isFiltered: true,
+      periodLabel: `Last ${dayPreset}D (${formatDateShort(fromDt)} – ${formatDateShort(today)})`,
+      prevPeriodLabel: `Prior ${dayPreset}D (${formatDateShort(prevFromDt)} – ${formatDateShort(prevEndDt)})`,
+    };
+  }
+
+  return {
+    from: '',
+    to: '',
+    prevFrom: '',
+    prevTo: '',
+    isFiltered: false,
+    periodLabel: 'All Time',
+    prevPeriodLabel: 'Prior Period',
+  };
+}
+
+// ─── Global Date Filter Context ─────────────────────────────────────────────
+const DateFilterContext = createContext({
+  dayPreset: null,
+  setDayPreset: () => {},
+  customFrom: '',
+  setCustomFrom: () => {},
+  customTo: '',
+  setCustomTo: () => {},
+  isCustom: false,
+  setIsCustom: () => {},
+  from: '',
+  to: '',
+  prevFrom: '',
+  prevTo: '',
+  isFiltered: false,
+  periodLabel: 'All Time',
+  prevPeriodLabel: 'Prior Period',
+  setQuickPreset: () => {},
+  applyCustomRange: () => {},
+  resetFilter: () => {},
+});
+
+export const useDateFilter = () => useContext(DateFilterContext);
+
+// ─── Global Date Filter Bar Component ───────────────────────────────────────
+function GlobalDateFilterBar() {
+  const {
+    dayPreset,
+    setQuickPreset,
+    isCustom,
+    setIsCustom,
+    customFrom,
+    customTo,
+    applyCustomRange,
+    isFiltered,
+    periodLabel,
+    prevPeriodLabel,
+    resetFilter,
+  } = useDateFilter();
+
+  const [localFrom, setLocalFrom] = useState(customFrom || '');
+  const [localTo, setLocalTo] = useState(customTo || '');
+
+  useEffect(() => {
+    if (customFrom) setLocalFrom(customFrom);
+    if (customTo) setLocalTo(customTo);
+  }, [customFrom, customTo]);
+
+  const handleApplyCustom = (e) => {
+    e?.preventDefault();
+    if (localFrom && localTo) {
+      applyCustomRange(localFrom, localTo);
+    }
+  };
+
+  return (
+    <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-3.5 sm:p-4 shadow-sm space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {/* Left title & active period info */}
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-500 flex items-center justify-center text-base flex-shrink-0">
+            📅
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-bold text-[var(--foreground)] uppercase tracking-wider">
+                Common Date Filter
+              </span>
+              {isFiltered && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
+                  Active Filter
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-[var(--muted)] mt-0.5">
+              {isFiltered ? (
+                <span>
+                  Comparing <span className="font-semibold text-[var(--foreground)]">{periodLabel}</span> with preceding period <span className="font-semibold text-[var(--foreground)]">{prevPeriodLabel}</span>
+                </span>
+              ) : (
+                <span>Select a preset (e.g. 10D) or custom range to compare current period with prior period in all KPI cards</span>
+              )}
+            </p>
+          </div>
+        </div>
+
+        {/* Right Preset buttons & Custom toggle */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {DAY_PRESETS.map((p) => {
+            const isAll = p.days === null;
+            const isActive = !isCustom && (isAll ? !dayPreset : dayPreset === p.days);
+            return (
+              <button
+                key={p.label}
+                type="button"
+                onClick={() => setQuickPreset(p.days)}
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                  isActive
+                    ? 'bg-indigo-600 text-white shadow-sm ring-2 ring-indigo-500/30'
+                    : 'bg-[var(--muted-bg)] text-[var(--foreground)] hover:bg-[var(--card-border)]/60'
+                }`}
+              >
+                {p.label}
+              </button>
+            );
+          })}
+
+          <button
+            type="button"
+            onClick={() => setIsCustom(true)}
+            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
+              isCustom
+                ? 'bg-indigo-600 text-white shadow-sm ring-2 ring-indigo-500/30'
+                : 'bg-[var(--muted-bg)] text-[var(--foreground)] hover:bg-[var(--card-border)]/60'
+            }`}
+          >
+            Custom
+          </button>
+
+          {isFiltered && (
+            <button
+              type="button"
+              onClick={resetFilter}
+              className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-[var(--card-border)] text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)] transition-colors"
+              title="Reset to All Time"
+            >
+              ✕ Clear
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Custom Date Range Picker bar */}
+      {isCustom && (
+        <form onSubmit={handleApplyCustom} className="pt-2 border-t border-[var(--card-border)] flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-semibold text-[var(--muted)]">From:</label>
+            <input
+              type="date"
+              value={localFrom}
+              onChange={(e) => setLocalFrom(e.target.value)}
+              className="px-2.5 py-1 text-xs rounded-lg border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-semibold text-[var(--muted)]">To:</label>
+            <input
+              type="date"
+              value={localTo}
+              onChange={(e) => setLocalTo(e.target.value)}
+              className="px-2.5 py-1 text-xs rounded-lg border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={!localFrom || !localTo}
+            className="px-3 py-1 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+          >
+            Apply Range
+          </button>
+          {periodLabel && (
+            <span className="text-[11px] text-[var(--muted)] ml-auto">
+              Selected Window: {periodLabel}
+            </span>
+          )}
+        </form>
+      )}
+    </div>
+  );
+}
 
 // ─── Multi-view chart type options (grouped) ──────────────────────────────
 const VIEW_OPTIONS = [
@@ -87,8 +308,6 @@ const VIEW_OPTIONS = [
   { label: 'Bubble Chart', icon: '🫧', type: 'bubble', group: 'Scatter & Distribution' },
   { label: 'Heat Map', icon: '🟧', type: 'heatmap', group: 'Scatter & Distribution' },
 ];
-
-const VIEW_GROUPS = [...new Set(VIEW_OPTIONS.map((v) => v.group))];
 
 export function openInAnalytics(navigate, moduleKey, days = 7) {
   const to = todayStr();
@@ -181,29 +400,43 @@ function StatCard({ title, value, subtitle, color = 'default', onClick, cur, pre
     blue: 'text-blue-500',
     green: 'text-green-500',
     cyan: 'text-cyan-500',
+    orange: 'text-orange-500',
   };
   return (
     <div
       onClick={onClick}
-      className={`bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-4 flex flex-col gap-1 shadow-sm ${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
+      className={`bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-4 flex flex-col justify-between gap-1.5 shadow-sm ${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
     >
-      <p className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-widest">{title}</p>
-      <div className="flex items-end justify-between gap-2">
-        <p className={`text-3xl font-bold leading-none ${cls[color] || cls.default}`}>{value}</p>
+      <div>
+        <p className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-widest">{title}</p>
+        <p className={`text-3xl font-bold leading-tight mt-1 ${cls[color] || cls.default}`}>{value}</p>
+      </div>
+      <div className="flex items-center justify-between gap-2 flex-wrap min-h-[22px]">
+        {subtitle ? <p className="text-[11px] text-[var(--muted)]">{subtitle}</p> : <div />}
         {(cur != null && prev != null) ? <DeltaBadge cur={cur} prev={prev} goodWhenUp={goodWhenUp} label={deltaLabel} /> : null}
       </div>
-      {subtitle && <p className="text-[11px] text-[var(--muted)]">{subtitle}</p>}
     </div>
   );
 }
 
-function ChartCard({ title, subtitle, children, className = '', dayPresets, activeDayPreset, onDayPreset, viewOptions, defaultChartType = 'donut', onViewTypeChange, hideControls = false }) {
+function ChartCard({
+  title,
+  subtitle,
+  children,
+  className = '',
+  viewOptions,
+  defaultChartType = 'donut',
+  onViewTypeChange,
+  extraControls,
+}) {
   const [localChartType, setLocalChartType] = useState(defaultChartType);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
 
   useEffect(() => {
-    const handleClickOutside = (e) => { if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setDropdownOpen(false); };
+    const handleClickOutside = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setDropdownOpen(false);
+    };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
@@ -211,9 +444,9 @@ function ChartCard({ title, subtitle, children, className = '', dayPresets, acti
   const handleChartTypeChange = (type) => {
     setLocalChartType(type);
     setDropdownOpen(false);
+    onViewTypeChange?.(type);
   };
 
-  const showControls = !hideControls && dayPresets && onDayPreset;
   const currentLabel = viewOptions?.find((v) => v.type === localChartType)?.label || 'Donut Chart';
   const groups = viewOptions ? [...new Set(viewOptions.map((v) => v.group))] : [];
 
@@ -224,68 +457,52 @@ function ChartCard({ title, subtitle, children, className = '', dayPresets, acti
           <p className="text-sm font-bold text-[var(--foreground)]">{title}</p>
           {subtitle && <p className="text-[11px] text-[var(--muted)] mt-0.5">{subtitle}</p>}
         </div>
-        {showControls && (
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            {/* Day presets */}
-            {dayPresets.map((preset) => {
-              const isAll = preset.days === null;
-              const isActive = isAll ? !activeDayPreset : activeDayPreset === preset.days;
-              return (
-                <button
-                  key={preset.label}
-                  onClick={() => onDayPreset(preset.days)}
-                  className={`px-2 py-1 text-[10px] font-bold rounded-md transition-all ${isActive
-                    ? 'bg-indigo-500 text-white shadow-sm'
-                    : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
-                    }`}
-                >
-                  {preset.label}
-                </button>
-              );
-            })}
-            {/* Chart type grouped dropdown (independent per widget) */}
-            {viewOptions && (
-              <div className="relative" ref={dropdownRef}>
-                <button
-                  onClick={() => setDropdownOpen(!dropdownOpen)}
-                  className="flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1 rounded-md border border-[var(--card-border)] bg-[var(--muted-bg)] text-[var(--foreground)] hover:bg-[var(--muted-bg)]/80 transition-colors ml-1"
-                >
-                  {currentLabel}
-                  <svg className={`w-3 h-3 text-[var(--muted)] transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-                {dropdownOpen && (
-                  <div className="absolute right-0 top-full mt-1 w-52 max-h-72 overflow-y-auto bg-[var(--card-bg)] border border-[var(--card-border)] rounded-xl shadow-xl z-50">
-                    {groups.map((group) => (
-                      <div key={group}>
-                        <div className="px-3 py-1.5 text-[9px] font-bold uppercase tracking-wider text-[var(--muted)] bg-[var(--muted-bg)]/50 sticky top-0">{group}</div>
-                        {viewOptions.filter((v) => v.group === group).map((opt) => (
-                          <button
-                            key={opt.type}
-                            onClick={() => handleChartTypeChange(opt.type)}
-                            className={`w-full flex items-center gap-2 px-3 py-1.5 text-[11px] font-medium transition-colors text-left ${localChartType === opt.type
-                              ? 'bg-indigo-500/10 text-indigo-500'
-                              : 'text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
-                              }`}
-                          >
-                            <span>{opt.icon}</span>
-                            <span>{opt.label}</span>
-                            {localChartType === opt.type && (
-                              <svg className="w-3.5 h-3.5 ml-auto text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                              </svg>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {extraControls}
+          {/* Chart type grouped dropdown (independent per widget) */}
+          {viewOptions && (
+            <div className="relative" ref={dropdownRef}>
+              <button
+                type="button"
+                onClick={() => setDropdownOpen(!dropdownOpen)}
+                className="flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1 rounded-md border border-[var(--card-border)] bg-[var(--muted-bg)] text-[var(--foreground)] hover:bg-[var(--muted-bg)]/80 transition-colors"
+              >
+                {currentLabel}
+                <svg className={`w-3 h-3 text-[var(--muted)] transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              {dropdownOpen && (
+                <div className="absolute right-0 top-full mt-1 w-52 max-h-72 overflow-y-auto bg-[var(--card-bg)] border border-[var(--card-border)] rounded-xl shadow-xl z-50">
+                  {groups.map((group) => (
+                    <div key={group}>
+                      <div className="px-3 py-1.5 text-[9px] font-bold uppercase tracking-wider text-[var(--muted)] bg-[var(--muted-bg)]/50 sticky top-0">{group}</div>
+                      {viewOptions.filter((v) => v.group === group).map((opt) => (
+                        <button
+                          key={opt.type}
+                          type="button"
+                          onClick={() => handleChartTypeChange(opt.type)}
+                          className={`w-full flex items-center gap-2 px-3 py-1.5 text-[11px] font-medium transition-colors text-left ${localChartType === opt.type
+                            ? 'bg-indigo-500/10 text-indigo-500 font-bold'
+                            : 'text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+                            }`}
+                        >
+                          <span>{opt.icon}</span>
+                          <span>{opt.label}</span>
+                          {localChartType === opt.type && (
+                            <svg className="w-3.5 h-3.5 ml-auto text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
       {typeof children === 'function' ? children(localChartType) : children}
     </div>
@@ -351,10 +568,32 @@ function ImprovedDonut({ data, onSliceClick }) {
 }
 
 // ─── Date-range helpers ────────────────────────────────────────────────────────
+function parseRecordDate(v) {
+  if (!v) return null;
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  if (typeof v === 'number') {
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (!s || s === '-' || s.toLowerCase() === 'unknown' || s.toLowerCase() === 'null') return null;
+    if (/^\d{10,13}$/.test(s)) {
+      const num = Number(s);
+      const d = new Date(s.length === 10 ? num * 1000 : num);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
 // Split a dataset into "current" (records inside the selected window) and
 // "previous" (records in the equal-length window immediately before it). When no
 // range is set, "current" is the whole set and "previous" is empty.
 function splitByWindow(arr, dateFn, from, to) {
+  if (!Array.isArray(arr) || arr.length === 0) return { current: [], previous: [] };
   if (!from && !to) return { current: arr, previous: [] };
   const start = from ? new Date(from + 'T00:00:00') : null;
   const end = to ? new Date(to + 'T23:59:59.999') : null;
@@ -363,16 +602,23 @@ function splitByWindow(arr, dateFn, from, to) {
 
   const s = start || new Date(0);
   const e = end || new Date(8640000000000000);
-  const duration = e.getTime() - s.getTime();
+  const duration = Math.max(86400000, e.getTime() - s.getTime());
   const prevEnd = start ? start.getTime() : 0;
   const prevStart = prevEnd - duration;
 
   const current = [], previous = [];
   arr.forEach((x) => {
-    const raw = dateFn(x);
-    if (!raw) return;
-    const d = raw instanceof Date ? raw : new Date(raw);
-    if (isNaN(d.getTime())) return;
+    if (!x) return;
+    const raw = dateFn ? dateFn(x) : (x.createdAt || x.created_at || x.timestamp || x.date);
+    if (!raw) {
+      current.push(x);
+      return;
+    }
+    const d = parseRecordDate(raw);
+    if (!d) {
+      current.push(x);
+      return;
+    }
     const t = d.getTime();
     if (t >= s.getTime() && t <= e.getTime()) current.push(x);
     else if (t >= prevStart && t < prevEnd) previous.push(x);
@@ -381,29 +627,56 @@ function splitByWindow(arr, dateFn, from, to) {
 }
 
 function deltaPct(cur, prev) {
-  if (prev == null) return null;
-  if (prev === 0) return cur > 0 ? { pct: 100, dir: 'up' } : { pct: 0, dir: 'flat' };
-  const pct = Math.round(((cur - prev) / prev) * 100);
-  return { pct: Math.abs(pct), dir: pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat' };
+  if (prev == null || isNaN(prev)) return null;
+  const c = Number(cur) || 0;
+  const p = Number(prev) || 0;
+  const diff = c - p;
+  if (p === 0) {
+    if (c === 0) return { pct: 0, diff: 0, dir: 'flat' };
+    return { pct: 100, diff: c, dir: 'up' };
+  }
+  const rawPct = ((c - p) / p) * 100;
+  const pct = Math.round(rawPct);
+  return {
+    pct: Math.abs(pct),
+    diff,
+    dir: diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat',
+  };
 }
 
 function DeltaBadge({ cur, prev, goodWhenUp = true, label = 'prior period' }) {
   const d = deltaPct(cur, prev);
-  if (!d || d.dir === 'flat') {
-    return <span className="text-[10px] text-[var(--muted)]">—</span>;
+  if (!d) return null;
+
+  if (d.dir === 'flat') {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--muted)] px-1.5 py-0.5 rounded-md bg-[var(--muted-bg)]"
+        title={`No change vs ${label} (current: ${fmtNum(cur)}, prior: ${fmtNum(prev)})`}
+      >
+        <span>0%</span>
+        <span className="text-[10px] text-[var(--muted)] opacity-80">({fmtNum(prev)})</span>
+      </span>
+    );
   }
+
   const good = d.dir === 'up' ? goodWhenUp : !goodWhenUp;
   const arrow = d.dir === 'up' ? '↑' : '↓';
+  const colorCls = good
+    ? 'text-emerald-500 bg-emerald-500/10 border-emerald-500/25'
+    : 'text-rose-500 bg-rose-500/10 border-rose-500/25';
+
   return (
     <span
-      className={`inline-flex items-center gap-1 text-[11px] font-bold ${good ? 'text-green-500' : 'text-red-500'}`}
-      title={`vs ${label}: ${d.dir === 'up' ? 'increased' : 'decreased'} ${d.pct}% · this period ${fmtNum(cur)} vs prior ${fmtNum(prev)}`}
+      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[11px] font-bold ${colorCls} transition-all`}
+      title={`vs ${label}: ${d.dir === 'up' ? 'Increased' : 'Decreased'} ${d.pct}% (${d.diff > 0 ? '+' : ''}${fmtNum(d.diff)}) · This period: ${fmtNum(cur)} vs Prior: ${fmtNum(prev)}`}
     >
-      {arrow} {d.pct}%
-      <span className="inline-flex items-center gap-1 rounded-md bg-[var(--muted-bg)] px-1 py-0.5 font-semibold text-[var(--foreground)]">
-        <span>{fmtNum(cur)}</span>
-        <span className="text-[var(--muted)] opacity-70">→</span>
-        <span className="text-[var(--muted)]">{fmtNum(prev)}</span>
+      <span className="flex items-center gap-0.5">
+        <span>{arrow}</span>
+        <span>{d.pct}%</span>
+      </span>
+      <span className="text-[10px] font-semibold opacity-85 border-l border-current/20 pl-1.5">
+        prev: {fmtNum(prev)}
       </span>
     </span>
   );
@@ -753,28 +1026,28 @@ function MultiViewChart({ data, chartType = 'donut', height = 288, nameKey = 'na
   }
 }
 
-// Per-widget day filter wrapper. Each widget gets its own independent filter.
+// Date filter wrapper connected to global DateFilterContext.
 // Items without a usable date are kept untouched, so dateless rows (e.g. firewall
 // aggregate tables) never blank a widget out when a day preset is active.
 function FilterByDays({ data, dateFn, children }) {
-  const [dayPreset, setDayPreset] = useState(null);
-  const { from, to } = presetToRange(dayPreset);
-  const filtered = useMemo(() => {
-    if (!from && !to) return data;
-    const start = from ? new Date(from + 'T00:00:00').getTime() : null;
-    const end = to ? new Date(to + 'T23:59:59.999').getTime() : null;
-    return data.filter((x) => {
-      const raw = dateFn(x);
-      if (!raw) return true;
-      const d = raw instanceof Date ? raw : new Date(raw);
-      if (isNaN(d.getTime())) return true;
-      const t = d.getTime();
-      if (start !== null && t < start) return false;
-      if (end !== null && t > end) return false;
-      return true;
-    });
-  }, [data, from, to, dateFn]);
-  return children({ filtered, dayPreset, setDayPreset });
+  const globalFilter = useDateFilter();
+  const { from, to, isFiltered, periodLabel, prevPeriodLabel, dayPreset } = globalFilter;
+
+  const { current, previous } = useMemo(() => {
+    if (!data || !Array.isArray(data)) return { current: [], previous: [] };
+    if (!isFiltered) return { current: data, previous: [] };
+    return splitByWindow(data, dateFn, from, to);
+  }, [data, dateFn, from, to, isFiltered]);
+
+  return children({
+    filtered: current,
+    current,
+    previous,
+    isFiltered,
+    periodLabel,
+    prevPeriodLabel,
+    dayPreset,
+  });
 }
 
 function SectionHeader({ kicker, title, icon, accent, meta, syncing, onSync }) {
@@ -827,13 +1100,6 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
     { id: 'cves', label: 'Application CVEs', icon: '🔍' },
     { id: 'threats', label: 'Threat Analytics', icon: '⚠️' },
   ];
-
-  // Compute agent KPIs from an array
-  const computeAgentKpis = (arr) => {
-    const total = arr.length;
-    const active = arr.filter((a) => a.isActive).length;
-    return { total, active, inactive: total - active, threats: arr.filter((a) => (a.activeThreats || 0) > 0).length, outdated: arr.filter((a) => !a.isUpToDate).length, health: total ? Math.round((active / total) * 100) : 0 };
-  };
 
   // Compute agent chart data from an array
   const computeAgentCharts = (arr) => ({
@@ -992,16 +1258,27 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
         <>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-3">
             {[
-              { title: 'Total Agents', color: 'blue', fn: (a) => a.length },
-              { title: 'Active', color: 'green', fn: (a) => a.filter((x) => x.isActive).length },
-              { title: 'Inactive', color: 'red', fn: (a) => a.filter((x) => !x.isActive).length },
-              { title: 'Active Threats', color: 'yellow', fn: (a) => a.filter((x) => (x.activeThreats || 0) > 0).length },
-              { title: 'Outdated', color: 'red', fn: (a) => a.filter((x) => !x.isUpToDate).length },
+              { title: 'Total Agents', color: 'blue', fn: (a) => a.length, good: true },
+              { title: 'Active', color: 'green', fn: (a) => a.filter((x) => x.isActive).length, good: true },
+              { title: 'Inactive', color: 'red', fn: (a) => a.filter((x) => !x.isActive).length, good: false },
+              { title: 'Active Threats', color: 'yellow', fn: (a) => a.filter((x) => (x.activeThreats || 0) > 0).length, good: false },
+              { title: 'Outdated', color: 'red', fn: (a) => a.filter((x) => !x.isUpToDate).length, good: false },
             ].map((kpi) => (
               <FilterByDays key={kpi.title} data={fullAgents} dateFn={(a) => a.installTime || a.lastSeen || a.createdAt}>
-                {({ filtered }) => (
-                  <StatCard title={kpi.title} value={kpi.fn(filtered)} color={kpi.color} goodWhenUp={kpi.title !== 'Inactive' && kpi.title !== 'Outdated' && kpi.title !== 'Active Threats'} />
-                )}
+                {({ current, previous, isFiltered }) => {
+                  const curVal = kpi.fn(current);
+                  const prevVal = isFiltered ? kpi.fn(previous) : null;
+                  return (
+                    <StatCard
+                      title={kpi.title}
+                      value={curVal}
+                      cur={curVal}
+                      prev={prevVal}
+                      color={kpi.color}
+                      goodWhenUp={kpi.good}
+                    />
+                  );
+                }}
               </FilterByDays>
             ))}
           </div>
@@ -1015,8 +1292,8 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
               { title: 'Network Status', fn: (a) => computeAgentCharts(a).networkStatus },
             ].map((w) => (
               <FilterByDays key={w.title} data={fullAgents} dateFn={(a) => a.installTime || a.lastSeen || a.createdAt}>
-                {({ filtered, dayPreset, setDayPreset }) => (
-                  <ChartCard title={w.title} dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+                {({ filtered }) => (
+                  <ChartCard title={w.title} viewOptions={VIEW_OPTIONS}>
                     {(chartType) => <MultiViewChart data={w.fn(filtered)} chartType={chartType} />}
                   </ChartCard>
                 )}
@@ -1024,8 +1301,8 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
             ))}
           </div>
           <FilterByDays data={fullAgents} dateFn={(a) => a.installTime || a.lastSeen || a.createdAt}>
-            {({ filtered, dayPreset, setDayPreset }) => (
-              <ChartCard title="Scan Status" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+            {({ filtered }) => (
+              <ChartCard title="Scan Status" viewOptions={VIEW_OPTIONS}>
                 {(chartType) => {
                   const scanData = computeAgentCharts(filtered).scanStatus;
                   return scanData.length === 0 ? <Empty /> : <MultiViewChart data={scanData} chartType={chartType} />;
@@ -1041,13 +1318,26 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
         <>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
-              { title: 'Applications', color: 'default', fn: (a) => new Set(a.map((r) => r.applicationName || r.application).filter(Boolean)).size },
-              { title: 'Total CVEs', color: 'default', fn: (a) => new Set(a.map((r) => r.cveId).filter(Boolean)).size || a.length },
-              { title: 'Endpoints Affected', color: 'blue', fn: (a) => new Set(a.map((r) => r.endpointName || r.endpoint).filter(Boolean)).size },
-              { title: 'Avg CVSS Score', color: 'purple', fn: (a) => { let s = 0, c = 0; a.forEach((r) => { const v = parseFloat(r.baseScore); if (!isNaN(v)) { s += v; c++; } }); return c ? (s / c).toFixed(1) : '—'; } },
+              { title: 'Applications', color: 'default', fn: (a) => new Set(a.map((r) => r.applicationName || r.application).filter(Boolean)).size, good: true },
+              { title: 'Total CVEs', color: 'default', fn: (a) => new Set(a.map((r) => r.cveId).filter(Boolean)).size || a.length, good: false },
+              { title: 'Endpoints Affected', color: 'blue', fn: (a) => new Set(a.map((r) => r.endpointName || r.endpoint).filter(Boolean)).size, good: false },
+              { title: 'Avg CVSS Score', color: 'purple', fn: (a) => { let s = 0, c = 0; a.forEach((r) => { const v = parseFloat(r.baseScore); if (!isNaN(v)) { s += v; c++; } }); return c ? Number((s / c).toFixed(1)) : 0; }, isRawNum: true, good: false },
             ].map((kpi) => (
               <FilterByDays key={kpi.title} data={fullCves} dateFn={(r) => r.publishedDate || r.lastModified || r.detectionDate}>
-                {({ filtered }) => <StatCard title={kpi.title} value={kpi.fn(filtered)} color={kpi.color} goodWhenUp={kpi.title !== 'Total CVEs' && kpi.title !== 'Endpoints Affected'} />}
+                {({ current, previous, isFiltered }) => {
+                  const curVal = kpi.fn(current);
+                  const prevVal = isFiltered ? kpi.fn(previous) : null;
+                  return (
+                    <StatCard
+                      title={kpi.title}
+                      value={kpi.isRawNum ? (curVal ? curVal.toFixed(1) : '—') : curVal}
+                      cur={curVal}
+                      prev={prevVal}
+                      color={kpi.color}
+                      goodWhenUp={kpi.good}
+                    />
+                  );
+                }}
               </FilterByDays>
             ))}
           </div>
@@ -1057,8 +1347,8 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
               { title: 'CVSS Base Score Range', fn: (a) => computeCveStats(a).cvssRange },
             ].map((w) => (
               <FilterByDays key={w.title} data={fullCves} dateFn={(r) => r.publishedDate || r.lastModified || r.detectionDate}>
-                {({ filtered, dayPreset, setDayPreset }) => (
-                  <ChartCard title={w.title} dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+                {({ filtered }) => (
+                  <ChartCard title={w.title} viewOptions={VIEW_OPTIONS}>
                     {(chartType) => <MultiViewChart data={w.fn(filtered)} chartType={chartType} />}
                   </ChartCard>
                 )}
@@ -1072,16 +1362,17 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
       {activeSubTab === 'threats' && hasThreats && (
         <>
           <FilterByDays data={fullThreats} dateFn={(t) => t.threatInfo?.createdAt}>
-            {({ filtered }) => {
-              const ts = computeThreatStats(filtered);
+            {({ current, previous, isFiltered }) => {
+              const curTs = computeThreatStats(current);
+              const prevTs = isFiltered ? computeThreatStats(previous) : null;
               return (
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 pt-3">
-                  <StatCard title="Total Threats" value={ts.total} color="blue" goodWhenUp={false} />
-                  <StatCard title="Mitigated" value={ts.mitigated} color="green" subtitle={ts.total ? `${Math.round((ts.mitigated / ts.total) * 100)}% of total` : ''} />
-                  <StatCard title="Unresolved" value={ts.unresolved} color="red" goodWhenUp={false} />
-                  <StatCard title="Fileless" value={ts.fileless} color="yellow" goodWhenUp={false} />
-                  <StatCard title="Avg MTTD" value={formatDuration(ts.avgMttd)} color="purple" subtitle="time to detect" />
-                  <StatCard title="Avg MTTM" value={formatDuration(ts.avgMttm)} color="cyan" subtitle="time to mitigate" />
+                  <StatCard title="Total Threats" value={curTs.total} cur={curTs.total} prev={prevTs?.total} color="blue" goodWhenUp={false} />
+                  <StatCard title="Mitigated" value={curTs.mitigated} cur={curTs.mitigated} prev={prevTs?.mitigated} color="green" subtitle={curTs.total ? `${Math.round((curTs.mitigated / curTs.total) * 100)}% of total` : ''} goodWhenUp={true} />
+                  <StatCard title="Unresolved" value={curTs.unresolved} cur={curTs.unresolved} prev={prevTs?.unresolved} color="red" goodWhenUp={false} />
+                  <StatCard title="Fileless" value={curTs.fileless} cur={curTs.fileless} prev={prevTs?.fileless} color="yellow" goodWhenUp={false} />
+                  <StatCard title="Avg MTTD" value={formatDuration(curTs.avgMttd)} cur={Math.round(curTs.avgMttd)} prev={prevTs ? Math.round(prevTs.avgMttd) : null} color="purple" subtitle="time to detect" goodWhenUp={false} />
+                  <StatCard title="Avg MTTM" value={formatDuration(curTs.avgMttm)} cur={Math.round(curTs.avgMttm)} prev={prevTs ? Math.round(prevTs.avgMttm) : null} color="cyan" subtitle="time to mitigate" goodWhenUp={false} />
                 </div>
               );
             }}
@@ -1099,25 +1390,23 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
           </FilterByDays>
 
           <FilterByDays data={fullThreats} dateFn={(t) => t.threatInfo?.createdAt}>
-            {({ filtered, dayPreset, setDayPreset }) => {
+            {({ filtered }) => {
               const tc = computeThreatCharts(filtered);
               return (
-                <ChartCard title="Threat Trend Over Time" subtitle="Daily new threats" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
-                  {(chartType) => (
-                    <div style={{ height: 260 }}>
-                      {tc.threatTrend.length === 0 ? <Empty /> : (
-                        <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={tc.threatTrend} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                            <XAxis dataKey="date" tick={{ fontSize: 9, fill: 'var(--muted)' }} tickFormatter={(v) => v.slice(5)} interval="preserveStartEnd" />
-                            <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-                            <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'var(--card-bg)' }} />
-                            <Line type="monotone" dataKey="count" stroke="#3b82f6" strokeWidth={2} dot={false} name="Threats" />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      )}
-                    </div>
-                  )}
+                <ChartCard title="Threat Trend Over Time" subtitle="Daily new threats">
+                  <div style={{ height: 260 }}>
+                    {tc.threatTrend.length === 0 ? <Empty /> : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={tc.threatTrend} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+                          <XAxis dataKey="date" tick={{ fontSize: 9, fill: 'var(--muted)' }} tickFormatter={(v) => v.slice(5)} interval="preserveStartEnd" />
+                          <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+                          <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'var(--card-bg)' }} />
+                          <Line type="monotone" dataKey="count" stroke="#3b82f6" strokeWidth={2} dot={false} name="Threats" />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
                 </ChartCard>
               );
             }}
@@ -1131,25 +1420,21 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
               { title: 'Top Affected Endpoints', fn: (a) => computeThreatCharts(a).topAffectedEndpoints, hbar: true, color: '#3b82f6' },
               { title: 'Top Users by Threat Count', fn: (a) => computeThreatCharts(a).topUsersByThreat, hbar: true, color: '#f59e0b' },
             ].map((w) => (
-              <ChartCard key={w.title} title={w.title} dayPresets={DAY_PRESETS} viewOptions={VIEW_OPTIONS}>
-                {(chartType) => (
-                  <FilterByDays data={fullThreats} dateFn={(t) => t.threatInfo?.createdAt}>
-                    {({ filtered, dayPreset, setDayPreset }) => (
-                      <ChartCard title={w.title} dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS} hideControls>
-                        {(ct) => w.hbar
-                          ? <div style={{ height: 288 }}><HBar data={w.fn(filtered)} dataKey="value" name="Threats" color={w.color} /></div>
-                          : <MultiViewChart data={w.fn(filtered)} chartType={ct} />}
-                      </ChartCard>
-                    )}
-                  </FilterByDays>
+              <FilterByDays key={w.title} data={fullThreats} dateFn={(t) => t.threatInfo?.createdAt}>
+                {({ filtered }) => (
+                  <ChartCard title={w.title} viewOptions={w.hbar ? null : VIEW_OPTIONS}>
+                    {(ct) => w.hbar
+                      ? <div style={{ height: 288 }}><HBar data={w.fn(filtered)} dataKey="value" name="Threats" color={w.color} /></div>
+                      : <MultiViewChart data={w.fn(filtered)} chartType={ct} />}
+                  </ChartCard>
                 )}
-              </ChartCard>
+              </FilterByDays>
             ))}
           </div>
 
           {/* Threats by Site — multi-series time chart (line/area/bar) */}
           <FilterByDays data={fullThreats} dateFn={(t) => t.threatInfo?.createdAt}>
-            {({ filtered, dayPreset, setDayPreset }) => {
+            {({ filtered, dayPreset }) => {
               const siteTimeSeries = categoryTimeSeries(filtered, {
                 keyOf: (t) => t.agentRealtimeInfo?.siteName || t.siteName || t.agentDetectionInfo?.siteName || 'Unknown',
                 dateOf: (t) => parseDate(t.threatInfo?.createdAt),
@@ -1157,7 +1442,7 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
                 topN: 10,
               });
               return (
-                <ChartCard title="Threats by Site" subtitle="daily trend by site" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+                <ChartCard title="Threats by Site" subtitle="daily trend by site" viewOptions={VIEW_OPTIONS}>
                   {(chartType) => (
                     <div style={{ height: 288 }}>
                       {(chartType === 'line' || chartType === 'area') ? (
@@ -1188,24 +1473,55 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
 }
 
 function MdmSection({ devices: fullDevices, apps: fullApps, syncing, onSync }) {
-  const staleCount = useMemo(() =>
-    fullDevices.filter((d) => d.last_reported && (Date.now() - new Date(d.last_reported).getTime()) > 7 * 24 * 60 * 60 * 1000).length,
-    [fullDevices]);
-  const nonCompliant = fullDevices.filter((d) => d.compliant !== true).length;
-
   return (
     <WizardSection id="mdm" kicker="Mobile Device Management" title="MDM / Hexnode" icon="📱" accent="#06b6d4"
       meta={`${fullDevices.length} devices · ${fullApps.length} applications`} syncing={syncing} onSync={onSync}>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <FilterByDays data={fullDevices} dateFn={(d) => d.last_reported || d.enrolled_at}>
-          {({ filtered }) => <StatCard title="Enrolled Devices" value={filtered.length} color="blue" />}
+          {({ current, previous, isFiltered }) => (
+            <StatCard
+              title="Enrolled Devices"
+              value={current.length}
+              cur={current.length}
+              prev={isFiltered ? previous.length : null}
+              color="blue"
+              goodWhenUp={true}
+            />
+          )}
         </FilterByDays>
         <StatCard title="Applications Tracked" value={fullApps.length} color="purple" />
         <FilterByDays data={fullDevices} dateFn={(d) => d.last_reported || d.enrolled_at}>
-          {({ filtered }) => <StatCard title="Non-compliant" value={filtered.filter((d) => d.compliant !== true).length} color="red" goodWhenUp={false} />}
+          {({ current, previous, isFiltered }) => {
+            const curVal = current.filter((d) => d.compliant !== true).length;
+            const prevVal = isFiltered ? previous.filter((d) => d.compliant !== true).length : null;
+            return (
+              <StatCard
+                title="Non-compliant"
+                value={curVal}
+                cur={curVal}
+                prev={prevVal}
+                color="red"
+                goodWhenUp={false}
+              />
+            );
+          }}
         </FilterByDays>
         <FilterByDays data={fullDevices} dateFn={(d) => d.last_reported || d.enrolled_at}>
-          {({ filtered }) => <StatCard title="Stale Devices (>7d)" value={filtered.filter((d) => d.last_reported && (Date.now() - new Date(d.last_reported).getTime()) > 7*24*60*60*1000).length} color="red" goodWhenUp={false} />}
+          {({ current, previous, isFiltered }) => {
+            const isStale = (d) => d.last_reported && (Date.now() - new Date(d.last_reported).getTime()) > 7 * 24 * 60 * 60 * 1000;
+            const curVal = current.filter(isStale).length;
+            const prevVal = isFiltered ? previous.filter(isStale).length : null;
+            return (
+              <StatCard
+                title="Stale Devices (>7d)"
+                value={curVal}
+                cur={curVal}
+                prev={prevVal}
+                color="red"
+                goodWhenUp={false}
+              />
+            );
+          }}
         </FilterByDays>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1216,8 +1532,8 @@ function MdmSection({ devices: fullDevices, apps: fullApps, syncing, onSync }) {
           { title: 'App Platform Breakdown', fn: () => bucket(fullApps, (a) => a.platform || a.os_type || a.os_name || 'Unknown') },
         ].map((w) => (
           <FilterByDays key={w.title} data={w.title === 'App Platform Breakdown' ? fullApps : fullDevices} dateFn={(d) => w.title === 'App Platform Breakdown' ? null : (d.last_reported || d.enrolled_at)}>
-            {({ filtered, dayPreset, setDayPreset }) => (
-              <ChartCard title={w.title} dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+            {({ filtered }) => (
+              <ChartCard title={w.title} viewOptions={VIEW_OPTIONS}>
                 {(chartType) => <MultiViewChart data={w.fn(filtered)} chartType={chartType} />}
               </ChartCard>
             )}
@@ -1258,6 +1574,16 @@ function NvdSection({ stats, syncing, onSync }) {
   };
 
   // Severity breaks by proper severity colors.
+  const severityData = (arr) => {
+    const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 };
+    arr.forEach((v) => {
+      const s = severityOf(v);
+      counts[s] = (counts[s] || 0) + 1;
+    });
+    return ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN']
+      .filter((s) => counts[s] > 0)
+      .map((s) => ({ name: s, value: counts[s], fill: SEVERITY_COLORS[s] || '#64748b' }));
+  };
 
   // CVSS score buckets (critical/high/medium/low by numeric range).
   const scoreRangeData = (arr) => {
@@ -1290,57 +1616,133 @@ function NvdSection({ stats, syncing, onSync }) {
         <>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             <FilterByDays key="nvd-total" data={rows} dateFn={nvdDateFn}>
-              {({ filtered, dayPreset, setDayPreset }) => (
-                <StatCard title={dayPreset ? `CVEs (last ${dayPreset}d)` : 'Total CVEs'} value={fmtNum(filtered.length)} color="default" subtitle={totalAll ? `${Math.round((filtered.length / totalAll) * 100)}% of all-time` : ''} />
-              )}
+              {({ current, previous, isFiltered }) => {
+                const curVal = current.length;
+                const prevVal = isFiltered ? previous.length : null;
+                return (
+                  <StatCard
+                    title="Total CVEs"
+                    value={fmtNum(curVal)}
+                    cur={curVal}
+                    prev={prevVal}
+                    color="default"
+                    subtitle={totalAll ? `${Math.round((curVal / totalAll) * 100)}% of all-time` : ''}
+                    goodWhenUp={false}
+                  />
+                );
+              }}
             </FilterByDays>
             {['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map((s) => (
               <FilterByDays key={`nvd-${s}`} data={rows} dateFn={nvdDateFn}>
-                {({ filtered }) => <StatCard title={s} value={fmtNum(filtered.filter((v) => severityOf(v) === s).length)} color={{ CRITICAL: 'purple', HIGH: 'red', MEDIUM: 'yellow', LOW: 'blue' }[s]} />}
+                {({ current, previous, isFiltered }) => {
+                  const curVal = current.filter((v) => severityOf(v) === s).length;
+                  const prevVal = isFiltered ? previous.filter((v) => severityOf(v) === s).length : null;
+                  return (
+                    <StatCard
+                      title={s}
+                      value={fmtNum(curVal)}
+                      cur={curVal}
+                      prev={prevVal}
+                      color={{ CRITICAL: 'purple', HIGH: 'red', MEDIUM: 'yellow', LOW: 'blue' }[s]}
+                      goodWhenUp={false}
+                    />
+                  );
+                }}
               </FilterByDays>
             ))}
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <FilterByDays key="nvd-hi" data={rows} dateFn={nvdDateFn}>
-              {({ filtered }) => {
-                const n = filtered.length;
-                const critHigh = filtered.filter((v) => ['CRITICAL', 'HIGH'].includes(severityOf(v))).length;
-                return <StatCard title="Critical + High" value={fmtNum(critHigh)} color="red" subtitle={n ? `${Math.round((critHigh / n) * 100)}% of window` : ''} />;
+              {({ current, previous, isFiltered }) => {
+                const n = current.length;
+                const curCritHigh = current.filter((v) => ['CRITICAL', 'HIGH'].includes(severityOf(v))).length;
+                const prevCritHigh = isFiltered ? previous.filter((v) => ['CRITICAL', 'HIGH'].includes(severityOf(v))).length : null;
+                return (
+                  <StatCard
+                    title="Critical + High"
+                    value={fmtNum(curCritHigh)}
+                    cur={curCritHigh}
+                    prev={prevCritHigh}
+                    color="red"
+                    subtitle={n ? `${Math.round((curCritHigh / n) * 100)}% of window` : ''}
+                    goodWhenUp={false}
+                  />
+                );
               }}
             </FilterByDays>
             <FilterByDays key="nvd-avg" data={rows} dateFn={nvdDateFn}>
-              {({ filtered }) => {
-                const scs = filtered.map((v) => Number(v.cvss_base_score)).filter((s) => !isNaN(s));
-                const avg = scs.length ? (scs.reduce((a, b) => a + b, 0) / scs.length) : null;
-                return <StatCard title="Avg CVSS Score" value={avg != null ? avg.toFixed(1) : '—'} color="default" subtitle={`${scs.length} scored CVEs`} />;
+              {({ current, previous, isFiltered }) => {
+                const curScs = current.map((v) => Number(v.cvss_base_score)).filter((s) => !isNaN(s));
+                const curAvg = curScs.length ? Number((curScs.reduce((a, b) => a + b, 0) / curScs.length).toFixed(1)) : null;
+                const prevScs = isFiltered ? previous.map((v) => Number(v.cvss_base_score)).filter((s) => !isNaN(s)) : [];
+                const prevAvg = prevScs.length ? Number((prevScs.reduce((a, b) => a + b, 0) / prevScs.length).toFixed(1)) : null;
+                return (
+                  <StatCard
+                    title="Avg CVSS Score"
+                    value={curAvg != null ? curAvg.toFixed(1) : '—'}
+                    cur={curAvg}
+                    prev={prevAvg}
+                    color="default"
+                    subtitle={`${curScs.length} scored CVEs`}
+                    goodWhenUp={false}
+                  />
+                );
               }}
             </FilterByDays>
             <FilterByDays key="nvd-weak" data={rows} dateFn={nvdDateFn}>
-              {({ filtered }) => <StatCard title="With Weakness" value={fmtNum(filtered.filter((v) => v.weaknesses).length)} color="green" subtitle={filtered.length ? `${Math.round((filtered.filter((v) => v.weaknesses).length / filtered.length) * 100)}% of window` : ''} />}
+              {({ current, previous, isFiltered }) => {
+                const curVal = current.filter((v) => v.weaknesses).length;
+                const prevVal = isFiltered ? previous.filter((v) => v.weaknesses).length : null;
+                return (
+                  <StatCard
+                    title="With Weakness"
+                    value={fmtNum(curVal)}
+                    cur={curVal}
+                    prev={prevVal}
+                    color="green"
+                    subtitle={current.length ? `${Math.round((curVal / current.length) * 100)}% of window` : ''}
+                    goodWhenUp={false}
+                  />
+                );
+              }}
             </FilterByDays>
             <FilterByDays key="nvd-unknown" data={rows} dateFn={nvdDateFn}>
-              {({ filtered }) => <StatCard title="UNKNOWN Severity" value={fmtNum(filtered.filter((v) => severityOf(v) === 'UNKNOWN').length)} color="default" subtitle="no CVSS mapping" />}
+              {({ current, previous, isFiltered }) => {
+                const curVal = current.filter((v) => severityOf(v) === 'UNKNOWN').length;
+                const prevVal = isFiltered ? previous.filter((v) => severityOf(v) === 'UNKNOWN').length : null;
+                return (
+                  <StatCard
+                    title="UNKNOWN Severity"
+                    value={fmtNum(curVal)}
+                    cur={curVal}
+                    prev={prevVal}
+                    color="default"
+                    subtitle="no CVSS mapping"
+                    goodWhenUp={false}
+                  />
+                );
+              }}
             </FilterByDays>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <FilterByDays data={rows} dateFn={nvdDateFn}>
-              {({ filtered, dayPreset, setDayPreset }) => (
-                <ChartCard title="CVEs by Severity" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+              {({ filtered }) => (
+                <ChartCard title="CVEs by Severity" viewOptions={VIEW_OPTIONS}>
                   {(chartType) => <MultiViewChart data={severityData(filtered)} chartType={chartType} />}
                 </ChartCard>
               )}
             </FilterByDays>
             <FilterByDays data={rows} dateFn={nvdDateFn}>
-              {({ filtered, dayPreset, setDayPreset }) => (
-                <ChartCard title="CVEs by Status" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+              {({ filtered }) => (
+                <ChartCard title="CVEs by Status" viewOptions={VIEW_OPTIONS}>
                   {(chartType) => <MultiViewChart data={bucket(filtered, (v) => v.vuln_status || 'Analyzed')} chartType={chartType} />}
                 </ChartCard>
               )}
             </FilterByDays>
             <FilterByDays data={rows} dateFn={nvdDateFn}>
-              {({ filtered, dayPreset, setDayPreset }) => (
-                <ChartCard title="CVEs by CVSS Score Range" subtitle="critical · high · medium · low buckets" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+              {({ filtered }) => (
+                <ChartCard title="CVEs by CVSS Score Range" subtitle="critical · high · medium · low buckets" viewOptions={VIEW_OPTIONS}>
                   {(chartType) => <MultiViewChart data={scoreRangeData(filtered)} chartType={chartType} />}
                 </ChartCard>
               )}
@@ -1385,11 +1787,6 @@ function cpState(arr) {
   return Object.entries(counts).map(([name, value]) => ({ name, value, fill: CP_STATE_COLORS[name] ?? '#6366f1' }));
 }
 function cpTypes(arr) { return bucket(arr, (e) => e.type || 'unknown'); }
-function cpByType(arr) {
-  const counts = {};
-  arr.forEach((e) => { const t = e.type || 'unknown'; counts[t] = (counts[t] || 0) + 1; });
-  return Object.entries(counts).sort(([, a], [, b]) => b - a).map(([name, value]) => ({ name, value }));
-}
 function cpConfidence(arr) {
   const counts = {};
   arr.forEach((e) => { const c = (e.confidenceIndicator ?? 'unknown').toLowerCase(); counts[c] = (counts[c] || 0) + 1; });
@@ -1443,38 +1840,6 @@ function CheckpointSection({ events: fullEvents, syncing, onSync }) {
     return { total, remediated, pending };
   }, [events]);
 
-  const SEV_LABELS = { 0: 'Informational', 1: 'Low', 2: 'Medium', 3: 'High', 4: 'Critical' };
-  const SEV_COLORS = ['#22c55e', '#84cc16', '#f59e0b', '#f97316', '#ef4444'];
-  const severityData = useMemo(() => {
-    const counts = {};
-    events.forEach((e) => { const s = e.severity ?? '?'; counts[s] = (counts[s] || 0) + 1; });
-    return Object.entries(counts)
-      .sort(([a], [b]) => Number(a) - Number(b))
-      .map(([sev, value]) => ({ name: SEV_LABELS[sev] ?? `Sev ${sev}`, value, fill: SEV_COLORS[Number(sev) % SEV_COLORS.length] }));
-  }, [events]);
-
-  const STATE_COLORS = { new: '#ef4444', pending: '#f97316', detected: '#f59e0b', remediated: '#22c55e', closed: '#3b82f6', done: '#10b981' };
-  const stateData = useMemo(() => {
-    const counts = {};
-    events.forEach((e) => { const s = e.state ?? 'unknown'; counts[s] = (counts[s] || 0) + 1; });
-    return Object.entries(counts).map(([name, value]) => ({ name, value, fill: STATE_COLORS[name] ?? '#6366f1' }));
-  }, [events]);
-
-  const topDomains = useMemo(() => {
-    const counts = {};
-    events.forEach((e) => {
-      if (!e.senderAddress) return;
-      const parts = e.senderAddress.split('@');
-      if (parts.length < 2) return;
-      const domain = parts[parts.length - 1].toLowerCase();
-      counts[domain] = (counts[domain] || 0) + 1;
-    });
-    return Object.entries(counts).sort(([, a], [, b]) => b - a).slice(0, 8).map(([name, count]) => ({ name, count }));
-  }, [events]);
-
-  // Per-event-type breakdown (phishing / malware / dlp / suspicious)
-  const eventTypes = useMemo(() => bucket(events, (e) => e.type || 'unknown'), [events]);
-
   const byTypeData = useMemo(() => {
     const counts = {};
     events.forEach((e) => {
@@ -1484,200 +1849,102 @@ function CheckpointSection({ events: fullEvents, syncing, onSync }) {
     return Object.entries(counts).sort(([, a], [, b]) => b - a).map(([name, value]) => ({ name, value }));
   }, [events]);
 
-  const detected = stats.total - stats.pending - stats.remediated;
-  const remediatedPct = stats.total ? Math.round((stats.remediated / stats.total) * 100) : 0;
-  const pendingPct = stats.total ? Math.round((stats.pending / stats.total) * 100) : 0;
-  const detectedPct = stats.total ? Math.round((detected / stats.total) * 100) : 0;
-
-  // Type × severity matrix (severity mix within each event type)
-  const typeSevData = useMemo(() => {
-    const sevKeys = ['4', '3', '2', '1', '0'];
-    const types = [...new Set(events.map((e) => e.type || 'unknown'))];
-    return types.map((type) => {
-      const row = { name: type };
-      sevKeys.forEach((s) => {
-        row[SEV_LABELS[s]] = events.filter((e) => (e.type || 'unknown') === type && String(e.severity) === s).length;
-      });
-      return row;
-    });
-  }, [events]);
-
-  const avgSeverity = useMemo(() => {
-    const valid = events.filter((e) => e.severity !== '' && e.severity != null && !isNaN(Number(e.severity)));
-    return valid.length ? (valid.reduce((s, e) => s + Number(e.severity), 0) / valid.length).toFixed(1) : null;
-  }, [events]);
-
-  const criticalCount = useMemo(() => events.filter((e) => Number(e.severity) >= 4).length, [events]);
-
   // Interactive daily trend (with type filter + bar/line toggle)
   const [cpChartMode, setCpChartMode] = useState('bar');
   const [cpTypeFilter, setCpTypeFilter] = useState('');
-  const [cpDayPreset, setCpDayPreset] = useState(null);
-  const cpRange = presetToRange(cpDayPreset);
-  const cpEventsInWindow = useMemo(() =>
-    (!cpRange.from && !cpRange.to) ? events : splitByWindow(events, (e) => e.eventCreated, cpRange.from, cpRange.to).current,
-    [events, cpRange.from, cpRange.to]);
-  const filteredForTrend = useMemo(() =>
-    cpTypeFilter ? events.filter((e) => (e.type || 'unknown') === cpTypeFilter) : events
-    , [events, cpTypeFilter]);
-  const interactiveDailyTrend = useMemo(() => {
-    const counts = {};
-    filteredForTrend.forEach((e) => {
-      const d = parseDate(e.eventCreated);
-      if (!d) return;
-      const key = d.toISOString().slice(0, 10);
-      counts[key] = (counts[key] || 0) + 1;
-    });
-    return Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)).slice(-25)
-      .map(([date, count]) => ({ date, count }));
-  }, [filteredForTrend]);
-
-  // Confidence distribution
-  const confidenceData = useMemo(() => {
-    const counts = {};
-    events.forEach((e) => {
-      const c = (e.confidenceIndicator ?? 'unknown').toLowerCase();
-      counts[c] = (counts[c] || 0) + 1;
-    });
-    const CONF_COLORS = { malicious: '#ef4444', suspicious: '#f97316', detected: '#f59e0b', unknown: '#94a3b8' };
-    return Object.entries(counts).map(([name, value]) => ({ name, value, fill: CONF_COLORS[name] ?? '#6366f1' }));
-  }, [events]);
-
-  // SaaS / mail platform distribution
-  const saasData = useMemo(() => {
-    const counts = {};
-    events.forEach((e) => {
-      const p = e.platform || e.saas || 'Unknown';
-      counts[p] = (counts[p] || 0) + 1;
-    });
-    const PALETTE = ['#6366f1', '#f97316', '#22c55e', '#ef4444', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6'];
-    return Object.entries(counts).sort(([, a], [, b]) => b - a)
-      .map(([name, value], i) => ({ name, value, fill: PALETTE[i % PALETTE.length] }));
-  }, [events]);
-
-  // Cumulative timeline
-  const cumulativeTimeline = useMemo(() => {
-    const counts = {};
-    events.forEach((e) => {
-      const d = parseDate(e.eventCreated);
-      if (!d) return;
-      const key = d.toISOString().slice(0, 10);
-      counts[key] = (counts[key] || 0) + 1;
-    });
-    let cumulative = 0;
-    return Object.entries(counts).sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, count]) => { cumulative += count; return { date, cumulative }; });
-  }, [events]);
-
-  // Remediation rate over time
-  const remediationRateOverTime = useMemo(() => {
-    const byDay = {};
-    events.forEach((e) => {
-      const d = parseDate(e.eventCreated);
-      if (!d) return;
-      const key = d.toISOString().slice(0, 10);
-      if (!byDay[key]) byDay[key] = { total: 0, remediated: 0 };
-      byDay[key].total++;
-      if (e.state === 'remediated' || e.state === 'closed' || e.state === 'done') byDay[key].remediated++;
-    });
-    return Object.entries(byDay).sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, { total, remediated }]) => ({
-        date, rate: total > 0 ? Math.round((remediated / total) * 100) : 0,
-      }));
-  }, [events]);
 
   return (
     <WizardSection id="checkpoint" kicker="Email Security" title="Checkpoint Harmony" icon="📧" accent="#6366f1"
       meta={`${events.length} security events`} syncing={syncing} onSync={onSync}>
       {/* KPI row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-        <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
-          {({ filtered }) => <StatCard title="Total Events" value={filtered.length} color="blue" />}
-        </FilterByDays>
-        <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
-          {({ filtered }) => { const s = cpStats(filtered); return <StatCard title="Remediated" value={s.remediated} color="green" subtitle={`${s.remediatedPct}% of total`} />; }}
-        </FilterByDays>
-        <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
-          {({ filtered }) => { const s = cpStats(filtered); return <StatCard title="Pending" value={s.pending} color="red" subtitle={`${s.pendingPct}% of total`} goodWhenUp={false} />; }}
-        </FilterByDays>
-        <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
-          {({ filtered }) => { const s = cpStats(filtered); return <StatCard title="Avg Severity" value={s.avgSeverity ?? '—'} color="yellow" subtitle="out of 5" />; }}
-        </FilterByDays>
-        <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
-          {({ filtered }) => { const s = cpStats(filtered); return <StatCard title="Critical Events" value={s.criticalCount} color="red" subtitle="severity ≥ 4" goodWhenUp={false} />; }}
-        </FilterByDays>
-        <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
-          {({ filtered }) => { const s = cpStats(filtered); return <StatCard title="Detected" value={s.detected} color="orange" subtitle={`${s.detectedPct}% of total`} />; }}
-        </FilterByDays>
-      </div>
+      <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
+        {({ current, previous, isFiltered }) => {
+          const curS = cpStats(current);
+          const prevS = isFiltered ? cpStats(previous) : null;
+          return (
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+              <StatCard title="Total Events" value={curS.total} cur={curS.total} prev={prevS?.total} color="blue" goodWhenUp={false} />
+              <StatCard title="Remediated" value={curS.remediated} cur={curS.remediated} prev={prevS?.remediated} color="green" subtitle={`${curS.remediatedPct}% of total`} goodWhenUp={true} />
+              <StatCard title="Pending" value={curS.pending} cur={curS.pending} prev={prevS?.pending} color="red" subtitle={`${curS.pendingPct}% of total`} goodWhenUp={false} />
+              <StatCard title="Avg Severity" value={curS.avgSeverity ?? '—'} cur={curS.avgSeverity ? parseFloat(curS.avgSeverity) : null} prev={prevS?.avgSeverity ? parseFloat(prevS.avgSeverity) : null} color="yellow" subtitle="out of 5" goodWhenUp={false} />
+              <StatCard title="Critical Events" value={curS.criticalCount} cur={curS.criticalCount} prev={prevS?.criticalCount} color="red" subtitle="severity ≥ 4" goodWhenUp={false} />
+              <StatCard title="Detected" value={curS.detected} cur={curS.detected} prev={prevS?.detected} color="orange" subtitle={`${curS.detectedPct}% of total`} goodWhenUp={false} />
+            </div>
+          );
+        }}
+      </FilterByDays>
 
       <Emailsecuritymttr total={stats.total} remediated={stats.remediated} pending={stats.pending} />
 
       {/* Interactive Events Per Day chart */}
-      <ChartCard dayPresets={DAY_PRESETS} activeDayPreset={cpDayPreset} onDayPreset={setCpDayPreset} viewOptions={VIEW_OPTIONS} title="Security Events Over Time" subtitle={cpTypeFilter ? `filtered: ${cpTypeFilter}` : 'all event types'}>
-        <div className="flex flex-wrap items-center gap-1.5 mb-3 px-1">
-          <button onClick={() => setCpTypeFilter('')}
-            className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${!cpTypeFilter ? 'border-indigo-400 bg-indigo-500/10 text-indigo-500 font-semibold' : 'border-[var(--card-border)] text-[var(--muted)] hover:text-[var(--foreground)]'}`}>
-            All ({events.length})
-          </button>
-          {byTypeData.map((t) => (
-            <button key={t.name} onClick={() => setCpTypeFilter(cpTypeFilter === t.name ? '' : t.name)}
-              className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${cpTypeFilter === t.name ? 'border-indigo-400 bg-indigo-500/10 text-indigo-500 font-semibold' : 'border-[var(--card-border)] text-[var(--muted)] hover:text-[var(--foreground)]'}`}>
-              {t.name} ({t.value})
-            </button>
-          ))}
-          <span className="hidden sm:inline text-[var(--card-border)]">|</span>
-          <div className="flex rounded-lg border border-[var(--card-border)] overflow-hidden">
-            <button onClick={() => setCpChartMode('bar')} className={`text-[11px] px-2.5 py-1 transition-colors ${cpChartMode === 'bar' ? 'bg-indigo-500/10 text-indigo-500 font-semibold' : 'text-[var(--muted)] hover:text-[var(--foreground)]'}`}>📊 Bar</button>
-            <button onClick={() => setCpChartMode('line')} className={`text-[11px] px-2.5 py-1 transition-colors ${cpChartMode === 'line' ? 'bg-indigo-500/10 text-indigo-500 font-semibold' : 'text-[var(--muted)] hover:text-[var(--foreground)]'}`}>📈 Line</button>
-          </div>
-        </div>
-        <div style={{ height: 288 }}>
-          {cpTrend(cpEventsInWindow, cpTypeFilter).length === 0 ? <Empty /> : (
-            <ResponsiveContainer width="100%" height="100%">
-              {cpChartMode === 'bar' ? (
-                <BarChart data={cpTrend(cpEventsInWindow, cpTypeFilter)} margin={{ top: 8, right: 16, left: 0, bottom: 20 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                  <XAxis dataKey="date" tick={{ fontSize: 9, fill: 'var(--muted)' }} angle={-30} textAnchor="end" interval={0} height={50} tickFormatter={(v) => v.slice(5)} />
-                  <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} />
-                  <Bar dataKey="count" name="Events" radius={[4, 4, 0, 0]} maxBarSize={24}>
-                    {cpTrend(cpEventsInWindow, cpTypeFilter).map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
-                  </Bar>
-                </BarChart>
-              ) : (
-                <LineChart data={cpTrend(cpEventsInWindow, cpTypeFilter)} margin={{ top: 8, right: 16, left: 0, bottom: 20 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                  <XAxis dataKey="date" tick={{ fontSize: 9, fill: 'var(--muted)' }} angle={-30} textAnchor="end" interval={0} height={50} tickFormatter={(v) => v.slice(5)} />
-                  <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} />
-                  <Line type="monotone" dataKey="count" name="Events" stroke="#6366f1" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
-                </LineChart>
+      <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
+        {({ filtered }) => (
+          <ChartCard viewOptions={VIEW_OPTIONS} title="Security Events Over Time" subtitle={cpTypeFilter ? `filtered: ${cpTypeFilter}` : 'all event types'}>
+            <div className="flex flex-wrap items-center gap-1.5 mb-3 px-1">
+              <button onClick={() => setCpTypeFilter('')}
+                className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${!cpTypeFilter ? 'border-indigo-400 bg-indigo-500/10 text-indigo-500 font-semibold' : 'border-[var(--card-border)] text-[var(--muted)] hover:text-[var(--foreground)]'}`}>
+                All ({filtered.length})
+              </button>
+              {byTypeData.map((t) => (
+                <button key={t.name} onClick={() => setCpTypeFilter(cpTypeFilter === t.name ? '' : t.name)}
+                  className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${cpTypeFilter === t.name ? 'border-indigo-400 bg-indigo-500/10 text-indigo-500 font-semibold' : 'border-[var(--card-border)] text-[var(--muted)] hover:text-[var(--foreground)]'}`}>
+                  {t.name} ({t.value})
+                </button>
+              ))}
+              <span className="hidden sm:inline text-[var(--card-border)]">|</span>
+              <div className="flex rounded-lg border border-[var(--card-border)] overflow-hidden">
+                <button onClick={() => setCpChartMode('bar')} className={`text-[11px] px-2.5 py-1 transition-colors ${cpChartMode === 'bar' ? 'bg-indigo-500/10 text-indigo-500 font-semibold' : 'text-[var(--muted)] hover:text-[var(--foreground)]'}`}>📊 Bar</button>
+                <button onClick={() => setCpChartMode('line')} className={`text-[11px] px-2.5 py-1 transition-colors ${cpChartMode === 'line' ? 'bg-indigo-500/10 text-indigo-500 font-semibold' : 'text-[var(--muted)] hover:text-[var(--foreground)]'}`}>📈 Line</button>
+              </div>
+            </div>
+            <div style={{ height: 288 }}>
+              {cpTrend(filtered, cpTypeFilter).length === 0 ? <Empty /> : (
+                <ResponsiveContainer width="100%" height="100%">
+                  {cpChartMode === 'bar' ? (
+                    <BarChart data={cpTrend(filtered, cpTypeFilter)} margin={{ top: 8, right: 16, left: 0, bottom: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+                      <XAxis dataKey="date" tick={{ fontSize: 9, fill: 'var(--muted)' }} angle={-30} textAnchor="end" interval={0} height={50} tickFormatter={(v) => v.slice(5)} />
+                      <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+                      <Tooltip contentStyle={TOOLTIP_STYLE} />
+                      <Bar dataKey="count" name="Events" radius={[4, 4, 0, 0]} maxBarSize={24}>
+                        {cpTrend(filtered, cpTypeFilter).map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                      </Bar>
+                    </BarChart>
+                  ) : (
+                    <LineChart data={cpTrend(filtered, cpTypeFilter)} margin={{ top: 8, right: 16, left: 0, bottom: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+                      <XAxis dataKey="date" tick={{ fontSize: 9, fill: 'var(--muted)' }} angle={-30} textAnchor="end" interval={0} height={50} tickFormatter={(v) => v.slice(5)} />
+                      <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
+                      <Tooltip contentStyle={TOOLTIP_STYLE} />
+                      <Line type="monotone" dataKey="count" name="Events" stroke="#6366f1" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+                    </LineChart>
+                  )}
+                </ResponsiveContainer>
               )}
-            </ResponsiveContainer>
-          )}
-        </div>
-      </ChartCard>
+            </div>
+          </ChartCard>
+        )}
+      </FilterByDays>
 
       {/* Severity / Event Type / Event State donuts */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="Severity Distribution" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+          {({ filtered }) => (
+            <ChartCard title="Severity Distribution" viewOptions={VIEW_OPTIONS}>
               {(chartType) => <MultiViewChart data={cpSeverity(filtered)} chartType={chartType} />}
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="Event Type" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+          {({ filtered }) => (
+            <ChartCard title="Event Type" viewOptions={VIEW_OPTIONS}>
               {(chartType) => <MultiViewChart data={cpTypes(filtered)} chartType={chartType} />}
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="Event State" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+          {({ filtered }) => (
+            <ChartCard title="Event State" viewOptions={VIEW_OPTIONS}>
               {(chartType) => <MultiViewChart data={cpState(filtered)} chartType={chartType} />}
             </ChartCard>
           )}
@@ -1688,16 +1955,16 @@ function CheckpointSection({ events: fullEvents, syncing, onSync }) {
       {cpConfidence(events).length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
-            {({ filtered, dayPreset, setDayPreset }) => (
-              <ChartCard title="Confidence Indicator" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+            {({ filtered }) => (
+              <ChartCard title="Confidence Indicator" viewOptions={VIEW_OPTIONS}>
                 {(chartType) => <MultiViewChart data={cpConfidence(filtered)} chartType={chartType} />}
               </ChartCard>
             )}
           </FilterByDays>
           {cpSaas(events).length > 0 && (
             <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
-              {({ filtered, dayPreset, setDayPreset }) => (
-                <ChartCard title="SaaS Platform Distribution" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+              {({ filtered }) => (
+                <ChartCard title="SaaS Platform Distribution" viewOptions={VIEW_OPTIONS}>
                   {(chartType) => <MultiViewChart data={cpSaas(filtered)} chartType={chartType} />}
                 </ChartCard>
               )}
@@ -1708,8 +1975,8 @@ function CheckpointSection({ events: fullEvents, syncing, onSync }) {
 
       {/* Event Type × Severity */}
       <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
-        {({ filtered, dayPreset, setDayPreset }) => (
-          <ChartCard title="Event Type × Severity" subtitle="severity mix within each event type" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+        {({ filtered }) => (
+          <ChartCard title="Event Type × Severity" subtitle="severity mix within each event type" viewOptions={VIEW_OPTIONS}>
             <div style={{ height: 288 }}>
               {cpTypeSev(filtered).length === 0 ? <Empty /> : (
                 <ResponsiveContainer width="100%" height="100%">
@@ -1733,8 +2000,8 @@ function CheckpointSection({ events: fullEvents, syncing, onSync }) {
       {/* Cumulative Timeline + Remediation Rate Over Time */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="Cumulative Events Over Time" subtitle="running total of security events" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+          {({ filtered }) => (
+            <ChartCard title="Cumulative Events Over Time" subtitle="running total of security events" viewOptions={VIEW_OPTIONS}>
               <div style={{ height: 260 }}>
                 {cpCumulative(filtered).length === 0 ? <Empty /> : (
                   <ResponsiveContainer width="100%" height="100%">
@@ -1752,8 +2019,8 @@ function CheckpointSection({ events: fullEvents, syncing, onSync }) {
           )}
         </FilterByDays>
         <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="Remediation Rate Over Time" subtitle="% events remediated per day" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+          {({ filtered }) => (
+            <ChartCard title="Remediation Rate Over Time" subtitle="% events remediated per day" viewOptions={VIEW_OPTIONS}>
               <div style={{ height: 260 }}>
                 {cpRemediation(filtered).length === 0 ? <Empty /> : (
                   <ResponsiveContainer width="100%" height="100%">
@@ -1908,73 +2175,99 @@ function FirewallSection({ reports, syncing, onSync }) {
   return (
     <WizardSection id="firewall" kicker="Network Firewall" title="Palo Alto" icon="🔥" accent="#f59e0b"
       meta={`${fmtNum(allRows.length)} report rows`} syncing={syncing} onSync={onSync}>
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        <StatCard title="Total Sessions" value={fmtNum(dashboard.totalSessions)} color="blue" />
-        <StatCard title="Total Traffic" value={formatBytes(dashboard.totalTraffic)} color="cyan" />
-        <StatCard title="High Risk Events" value={fmtNum(dashboard.highRiskEvents)} color="red" />
-        <StatCard title="Top Destination" value={truncateLabel(dashboard.topDestination, 14)} color="default" />
-        <StatCard title="Security Score" value={dashboard.securityScore} color="green" subtitle={dashboard.riskLabel} />
-      </div>
+      <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
+        {({ current, previous, isFiltered }) => {
+          const curRows = current.length ? current : allRows;
+          const curRiskRows = curRows.filter((r) => r.report === 'risk-trend');
+          const curTotalSessions = fwSum(curRows, ['nsess', 'sessions', 'session', 'count']);
+          const curTotalTraffic = fwSum(curRows, ['nbytes', 'bytes', 'byte']);
+          const curHighRisk = (curRiskRows.length ? curRiskRows : curRows).reduce((sum, row) => {
+            const risk = parseNumber(fwFirst(row, ['risk', 'name', 'severity'], 0));
+            return risk >= 4 ? sum + parseNumber(fwFirst(row, ['count', 'nrepeat', 'nsess', 'sessions'], 1)) : sum;
+          }, 0);
+          const curTopDestEntry = fwTopChart(curRows, ['dst', 'destination', 'destination_ip', 'name'], 1)[0];
+          const curScore = Math.min(100, Math.max(0, Math.round(100 - curHighRisk * 0.5)));
+
+          const prevRows = isFiltered ? previous : null;
+          const prevTotalSessions = prevRows ? fwSum(prevRows, ['nsess', 'sessions', 'session', 'count']) : null;
+          const prevTotalTraffic = prevRows ? fwSum(prevRows, ['nbytes', 'bytes', 'byte']) : null;
+          const prevHighRisk = prevRows ? (prevRows.filter((r) => r.report === 'risk-trend').length ? prevRows.filter((r) => r.report === 'risk-trend') : prevRows).reduce((sum, row) => {
+            const risk = parseNumber(fwFirst(row, ['risk', 'name', 'severity'], 0));
+            return risk >= 4 ? sum + parseNumber(fwFirst(row, ['count', 'nrepeat', 'nsess', 'sessions'], 1)) : sum;
+          }, 0) : null;
+          const prevScore = prevHighRisk != null ? Math.min(100, Math.max(0, Math.round(100 - prevHighRisk * 0.5))) : null;
+
+          return (
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              <StatCard title="Total Sessions" value={fmtNum(curTotalSessions)} cur={curTotalSessions} prev={prevTotalSessions} color="blue" goodWhenUp={true} />
+              <StatCard title="Total Traffic" value={formatBytes(curTotalTraffic)} cur={curTotalTraffic} prev={prevTotalTraffic} color="cyan" goodWhenUp={true} />
+              <StatCard title="High Risk Events" value={fmtNum(curHighRisk)} cur={curHighRisk} prev={prevHighRisk} color="red" goodWhenUp={false} />
+              <StatCard title="Top Destination" value={truncateLabel(curTopDestEntry?.name || dashboard.topDestination, 14)} color="default" />
+              <StatCard title="Security Score" value={curScore} cur={curScore} prev={prevScore} color="green" subtitle={curScore >= 80 ? 'Excellent' : curScore >= 50 ? 'Warning' : 'Critical'} goodWhenUp={true} />
+            </div>
+          );
+        }}
+      </FilterByDays>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="Risk-wise Distribution" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+          {({ filtered }) => (
+            <ChartCard title="Risk-wise Distribution" viewOptions={VIEW_OPTIONS}>
               {(chartType) => <MultiViewChart data={fwRiskDistribution(filtered)} chartType={chartType} />}
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="Top Attacks" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
-              {(chartType) => <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['threatid', 'threat', 'name', 'category'])} dataKey="value" name="Count" color="#ef4444" /></div>}
+          {({ filtered }) => (
+            <ChartCard title="Top Attacks">
+              <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['threatid', 'threat', 'name', 'category'])} dataKey="value" name="Count" color="#ef4444" /></div>
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="Top Sources" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
-              {(chartType) => <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['src', 'source', 'source_ip', 'name'])} dataKey="value" name="Count" color="#3b82f6" /></div>}
+          {({ filtered }) => (
+            <ChartCard title="Top Sources">
+              <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['src', 'source', 'source_ip', 'name'])} dataKey="value" name="Count" color="#3b82f6" /></div>
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="Top Denied Destinations" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
-              {(chartType) => <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['dst', 'destination', 'destination_ip', 'name'])} dataKey="value" name="Count" color="#f59e0b" /></div>}
+          {({ filtered }) => (
+            <ChartCard title="Top Denied Destinations">
+              <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['dst', 'destination', 'destination_ip', 'name'])} dataKey="value" name="Count" color="#f59e0b" /></div>
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="Top Denied Sources" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
-              {(chartType) => <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['src', 'source', 'source_ip', 'name'])} dataKey="value" name="Count" color="#06b6d4" /></div>}
+          {({ filtered }) => (
+            <ChartCard title="Top Denied Sources">
+              <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['src', 'source', 'source_ip', 'name'])} dataKey="value" name="Count" color="#06b6d4" /></div>
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="Top Denied Applications" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
-              {(chartType) => <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['application', 'category', 'name'])} dataKey="value" name="Count" color="#8b5cf6" /></div>}
+          {({ filtered }) => (
+            <ChartCard title="Top Denied Applications">
+              <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['application', 'category', 'name'])} dataKey="value" name="Count" color="#8b5cf6" /></div>
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="Top Connections" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
-              {(chartType) => <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['source', 'destination', 'name', 'src', 'dst'])} dataKey="value" name="Count" color="#ec4899" /></div>}
+          {({ filtered }) => (
+            <ChartCard title="Top Connections">
+              <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['source', 'destination', 'name', 'src', 'dst'])} dataKey="value" name="Count" color="#ec4899" /></div>
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="Risky Users" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
-              {(chartType) => <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['user', 'username', 'source_user', 'name'], 8)} dataKey="value" name="Count" color="#ef4444" /></div>}
+          {({ filtered }) => (
+            <ChartCard title="Risky Users">
+              <div style={{ height: 288 }}><HBar data={fwTopChart(filtered, ['user', 'username', 'source_user', 'name'], 8)} dataKey="value" name="Count" color="#ef4444" /></div>
             </ChartCard>
           )}
         </FilterByDays>
       </div>
       {dashboard.riskTrend.length > 0 && (
-        <ChartCard dayPresets={DAY_PRESETS} viewOptions={VIEW_OPTIONS} title="Risk Trend Over Time" subtitle="bars = traffic · line = sessions">
+        <ChartCard viewOptions={VIEW_OPTIONS} title="Risk Trend Over Time" subtitle="bars = traffic · line = sessions">
           <div style={{ height: 260 }}>
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={dashboard.riskTrend} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
@@ -2017,22 +2310,6 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
       .sort((a, b) => b.value - a.value),
     [tickets]);
 
-  const departmentData = useMemo(() =>
-    Object.entries(tickets.reduce((acc, t) => {
-      const d = getDept(t);
-      acc[d] = (acc[d] || 0) + 1;
-      return acc;
-    }, {})).map(([name, value]) => ({ name: truncateLabel(name), fullName: name, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 8),
-    [tickets]);
-
-  const highPriority = tickets.filter((t) => t.priority === 'High' || t.priority === 'Critical').length;
-  const closed = tickets.filter((t) => ['Closed', 'Technically Closed', 'Resolved'].includes(t.status)).length;
-  const openTickets = tickets.filter((t) => t.status === 'Open').length;
-  const closedPct = tickets.length ? Math.round((closed / tickets.length) * 100) : 0;
-  const onHold = tickets.filter((t) => /on hold/i.test(t.status || '')).length;
-
   // ── Interactive filter (status / priority chips) ──
   const [filterStatus, setFilterStatus] = useState('');
   const [filterPriority, setFilterPriority] = useState('');
@@ -2045,148 +2322,75 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
   const getCreated = (t) => parseDate(t.created_at || t.createdTime || t.createdAt);
   const getClosed = (t) => parseDate(t.closed_at || t.closedTime || t.closedAt || t.closeTime);
 
-  // Avg response time (created → first response) and resolution time (created → closed)
-  const timeMetrics = useMemo(() => {
-    let respSum = 0, respCount = 0, resSum = 0, resCount = 0;
-    tickets.forEach((t) => {
-      const created = getCreated(t);
-      if (!created) return;
-      const respRaw = t.customerResponseTime || t.customer_response_time || t.responseTime;
-      if (respRaw) {
-        const resp = parseDuration(respRaw);
-        if (resp != null) { respSum += resp; respCount++; }
-      }
-      const closedAt = getClosed(t);
-      if (closedAt && isClosed(t)) { resSum += (closedAt.getTime() - created.getTime()) / 60000; resCount++; }
-    });
-    return {
-      avgResponse: respCount ? respSum / respCount : null,
-      avgResolution: resCount ? resSum / resCount : null,
-    };
-  }, [tickets]);
-
-  // Ticket volume trend (daily, by created date)
-  const ticketTrend = useMemo(() => {
-    const counts = {};
-    tickets.forEach((t) => {
-      const d = getCreated(t);
-      if (!d) return;
-      const key = d.toISOString().slice(0, 10);
-      counts[key] = (counts[key] || 0) + 1;
-    });
-    return Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)).slice(-20).map(([date, count]) => ({ date, count }));
-  }, [tickets]);
-
-  // Open-ticket aging buckets (how long currently-open tickets have been open)
-  const openAging = useMemo(() => {
-    const buckets = { '< 1 day': 0, '1-3 days': 0, '3-7 days': 0, '7-14 days': 0, '> 14 days': 0 };
-    tickets.forEach((t) => {
-      if (!['Open', 'Pending', 'On Hold'].some((s) => normText(t.status).toLowerCase() === s.toLowerCase()) && !/pending|on hold/.test(normText(t.status).toLowerCase())) return;
-      const d = getCreated(t);
-      if (!d) return;
-      const days = (Date.now() - d.getTime()) / 86400000;
-      if (days < 1) buckets['< 1 day']++;
-      else if (days < 3) buckets['1-3 days']++;
-      else if (days < 7) buckets['3-7 days']++;
-      else if (days < 14) buckets['7-14 days']++;
-      else buckets['> 14 days']++;
-    });
-    return Object.entries(buckets).filter(([, v]) => v > 0).map(([name, value], i) => ({ name, value, fill: CHART_COLORS[i % CHART_COLORS.length] }));
-  }, [tickets]);
-
-  // Avg resolution time per department
-  const resolutionByDept = useMemo(() => {
-    const map = {};
-    tickets.forEach((t) => {
-      const created = getCreated(t);
-      const closedAt = getClosed(t);
-      if (!created || !closedAt || !isClosed(t)) return;
-      const dept = getDept(t);
-      const mins = (closedAt.getTime() - created.getTime()) / 60000;
-      if (!map[dept]) map[dept] = { sum: 0, count: 0 };
-      map[dept].sum += mins; map[dept].count++;
-    });
-    return Object.entries(map).map(([name, { sum, count }]) => ({ name: truncateLabel(name), fullName: name, value: sum / count }))
-      .sort((a, b) => b.value - a.value).slice(0, 8);
-  }, [tickets]);
-
-  // Top assignees
-  const assigneeData = useMemo(() => {
-    const counts = {};
-    tickets.forEach((t) => {
-      const a = `${normText(t.assignee?.firstName)} ${normText(t.assignee?.lastName)}`.trim() || 'Unassigned';
-      counts[a] = (counts[a] || 0) + 1;
-    });
-    return Object.entries(counts).map(([name, value]) => ({ name: truncateLabel(name), fullName: name, value }))
-      .sort((a, b) => b.value - a.value).slice(0, 8);
-  }, [tickets]);
-
-  // Top contacts (reporters/customers)
-  const contactData = useMemo(() => {
-    const counts = {};
-    tickets.forEach((t) => {
-      const c = `${normText(t.contact?.firstName)} ${normText(t.contact?.lastName)}`.trim() || normText(t.contact?.email) || 'Unknown';
-      counts[c] = (counts[c] || 0) + 1;
-    });
-    return Object.entries(counts).map(([name, value]) => ({ name: truncateLabel(name), fullName: name, value }))
-      .sort((a, b) => b.value - a.value).slice(0, 8);
-  }, [tickets]);
-
-  // Status × Priority stacked bar (driven by the interactive filter)
-  const statusPriorityData = useMemo(() => {
-    const states = [...new Set(tickets.map((t) => normText(t.status) || 'Unknown'))].slice(0, 6);
-    const prios = [...new Set(tickets.map((t) => normText(t.priority) || 'Unknown'))]
-      .sort((a, b) => ['Critical', 'High', 'Medium', 'Low'].indexOf(a) - ['Critical', 'High', 'Medium', 'Low'].indexOf(b));
-    return states.map((status) => {
-      const row = { name: status };
-      prios.forEach((p) => { row[p] = tickets.filter((t) => normText(t.status) === status && normText(t.priority) === p).length; });
-      return row;
-    });
-  }, [tickets]);
-
   return (
     <WizardSection id="zoho" kicker="Ticketing" title="Zoho Desk" icon="🎫" accent="#3b82f6"
       meta={`${tickets.length} tickets`} syncing={syncing} onSync={onSync}>
 
       {/* Primary KPIs */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
-          {({ filtered }) => <StatCard title="Total" value={filtered.length} color="purple" />}
-        </FilterByDays>
-        <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
-          {({ filtered }) => <StatCard title="Open" value={filtered.filter((t) => t.status === 'Open').length} color="blue" goodWhenUp={false} />}
-        </FilterByDays>
-        <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
-          {({ filtered }) => <StatCard title="High Priority" value={filtered.filter((t) => t.priority === 'High' || t.priority === 'Critical').length} color="red" goodWhenUp={false} />}
-        </FilterByDays>
-        <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
-          {({ filtered }) => { const c = filtered.filter((t) => ['Closed', 'Technically Closed', 'Resolved'].includes(t.status)).length; return <StatCard title="Closed" value={c} color="green" subtitle={`${filtered.length ? Math.round((c / filtered.length) * 100) : 0}% of total`} />; }}
-        </FilterByDays>
-      </div>
+      <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
+        {({ current, previous, isFiltered }) => {
+          const curTotal = current.length;
+          const prevTotal = isFiltered ? previous.length : null;
+
+          const curOpen = current.filter((t) => t.status === 'Open').length;
+          const prevOpen = isFiltered ? previous.filter((t) => t.status === 'Open').length : null;
+
+          const curHighPrio = current.filter((t) => t.priority === 'High' || t.priority === 'Critical').length;
+          const prevHighPrio = isFiltered ? previous.filter((t) => t.priority === 'High' || t.priority === 'Critical').length : null;
+
+          const curClosed = current.filter((t) => ['Closed', 'Technically Closed', 'Resolved'].includes(t.status)).length;
+          const prevClosed = isFiltered ? previous.filter((t) => ['Closed', 'Technically Closed', 'Resolved'].includes(t.status)).length : null;
+
+          return (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <StatCard title="Total" value={curTotal} cur={curTotal} prev={prevTotal} color="purple" goodWhenUp={true} />
+              <StatCard title="Open" value={curOpen} cur={curOpen} prev={prevOpen} color="blue" goodWhenUp={false} />
+              <StatCard title="High Priority" value={curHighPrio} cur={curHighPrio} prev={prevHighPrio} color="red" goodWhenUp={false} />
+              <StatCard title="Closed" value={curClosed} cur={curClosed} prev={prevClosed} color="green" subtitle={`${curTotal ? Math.round((curClosed / curTotal) * 100) : 0}% of total`} goodWhenUp={true} />
+            </div>
+          );
+        }}
+      </FilterByDays>
 
       {/* Secondary KPIs (time-based) */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
-          {({ filtered }) => <StatCard title="On Hold" value={filtered.filter((t) => /on hold/i.test(t.status || '')).length} color="yellow" />}
-        </FilterByDays>
-        <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
-          {({ filtered }) => <StatCard title="Departments" value={filtered.reduce((s, t) => s.add(getDept(t)), new Set()).size} color="default" />}
-        </FilterByDays>
-        <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
-          {({ filtered }) => {
-            let respSum = 0, respCount = 0;
-            filtered.forEach((t) => { const r = t.customerResponseTime || t.customer_response_time || t.responseTime; if (r) { const d = parseDuration(r); if (d != null) { respSum += d; respCount++; } } });
-            return <StatCard title="Avg Response Time" value={respCount ? formatDuration(respSum / respCount) : '—'} color="cyan" subtitle="time to first reply" />;
-          }}
-        </FilterByDays>
-        <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
-          {({ filtered }) => {
-            let resSum = 0, resCount = 0;
-            filtered.forEach((t) => { const c = getCreated(t); const cl = getClosed(t); if (c && cl && isClosed(t)) { resSum += (cl.getTime() - c.getTime()) / 60000; resCount++; } });
-            return <StatCard title="Avg Resolution Time" value={resCount ? formatDuration(resSum / resCount) : '—'} color="green" subtitle="open → closed" />;
-          }}
-        </FilterByDays>
-      </div>
+      <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
+        {({ current, previous, isFiltered }) => {
+          const curHold = current.filter((t) => /on hold/i.test(t.status || '')).length;
+          const prevHold = isFiltered ? previous.filter((t) => /on hold/i.test(t.status || '')).length : null;
+
+          const curDeptCount = current.reduce((s, t) => s.add(getDept(t)), new Set()).size;
+          const prevDeptCount = isFiltered ? previous.reduce((s, t) => s.add(getDept(t)), new Set()).size : null;
+
+          let respSum = 0, respCount = 0;
+          current.forEach((t) => { const r = t.customerResponseTime || t.customer_response_time || t.responseTime; if (r) { const d = parseDuration(r); if (d != null) { respSum += d; respCount++; } } });
+          const curRespAvg = respCount ? respSum / respCount : null;
+
+          let prevRespSum = 0, prevRespCount = 0;
+          if (isFiltered) {
+            previous.forEach((t) => { const r = t.customerResponseTime || t.customer_response_time || t.responseTime; if (r) { const d = parseDuration(r); if (d != null) { prevRespSum += d; prevRespCount++; } } });
+          }
+          const prevRespAvg = prevRespCount ? prevRespSum / prevRespCount : null;
+
+          let resSum = 0, resCount = 0;
+          current.forEach((t) => { const c = getCreated(t); const cl = getClosed(t); if (c && cl && isClosed(t)) { resSum += (cl.getTime() - c.getTime()) / 60000; resCount++; } });
+          const curResAvg = resCount ? resSum / resCount : null;
+
+          let prevResSum = 0, prevResCount = 0;
+          if (isFiltered) {
+            previous.forEach((t) => { const c = getCreated(t); const cl = getClosed(t); if (c && cl && isClosed(t)) { prevResSum += (cl.getTime() - c.getTime()) / 60000; prevResCount++; } });
+          }
+          const prevResAvg = prevResCount ? prevResSum / prevResCount : null;
+
+          return (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <StatCard title="On Hold" value={curHold} cur={curHold} prev={prevHold} color="yellow" goodWhenUp={false} />
+              <StatCard title="Departments" value={curDeptCount} cur={curDeptCount} prev={prevDeptCount} color="default" goodWhenUp={true} />
+              <StatCard title="Avg Response Time" value={curRespAvg != null ? formatDuration(curRespAvg) : '—'} cur={curRespAvg ? Math.round(curRespAvg) : null} prev={prevRespAvg ? Math.round(prevRespAvg) : null} color="cyan" subtitle="time to first reply" goodWhenUp={false} />
+              <StatCard title="Avg Resolution Time" value={curResAvg != null ? formatDuration(curResAvg) : '—'} cur={curResAvg ? Math.round(curResAvg) : null} prev={prevResAvg ? Math.round(prevResAvg) : null} color="green" subtitle="open → closed" goodWhenUp={false} />
+            </div>
+          );
+        }}
+      </FilterByDays>
 
       <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-xl p-4">
         <Ticketingmttr tickets={tickets} />
@@ -2240,12 +2444,12 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
       {/* Volume + aging */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
-          {({ filtered, dayPreset, setDayPreset }) => {
+          {({ filtered }) => {
             const trendCounts = {};
             filtered.forEach((t) => { const d = getCreated(t); if (!d) return; const k = d.toISOString().slice(0, 10); trendCounts[k] = (trendCounts[k] || 0) + 1; });
             const trend = Object.entries(trendCounts).sort(([a], [b]) => a.localeCompare(b)).slice(-20).map(([date, count]) => ({ date, count }));
             return (
-              <ChartCard title="Ticket Volume Trend" subtitle="Daily new tickets" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+              <ChartCard title="Ticket Volume Trend" subtitle="Daily new tickets" viewOptions={VIEW_OPTIONS}>
                 <div style={{ height: 260 }}>
                   {trend.length === 0 ? <Empty /> : (
                     <ResponsiveContainer width="100%" height="100%">
@@ -2270,7 +2474,7 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
           }}
         </FilterByDays>
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
-          {({ filtered, dayPreset, setDayPreset }) => {
+          {({ filtered }) => {
             const buckets = { '< 1 day': 0, '1-3 days': 0, '3-7 days': 0, '7-14 days': 0, '> 14 days': 0 };
             filtered.forEach((t) => {
               if (!['Open', 'Pending', 'On Hold'].some((s) => normText(t.status).toLowerCase() === s.toLowerCase()) && !/pending|on hold/.test(normText(t.status).toLowerCase())) return;
@@ -2280,7 +2484,7 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
             });
             const openAging = Object.entries(buckets).filter(([, v]) => v > 0).map(([name, value], i) => ({ name, value, fill: CHART_COLORS[i % CHART_COLORS.length] }));
             return (
-              <ChartCard title="Open Ticket Aging" subtitle="how long open tickets have been open" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+              <ChartCard title="Open Ticket Aging" subtitle="how long open tickets have been open" viewOptions={VIEW_OPTIONS}>
                 {(chartType) => <div style={{ height: 260 }}>{openAging.length === 0 ? <Empty /> : <MultiViewChart data={openAging} chartType={chartType} height={260} />}</div>}
               </ChartCard>
             );
@@ -2291,8 +2495,8 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
       {/* Status / priority / department */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="By Status" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+          {({ filtered }) => (
+            <ChartCard title="By Status" viewOptions={VIEW_OPTIONS}>
               {(chartType) => {
                 const statusArr = Object.entries(filtered.reduce((acc, t) => { const s = t.status || 'Unknown'; acc[s] = (acc[s] || 0) + 1; return acc; }, {}))
                   .map(([name, value]) => ({ name, value, fill: STATUS_COLORS[name] || '#6366f1' })).sort((a, b) => b.value - a.value);
@@ -2302,8 +2506,8 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
           )}
         </FilterByDays>
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="By Priority" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+          {({ filtered }) => (
+            <ChartCard title="By Priority" viewOptions={VIEW_OPTIONS}>
               <div style={{ height: 288 }}>
                 {(() => {
                   const pArr = Object.entries(filtered.reduce((acc, t) => { const p = t.priority || 'Unknown'; acc[p] = (acc[p] || 0) + 1; return acc; }, {}))
@@ -2327,8 +2531,8 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
           )}
         </FilterByDays>
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="By Department" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+          {({ filtered }) => (
+            <ChartCard title="By Department" viewOptions={VIEW_OPTIONS}>
               <div style={{ height: 288 }}>
                 {(() => {
                   const dArr = Object.entries(filtered.reduce((acc, t) => { const d = getDept(t); acc[d] = (acc[d] || 0) + 1; return acc; }, {}))
@@ -2354,8 +2558,8 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
       {/* Assignees / contacts / resolution time */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="Top Assignees" subtitle="tickets per agent" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+          {({ filtered }) => (
+            <ChartCard title="Top Assignees" subtitle="tickets per agent" viewOptions={VIEW_OPTIONS}>
               <div style={{ height: 288 }}>
                 {(() => {
                   const c = {}; filtered.forEach((t) => { const a = `${normText(t.assignee?.firstName)} ${normText(t.assignee?.lastName)}`.trim() || 'Unassigned'; c[a] = (c[a] || 0) + 1; });
@@ -2377,8 +2581,8 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
           )}
         </FilterByDays>
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="Top Contacts" subtitle="tickets per reporter" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+          {({ filtered }) => (
+            <ChartCard title="Top Contacts" subtitle="tickets per reporter" viewOptions={VIEW_OPTIONS}>
               <div style={{ height: 288 }}>
                 {(() => {
                   const c = {}; filtered.forEach((t) => { const x = `${normText(t.contact?.firstName)} ${normText(t.contact?.lastName)}`.trim() || normText(t.contact?.email) || 'Unknown'; c[x] = (c[x] || 0) + 1; });
@@ -2400,8 +2604,8 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
           )}
         </FilterByDays>
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="Avg Resolution by Department" subtitle="hours to close (open → closed)" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+          {({ filtered }) => (
+            <ChartCard title="Avg Resolution by Department" subtitle="hours to close (open → closed)" viewOptions={VIEW_OPTIONS}>
               <div style={{ height: 288 }}>
                 {(() => {
                   const m = {}; filtered.forEach((t) => { const c = getCreated(t); const cl = getClosed(t); if (!c || !cl || !isClosed(t)) return; const d = getDept(t); m[d] = m[d] || { sum: 0, count: 0 }; m[d].sum += (cl.getTime() - c.getTime()) / 60000; m[d].count++; });
@@ -2423,8 +2627,8 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
           )}
         </FilterByDays>
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="Status × Priority" subtitle="ticket mix by status stacked by priority" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+          {({ filtered }) => (
+            <ChartCard title="Status × Priority" subtitle="ticket mix by status stacked by priority" viewOptions={VIEW_OPTIONS}>
               <div style={{ height: 288 }}>
                 {(() => {
                   const states = [...new Set(filtered.map((t) => normText(t.status) || 'Unknown'))].slice(0, 6);
@@ -2481,57 +2685,81 @@ function MicrosoftSection({ msData, syncing, onSync }) {
 
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <FilterByDays data={signIns} dateFn={msDateFn}>
-          {({ filtered }) => <StatCard title="Sign-ins" value={filtered.length} color="blue" />}
+          {({ current, previous, isFiltered }) => (
+            <StatCard title="Sign-ins" value={current.length} cur={current.length} prev={isFiltered ? previous.length : null} color="blue" goodWhenUp={true} />
+          )}
         </FilterByDays>
         <FilterByDays data={signIns} dateFn={msDateFn}>
-          {({ filtered }) => { const f = filtered.filter((s) => s.status?.errorCode !== 0); return <StatCard title="Failed Sign-ins" value={f.length} color="red" subtitle={`${filtered.length ? Math.round((f.length / filtered.length) * 100) : 0}% of sign-ins`} goodWhenUp={false} />; }}
+          {({ current, previous, isFiltered }) => {
+            const curFailed = current.filter((s) => s.status?.errorCode !== 0).length;
+            const prevFailed = isFiltered ? previous.filter((s) => s.status?.errorCode !== 0).length : null;
+            return (
+              <StatCard
+                title="Failed Sign-ins"
+                value={curFailed}
+                cur={curFailed}
+                prev={prevFailed}
+                color="red"
+                subtitle={`${current.length ? Math.round((curFailed / current.length) * 100) : 0}% of sign-ins`}
+                goodWhenUp={false}
+              />
+            );
+          }}
         </FilterByDays>
         <FilterByDays data={riskyUsers} dateFn={msDateFn}>
-          {({ filtered }) => <StatCard title="Risky Users" value={filtered.length} color="red" />}
+          {({ current, previous, isFiltered }) => (
+            <StatCard title="Risky Users" value={current.length} cur={current.length} prev={isFiltered ? previous.length : null} color="red" goodWhenUp={false} />
+          )}
         </FilterByDays>
         <StatCard title="Total Users" value={users.length} color="blue" />
-        <StatCard title="Secure Score" value={secureScore?.currentScore ?? '—'} color="green" subtitle={secureScore?.maxScore ? `/ ${secureScore.maxScore}` : ''} />
+        <StatCard title="Secure Score" value={secureScore?.currentScore ?? '—'} color="green" subtitle={secureScore?.maxScore ? `/ ${secureScore.maxScore}` : ''} goodWhenUp={true} />
         <FilterByDays data={securityAlerts} dateFn={msDateFn}>
-          {({ filtered }) => <StatCard title="Security Alerts" value={filtered.length} color="yellow" />}
+          {({ current, previous, isFiltered }) => (
+            <StatCard title="Security Alerts" value={current.length} cur={current.length} prev={isFiltered ? previous.length : null} color="yellow" goodWhenUp={false} />
+          )}
         </FilterByDays>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatCard title="License Utilization" value={`${licenseUtil}%`} color="purple" subtitle={`${fmtNum(assignedLicenses)} / ${fmtNum(totalLicenses)}`} />
+        <StatCard title="License Utilization" value={`${licenseUtil}%`} color="purple" subtitle={`${fmtNum(assignedLicenses)} / ${fmtNum(totalLicenses)}`} goodWhenUp={true} />
         <StatCard title="Unassigned Licenses" value={fmtNum(unassignedLicenses)} color="default" />
         <FilterByDays data={managedDevices} dateFn={msDateFn}>
-          {({ filtered }) => <StatCard title="Managed Devices" value={filtered.length} color="blue" />}
+          {({ current, previous, isFiltered }) => (
+            <StatCard title="Managed Devices" value={current.length} cur={current.length} prev={isFiltered ? previous.length : null} color="blue" goodWhenUp={true} />
+          )}
         </FilterByDays>
         <FilterByDays data={serviceIssues} dateFn={(i) => i?.startDateTime}>
-          {({ filtered }) => <StatCard title="Service Issues" value={filtered.length} color="orange" />}
+          {({ current, previous, isFiltered }) => (
+            <StatCard title="Service Issues" value={current.length} cur={current.length} prev={isFiltered ? previous.length : null} color="orange" goodWhenUp={false} />
+          )}
         </FilterByDays>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <FilterByDays data={riskDetections} dateFn={msDateFn}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="Risk Detections by Type" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+          {({ filtered }) => (
+            <ChartCard title="Risk Detections by Type" viewOptions={VIEW_OPTIONS}>
               {(chartType) => <MultiViewChart data={bucket(filtered, (r) => r.riskEventType, 'unknown')} chartType={chartType} />}
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={riskyUsers} dateFn={msDateFn}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="Risky Users by Level" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+          {({ filtered }) => (
+            <ChartCard title="Risky Users by Level" viewOptions={VIEW_OPTIONS}>
               {(chartType) => <MultiViewChart data={bucket(filtered, (u) => u.riskLevel || 'unknown')} chartType={chartType} />}
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={securityAlerts} dateFn={msDateFn}>
-          {({ filtered, dayPreset, setDayPreset }) => (
-            <ChartCard title="Alerts by Severity" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+          {({ filtered }) => (
+            <ChartCard title="Alerts by Severity" viewOptions={VIEW_OPTIONS}>
               {(chartType) => <MultiViewChart data={bucket(filtered, (a) => a.severity, 'unknown')} chartType={chartType} />}
             </ChartCard>
           )}
         </FilterByDays>
         {managedDevices.length > 0 && (
           <FilterByDays data={managedDevices} dateFn={msDateFn}>
-            {({ filtered, dayPreset, setDayPreset }) => (
-              <ChartCard title="Device Compliance State" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+            {({ filtered }) => (
+              <ChartCard title="Device Compliance State" viewOptions={VIEW_OPTIONS}>
                 {(chartType) => <MultiViewChart data={bucket(filtered, (d) => d.complianceState || 'unknown')} chartType={chartType} />}
               </ChartCard>
             )}
@@ -2541,7 +2769,7 @@ function MicrosoftSection({ msData, syncing, onSync }) {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <FilterByDays data={signIns} dateFn={msDateFn}>
-          {({ filtered, dayPreset, setDayPreset }) => {
+          {({ filtered }) => {
             const map = {};
             filtered.forEach((s) => {
               const day = s.createdDateTime ? s.createdDateTime.slice(0, 10) : null;
@@ -2551,7 +2779,7 @@ function MicrosoftSection({ msData, syncing, onSync }) {
             });
             const trend = Object.values(map).sort((a, b) => a.date.localeCompare(b.date)).slice(-15);
             return (
-              <ChartCard title="Sign-in Trend" subtitle="last 15 days — success vs failure" dayPresets={DAY_PRESETS} activeDayPreset={dayPreset} onDayPreset={setDayPreset} viewOptions={VIEW_OPTIONS}>
+              <ChartCard title="Sign-in Trend" subtitle="last 15 days — success vs failure" viewOptions={VIEW_OPTIONS}>
                 <div style={{ height: 288 }}>
                   {trend.length === 0 ? <Empty /> : (
                     <ResponsiveContainer width="100%" height="100%">
@@ -2571,7 +2799,7 @@ function MicrosoftSection({ msData, syncing, onSync }) {
             );
           }}
         </FilterByDays>
-        <ChartCard dayPresets={DAY_PRESETS} viewOptions={VIEW_OPTIONS} title="Assigned vs Unassigned Licenses">
+        <ChartCard viewOptions={VIEW_OPTIONS} title="Assigned vs Unassigned Licenses">
           <div style={{ height: 288 }}>
             <div className="flex h-full items-center justify-center flex-col gap-4 px-6">
               <div className="w-full">
@@ -2616,6 +2844,50 @@ export default function Analytics() {
   const [isTabTransitioning, setIsTabTransitioning] = useState(false);
   const { currentOrg } = useOrg();
   const currentOrgName = currentOrg?.org_name || currentOrg?.name || 'Organisation';
+
+  // ── Global Common Date Filter State (default to 10 days preset) ──
+  const [dayPreset, setDayPreset] = useState(10);
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [isCustom, setIsCustom] = useState(false);
+
+  const dateWindows = useMemo(() => {
+    return computeDateWindows(dayPreset, customFrom, customTo, isCustom);
+  }, [dayPreset, customFrom, customTo, isCustom]);
+
+  const handleSelectPreset = (days) => {
+    setIsCustom(false);
+    setDayPreset(days);
+  };
+
+  const handleApplyCustom = (from, to) => {
+    setCustomFrom(from);
+    setCustomTo(to);
+    setIsCustom(true);
+    setDayPreset(null);
+  };
+
+  const handleClear = () => {
+    setIsCustom(false);
+    setDayPreset(null);
+    setCustomFrom('');
+    setCustomTo('');
+  };
+
+  const dateFilterContextValue = useMemo(() => ({
+    dayPreset,
+    customFrom,
+    customTo,
+    isCustom,
+    setIsCustom,
+    ...dateWindows,
+    setDayPreset: handleSelectPreset,
+    setQuickPreset: handleSelectPreset,
+    setCustomRange: handleApplyCustom,
+    applyCustomRange: handleApplyCustom,
+    clearFilter: handleClear,
+    resetFilter: handleClear,
+  }), [dayPreset, customFrom, customTo, isCustom, dateWindows]);
 
   const handleTabChange = (newTabId) => {
     if (newTabId === activeTab) return;
@@ -2796,94 +3068,99 @@ export default function Analytics() {
   }
 
   return (
-    <div className="p-5 lg:p-7 space-y-6 min-h-screen bg-[var(--background)]">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-[var(--foreground)]">Analytics</h1>
-          <p className="text-sm text-[var(--muted)] mt-0.5">
-            Live security &amp; operations widgets across all integrated modules · data synced from the database
-          </p>
-        </div>
+    <DateFilterContext.Provider value={dateFilterContextValue}>
+      <div className="p-5 lg:p-7 space-y-6 min-h-screen bg-[var(--background)]">
+        {/* Header */}
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-[var(--foreground)]">Analytics</h1>
+            <p className="text-sm text-[var(--muted)] mt-0.5">
+              Live security &amp; operations widgets across all integrated modules · data synced from the database
+            </p>
+          </div>
 
-        {/* PDF actions */}
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => handleGeneratePdf(null)}
-            disabled={generating}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl bg-indigo-600 text-white shadow-sm hover:bg-indigo-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            {generating ? (
-              <>
-                <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" />
-                Generating…
-              </>
-            ) : (
-              <>
-                <span>📄</span> Generate PDF
-              </>
-            )}
-          </button>
-        </div>
-      </div>
-
-      {/* Module tabs — one tab per integrated module */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 -mx-1 px-1 border-b border-[var(--card-border)]">
-        {NAV_ITEMS.map((item) => {
-          const isActive = activeTab === item.id;
-          return (
+          {/* PDF actions */}
+          <div className="flex items-center gap-2">
             <button
-              key={item.id}
-              onClick={() => handleTabChange(item.id)}
-              className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold rounded-t-lg transition-all whitespace-nowrap ${isActive
-                ? 'bg-[var(--card-bg)] text-indigo-500 border border-[var(--card-border)] border-b-0 -mb-px shadow-sm'
-                : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
-                }`}
+              type="button"
+              onClick={() => handleGeneratePdf(null)}
+              disabled={generating}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl bg-indigo-600 text-white shadow-sm hover:bg-indigo-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              <span>{item.icon}</span>
-              <span>{item.label}</span>
+              {generating ? (
+                <>
+                  <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                  Generating…
+                </>
+              ) : (
+                <>
+                  <span>📄</span> Generate PDF
+                </>
+              )}
             </button>
-          );
-        })}
-      </div>
+          </div>
+        </div>
 
-      {/* Active module section — one per tab with animated loading transition */}
-      <div className="relative min-h-[500px]">
-        {isTabTransitioning && (
-          <PageTransitionLoader
-            key={activeTab}
-            isLoading={true}
-            title="SecureHub"
-            badge={getTabBadge(activeTab)}
-            statusText={getTabStatusText(activeTab)}
-            onComplete={() => setIsTabTransitioning(false)}
-          />
-        )}
-        <div className={`space-y-6 transition-opacity duration-200 ${isTabTransitioning ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-          {activeTab === 'security' && (
-            <SecuritySection agents={agents} cves={cves} threats={threats} syncing={syncing.security} onSync={syncSecurity} />
+        {/* Global Common Date Filter Bar (applies to all 7 tabs) */}
+        <GlobalDateFilterBar />
+
+        {/* Module tabs — one tab per integrated module */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 -mx-1 px-1 border-b border-[var(--card-border)]">
+          {NAV_ITEMS.map((item) => {
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => handleTabChange(item.id)}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold rounded-t-lg transition-all whitespace-nowrap ${isActive
+                  ? 'bg-[var(--card-bg)] text-indigo-500 border border-[var(--card-border)] border-b-0 -mb-px shadow-sm'
+                  : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+                  }`}
+              >
+                <span>{item.icon}</span>
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Active module section — one per tab with animated loading transition */}
+        <div className="relative min-h-[500px]">
+          {isTabTransitioning && (
+            <PageTransitionLoader
+              key={activeTab}
+              isLoading={true}
+              title="SecureHub"
+              badge={getTabBadge(activeTab)}
+              statusText={getTabStatusText(activeTab)}
+              onComplete={() => setIsTabTransitioning(false)}
+            />
           )}
-          {activeTab === 'mdm' && (
-            <MdmSection devices={devices} apps={apps} syncing={syncing.mdm} onSync={syncMdm} />
-          )}
-          {activeTab === 'nvd' && (
-            <NvdSection stats={nvdStats} syncing={syncing.nvd} onSync={syncNvd} />
-          )}
-          {activeTab === 'checkpoint' && (
-            <CheckpointSection events={cpEvents} syncing={syncing.checkpoint} onSync={syncCheckpoint} />
-          )}
-          {activeTab === 'firewall' && (
-            <FirewallSection reports={fwReports} syncing={syncing.firewall} onSync={syncFirewall} />
-          )}
-          {activeTab === 'zoho' && (
-            <ZohoSection tickets={zohoTickets} syncing={syncing.zoho} onSync={syncZoho} />
-          )}
-          {activeTab === 'microsoft' && (
-            <MicrosoftSection msData={msData} syncing={syncing.microsoft} onSync={syncMicrosoft} />
-          )}
+          <div className={`space-y-6 transition-opacity duration-200 ${isTabTransitioning ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+            {activeTab === 'security' && (
+              <SecuritySection agents={agents} cves={cves} threats={threats} syncing={syncing.security} onSync={syncSecurity} />
+            )}
+            {activeTab === 'mdm' && (
+              <MdmSection devices={devices} apps={apps} syncing={syncing.mdm} onSync={syncMdm} />
+            )}
+            {activeTab === 'nvd' && (
+              <NvdSection stats={nvdStats} syncing={syncing.nvd} onSync={syncNvd} />
+            )}
+            {activeTab === 'checkpoint' && (
+              <CheckpointSection events={cpEvents} syncing={syncing.checkpoint} onSync={syncCheckpoint} />
+            )}
+            {activeTab === 'firewall' && (
+              <FirewallSection reports={fwReports} syncing={syncing.firewall} onSync={syncFirewall} />
+            )}
+            {activeTab === 'zoho' && (
+              <ZohoSection tickets={zohoTickets} syncing={syncing.zoho} onSync={syncZoho} />
+            )}
+            {activeTab === 'microsoft' && (
+              <MicrosoftSection msData={msData} syncing={syncing.microsoft} onSync={syncMicrosoft} />
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </DateFilterContext.Provider>
   );
 }
