@@ -435,8 +435,16 @@ export default function AppLayout() {
   const location = useLocation();
   const [transitionState, setTransitionState] = useState({
     activePath: location.pathname,
-    isTransitioning: false,
+    isTransitioning: true,
   });
+
+  const prevOrgIdRef = useRef(currentOrg?.id);
+  useEffect(() => {
+    if (prevOrgIdRef.current !== currentOrg?.id) {
+      prevOrgIdRef.current = currentOrg?.id;
+      setTransitionState((prev) => ({ ...prev, isTransitioning: true }));
+    }
+  }, [currentOrg?.id]);
 
   // Synchronously intercept route change during render phase so the loader appears instantly
   // without allowing the target page (e.g. Dashboard) to render or paint first

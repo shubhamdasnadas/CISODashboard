@@ -79,9 +79,12 @@ function sendOtpEmail(user, otp) {
 }
 
 router.post('/send', async (req, res) => {
-  const { username } = req.body;
-  if (!username) return res.status(400).json({ error: 'username required' });
-  const userResult = await centralPool.query('SELECT id, email FROM users WHERE username=$1', [username]);
+  const identifier = (req.body.email || req.body.username || req.body.identifier || '').trim();
+  if (!identifier) return res.status(400).json({ error: 'Email or username is required' });
+  const userResult = await centralPool.query(
+    'SELECT id, username, email FROM users WHERE LOWER(email) = LOWER($1) OR username = $1',
+    [identifier]
+  );
   if (userResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
   const user = userResult.rows[0];
 
@@ -105,14 +108,20 @@ router.post('/send', async (req, res) => {
   return res.json({
     message: 'OTP sent',
     emailMasked: maskEmail(user.email),
+    email: user.email,
+    username: user.username,
     dev: smtp.dev,
   });
 });
 
 router.post('/verify', async (req, res) => {
-  const { username, otp } = req.body;
-  if (!username || !otp) return res.status(400).json({ error: 'username and otp required' });
-  const userRes = await centralPool.query('SELECT id, username, role, org_ids FROM users WHERE username=$1', [username]);
+  const identifier = (req.body.email || req.body.username || req.body.identifier || '').trim();
+  const { otp } = req.body;
+  if (!identifier || !otp) return res.status(400).json({ error: 'Email/username and OTP are required' });
+  const userRes = await centralPool.query(
+    'SELECT id, username, email, role, org_ids FROM users WHERE LOWER(email) = LOWER($1) OR username = $1',
+    [identifier]
+  );
   if (userRes.rows.length === 0) return res.status(404).json({ error: 'User not found' });
   const user = userRes.rows[0];
   const verified = await verifyOtp(user.id, otp);
@@ -128,6 +137,7 @@ router.post('/verify', async (req, res) => {
   const payload = {
     userId: user.id,
     username: user.username,
+    email: user.email,
     role: user.role,
     org_ids: user.org_ids || [],
   };
@@ -142,6 +152,7 @@ router.post('/verify', async (req, res) => {
     user: {
       id: user.id,
       username: user.username,
+      email: user.email,
       role: user.role,
       org_ids: user.org_ids || [],
     },

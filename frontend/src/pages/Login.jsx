@@ -6,7 +6,7 @@ import PageTransitionLoader from '../components/PageTransitionLoader.jsx';
 
 export default function Login() {
   const navigate = useNavigate();
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [userStatus, setUserStatus] = useState({ checked: false, exists: false, organisations: [] });
   const [showPassword, setShowPassword] = useState(false);
@@ -22,7 +22,8 @@ export default function Login() {
   }, []);
 
   useEffect(() => {
-    if (!username) {
+    const trimmed = email.trim();
+    if (!trimmed) {
       setUserStatus({ checked: false, exists: false, organisations: [] });
       setShowPassword(false);
       setError('');
@@ -31,34 +32,36 @@ export default function Login() {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
       try {
-        const { data } = await api.post('/auth/check-username', { username });
+        const { data } = await api.post('/auth/check-username', { email: trimmed });
         setUserStatus({ checked: true, ...data });
         setShowPassword(Boolean(data.exists));
-        setError(data.exists ? '' : 'Username not found');
+        setError(data.exists ? '' : 'Account with this email not found');
       } catch (err) {
-        console.error('[check-username] failed:', err);
+        console.error('[check-email] failed:', err);
         const body = err.response?.data;
         if (body?.detail) setError(`Server error: ${body.detail}`);
         else if (body?.error) setError(`Server error: ${body.error}`);
         else if (err.response) setError(`Server returned ${err.response.status}: ${err.response.statusText || 'no body'}`);
-        else if (err.code === 'ERR_NETWORK') setError('Network error: is the backend running on http://localhost:3001?');
+        else if (err.code === 'ERR_NETWORK') setError('Network error: is the backend running?');
         else setError(`Cannot reach server (${err.code || err.message || 'unknown error'})`);
       }
     }, 500);
     return () => clearTimeout(debounceRef.current);
-  }, [username]);
+  }, [email]);
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      const { data } = await api.post('/auth/login', { username, password });
+      const trimmedEmail = email.trim();
+      const { data } = await api.post('/auth/login', { email: trimmedEmail, password });
       if (data.otpRequested) {
         // Password valid — dispatch OTP code to registered email while whole-page loader is active
-        await api.post('/auth/otp/send', { username });
+        const targetEmail = data.email || trimmedEmail;
+        await api.post('/auth/otp/send', { email: targetEmail, username: data.username });
         // OTP code dispatched successfully to mail -> transition to verification screen
-        navigate('/verify-otp?username=' + encodeURIComponent(username) + '&sent=1');
+        navigate('/verify-otp?email=' + encodeURIComponent(targetEmail) + (data.username ? '&username=' + encodeURIComponent(data.username) : '') + '&sent=1');
       } else {
         // Legacy fallback - directly logged in (creates this tab's own session)
         session.setAuth({ token: data.token, user: data.user });
@@ -107,15 +110,15 @@ export default function Login() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Username */}
+          {/* Email Address */}
           <div>
-            <label className="block text-sm font-medium text-[var(--foreground)] mb-1.5">Username</label>
+            <label className="block text-sm font-medium text-[var(--foreground)] mb-1.5">Email Address</label>
             <div className="relative">
               <input
-                type="text"
-                value={username}
-                onChange={e => setUsername(e.target.value)}
-                placeholder="Enter your username"
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="Enter your email address"
                 className="w-full px-4 py-2.5 pr-10 rounded-xl bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-colors"
                 autoFocus
               />
@@ -169,7 +172,7 @@ export default function Login() {
           <button
             type="submit"
             disabled={!showPassword || !password || loading}
-            className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold transition-colors flex items-center justify-center gap-2"
+            className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold transition-colors flex items-center justify-center gap-2 cursor-pointer"
           >
             {loading ? (
               <>
@@ -186,7 +189,7 @@ export default function Login() {
         </form>
 
         <p className="mt-6 text-xs text-[var(--muted)] text-center">
-          Seed users: <span className="text-[var(--foreground)] font-medium">Shubham</span>, <span className="text-[var(--foreground)] font-medium">Ramesh</span>, <span className="text-[var(--foreground)] font-medium">Radhesh</span>, <span className="text-[var(--foreground)] font-medium">Raju</span>
+          Sign in with your registered email address to receive a secure OTP code.
         </p>
       </div>
     </div>

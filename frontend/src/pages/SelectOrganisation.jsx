@@ -9,6 +9,7 @@ export default function SelectOrganisation() {
   const { organisations, currentOrg, loading: ctxLoading, setCurrentOrg, refresh } = useOrg();
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState(null);
+  const [isContinuing, setIsContinuing] = useState(false);
 
   // Load the user's organisations. refresh() is the OrgContext's own fetch and
   // is idempotent; on a fresh machine it populates `organisations` reliably.
@@ -42,6 +43,7 @@ export default function SelectOrganisation() {
   }, [organisations, currentOrg, selectedId]);
 
   function pickOrg(org) {
+    setIsContinuing(true);
     setCurrentOrg(org);
     navigate('/dashboard', { replace: true });
   }
@@ -52,14 +54,14 @@ export default function SelectOrganisation() {
     navigate('/login', { replace: true });
   }
 
-  if (ctxLoading) {
+  if (ctxLoading || isContinuing) {
     return (
       <PageTransitionLoader
         isLoading={true}
         fullScreen={true}
         title="SecureHub"
         badge="Enterprise"
-        statusText="Loading connected organisations…"
+        statusText="Initializing Workspace Telemetry & Dashboard Data…"
       />
     );
   }

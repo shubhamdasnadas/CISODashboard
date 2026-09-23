@@ -7,21 +7,25 @@ const { authMiddleware } = require('../middleware/authMiddleware');
 const router = express.Router();
 
 /**
- * POST /api/auth/check-username
- * Body: { username }
- * Returns { exists, organisations? }
+ * POST /api/auth/check-username (also accepts email)
+ * Body: { username } or { email } or { identifier }
+ * Returns { exists, organisations?, email, username }
  */
 router.post('/check-username', async (req, res) => {
   try {
-    const { username } = req.body;
-    if (!username) return res.status(400).json({ error: 'username is required' });
+    const identifier = (req.body.email || req.body.username || req.body.identifier || '').trim();
+    if (!identifier) return res.status(400).json({ error: 'Email or username is required' });
 
-    const userResult = await centralPool.query('SELECT id, org_ids FROM users WHERE username = $1', [username]);
+    const userResult = await centralPool.query(
+      'SELECT id, username, email, org_ids FROM users WHERE LOWER(email) = LOWER($1) OR username = $1',
+      [identifier]
+    );
     if (userResult.rows.length === 0) {
       return res.json({ exists: false });
     }
 
-    const orgIds = userResult.rows[0].org_ids || [];
+    const matchedUser = userResult.rows[0];
+    const orgIds = matchedUser.org_ids || [];
     let organisations = [];
     if (orgIds.length > 0) {
       const orgsResult = await centralPool.query(
@@ -31,11 +35,14 @@ router.post('/check-username', async (req, res) => {
       organisations = orgsResult.rows;
     }
 
-    return res.json({ exists: true, organisations });
+    return res.json({
+      exists: true,
+      organisations,
+      email: matchedUser.email,
+      username: matchedUser.username,
+    });
   } catch (err) {
     console.error('check-username error:', err.message, err.code || '');
-    // Surface the actual reason so the frontend can show it instead of a
-    // generic message — invaluable when diagnosing connection / auth issues.
     return res.status(500).json({
       error: 'Server error',
       detail: err.message,
@@ -46,17 +53,21 @@ router.post('/check-username', async (req, res) => {
 
 /**
  * POST /api/auth/login
- * Body: { username, password }
- * Returns { token, user } or { otpRequested: true, username }
+ * Body: { email, password } or { username, password }
+ * Returns { token, user } or { otpRequested: true, username, email }
  */
 router.post('/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ error: 'username and password are required' });
+    const identifier = (req.body.email || req.body.username || req.body.identifier || '').trim();
+    const { password } = req.body;
+    if (!identifier || !password) {
+      return res.status(400).json({ error: 'Email/Username and password are required' });
     }
 
-    const result = await centralPool.query('SELECT * FROM users WHERE username = $1', [username]);
+    const result = await centralPool.query(
+      'SELECT * FROM users WHERE LOWER(email) = LOWER($1) OR username = $1',
+      [identifier]
+    );
     if (result.rows.length === 0) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -68,8 +79,11 @@ router.post('/login', async (req, res) => {
     }
 
     // Password valid - now trigger OTP flow
-    // We just return that OTP is required; the frontend will call /api/auth/otp/send
-    return res.json({ otpRequested: true, username });
+    return res.json({
+      otpRequested: true,
+      username: user.username,
+      email: user.email,
+    });
   } catch (err) {
     console.error('login error:', err);
     return res.status(500).json({ error: 'Server error', detail: err.message });

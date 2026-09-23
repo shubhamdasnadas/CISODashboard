@@ -9,20 +9,22 @@ const TOTAL_STEPS = 2;
 export default function OtpVerify() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const username = params.get('username');
+  const email = params.get('email');
+  const username = params.get('username') || email;
+  const userIdentifier = email || username;
   const sessionId = params.get('sessionId');
   const alreadySent = params.get('sent') === '1';
 
   // Determine which flow we're in
   const is2faFlow = !!sessionId;
-  const isTraditionalFlow = !!username && !sessionId;
+  const isTraditionalFlow = !!userIdentifier && !sessionId;
 
   const [otp, setOtp] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [sendingOtp, setSendingOtp] = useState(false);
   const [resendSuccess, setResendSuccess] = useState('');
-  const [emailMasked, setEmailMasked] = useState('');
+  const [emailMasked, setEmailMasked] = useState(email || '');
   const [cooldownUntil, setCooldownUntil] = useState(0); // epoch ms when resend unlocks
   const [resendCooldown, setResendCooldown] = useState(0); // seconds remaining
   const initialOtpSentRef = useRef(false);
@@ -75,8 +77,8 @@ export default function OtpVerify() {
     async function sendInitialOtp() {
       setSendingOtp(true);
       try {
-        if (isTraditionalFlow && username) {
-          const r = await api.post('/auth/otp/send', { username });
+        if (isTraditionalFlow && userIdentifier) {
+          const r = await api.post('/auth/otp/send', { email: userIdentifier, username: userIdentifier });
           const masked = r.data?.emailMasked;
           if (masked) setEmailMasked(masked);
         } else if (is2faFlow && sessionId) {
@@ -125,8 +127,8 @@ export default function OtpVerify() {
     setSendingOtp(true);
     try {
       let masked = null;
-      if (isTraditionalFlow && username) {
-        const r = await api.post('/auth/otp/send', { username });
+      if (isTraditionalFlow && userIdentifier) {
+        const r = await api.post('/auth/otp/send', { email: userIdentifier, username: userIdentifier });
         masked = r.data?.emailMasked;
       } else if (is2faFlow && sessionId) {
         const r = await api.post('/auth/2fa/resend-otp', { sessionId });
@@ -160,9 +162,9 @@ export default function OtpVerify() {
     try {
       let token, user;
 
-      if (isTraditionalFlow && username) {
-        // Traditional flow: verify with username + otp
-        const r = await api.post('/auth/otp/verify', { username, otp });
+      if (isTraditionalFlow && userIdentifier) {
+        // Traditional flow: verify with email/username + otp
+        const r = await api.post('/auth/otp/verify', { email: userIdentifier, username: userIdentifier, otp });
         token = r.data.token;
         user = r.data.user;
       } else if (is2faFlow && sessionId) {
