@@ -1,4 +1,23 @@
+const fs = require('fs');
 const puppeteer = require('puppeteer');
+
+function getExecutablePath() {
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) return process.env.PUPPETEER_EXECUTABLE_PATH;
+  if (process.env.CHROME_BIN) return process.env.CHROME_BIN;
+
+  // Check common Linux chromium/chrome installations
+  const commonLinuxPaths = [
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/snap/bin/chromium',
+  ];
+  for (const p of commonLinuxPaths) {
+    if (fs.existsSync(p)) return p;
+  }
+  return undefined;
+}
 
 /**
  * Render the live Analytics page to a pixel-perfect PDF via headless Chrome (Puppeteer).
@@ -48,18 +67,27 @@ async function generateLiveAnalyticsPdf({
   const targetUrl = `${baseUrl}/analytics-print?${query.toString()}`;
   console.log('[Puppeteer] Launching headless browser for URL:', targetUrl);
 
-  const browser = await puppeteer.launch({
+  const executablePath = getExecutablePath();
+  const launchOptions = {
     headless: 'new',
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu',
+      '--disable-software-rasterizer',
+      '--no-zygote',
+      '--single-process',
       '--disable-web-security',
       '--allow-running-insecure-content',
       '--font-render-hinting=medium',
     ],
-  });
+  };
+  if (executablePath) {
+    launchOptions.executablePath = executablePath;
+  }
+
+  const browser = await puppeteer.launch(launchOptions);
 
   try {
     const page = await browser.newPage();

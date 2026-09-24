@@ -20,6 +20,7 @@
  */
 const { build } = require('esbuild');
 const path = require('path');
+const fs = require('fs');
 
 const ROOT = path.resolve(__dirname, '..', '..'); // backend/.. = repo root
 const FRONTEND_REPORT = path.join(ROOT, 'frontend', 'src', 'pages', 'report');
@@ -27,6 +28,9 @@ const OUT_DIR = path.join(__dirname, '..', 'dist');
 const OUT_FILE = path.join(OUT_DIR, 'reportTemplate.cjs');
 
 async function main() {
+  if (!fs.existsSync(OUT_DIR)) {
+    fs.mkdirSync(OUT_DIR, { recursive: true });
+  }
   console.log('[build:report] Bundling ReportTemplate.jsx →', OUT_FILE);
   await build({
     entryPoints: [path.join(FRONTEND_REPORT, 'ReportTemplate.jsx')],

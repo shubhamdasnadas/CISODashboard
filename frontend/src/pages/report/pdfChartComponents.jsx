@@ -6,12 +6,24 @@ import { Svg, Path, Rect, Circle, Line, G, Text as SvgText, View, Text } from '@
 // ── Donut chart ───────────────────────────────────────────────────────────────
 export function VDonut({ data, width = 160, height = 130, colors }) {
   if (!data || data.length === 0) return null;
-  const total = data.reduce((s, d) => s + (d.value || 0), 0);
+  const total = data.reduce((s, d) => s + (Number(d.value) || 0), 0);
   if (total <= 0) return null;
 
   const cx = width / 2;
   const cy = height / 2;
   const r = Math.min(width, height) / 2 - 2;
+
+  // Single active slice fallback: render full circle to prevent SVG arc coincident point bug
+  const activeSlices = data.filter((d) => (Number(d.value) || 0) > 0);
+  if (activeSlices.length === 1) {
+    const segFill = colors && colors[0] ? colors[0] : activeSlices[0].fill || '#3b82f6';
+    return (
+      <Svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+        <Circle cx={cx} cy={cy} r={r} fill={segFill} stroke={segFill} strokeWidth={0.5} />
+      </Svg>
+    );
+  }
+
   // Full pie sector from the center to the outer radius.
   const sector = (a0, a1) => {
     const large = a1 - a0 > Math.PI ? 1 : 0;
@@ -22,7 +34,13 @@ export function VDonut({ data, width = 160, height = 130, colors }) {
 
   let angle = -Math.PI / 2;
   const segments = data.map((d, i) => {
-    const frac = (d.value || 0) / total;
+    const val = Number(d.value) || 0;
+    if (val <= 0) return null;
+    const frac = val / total;
+    if (frac >= 0.9999) {
+      const segFill = colors && colors[i] ? colors[i] : d.fill || '#3b82f6';
+      return <Circle key={i} cx={cx} cy={cy} r={r} fill={segFill} stroke={segFill} strokeWidth={0.5} />;
+    }
     const a1 = angle + frac * 2 * Math.PI;
     const segFill = colors && colors[i] ? colors[i] : d.fill || '#3b82f6';
     const seg = (
@@ -37,7 +55,7 @@ export function VDonut({ data, width = 160, height = 130, colors }) {
     );
     angle = a1;
     return seg;
-  });
+  }).filter(Boolean);
 
   return (
     <Svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
@@ -288,8 +306,10 @@ export function VStackedBar({ segments, width = 320, height = 14 }) {
 
 // ── Score progress bar with label ─────────────────────────────────────────────
 export function VScoreBar({ label, value, max = 100, color = '#10b981', sub, width = 680, height = 12 }) {
-  const pct = Math.min(Math.max((value / max) * 100, 0), 100);
-  const fillW = (pct / 100) * width;
+  const v = Number(value) || 0;
+  const m = Number(max) || 100;
+  const pct = m > 0 ? Math.min(Math.max((v / m) * 100, 0), 100) : 0;
+  const fillW = Math.max(0, Math.min(width, (pct / 100) * width));
 
   return (
     <View style={{ width: '100%' }}>

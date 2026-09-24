@@ -404,7 +404,7 @@ export function computeWeeklyStats(harmonyEvents, s1Threats, s1Agents = [], s1Cv
       inner.mail_from || inner.source_address || inner.mailFrom || inner.sender || inner.from || inner.from_address;
     if (fromHeap) return fromHeap;
     const toHeap = inner.receiver_address || inner.recipient_address || inner.receiverAddress || inner.recipientAddress || inner.to;
-    if (toHeap) return `→ ${toHeap}`;
+    if (toHeap) return `-> ${toHeap}`;
     return 'Unknown';
   };
   const sThis = {}, sLast = {};

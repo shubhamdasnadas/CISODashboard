@@ -3090,25 +3090,29 @@ export default function Analytics({ printMode: printModeProp = false }) {
           }
         );
 
-        const blob = new Blob([response.data], { type: 'application/pdf' });
-        const now = new Date();
-        const pad = (n) => String(n).padStart(2, '0');
-        const stamp =
-          `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` +
-          `_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
-        const safeOrg = (currentOrgName || 'organisation').replace(/[^a-zA-Z0-9_-]/g, '_');
-        const fileName = `Analytics_${safeOrg}_${stamp}.pdf`;
+        if (response.data && response.data.size > 500 && (response.data.type === 'application/pdf' || response.headers['content-type']?.includes('application/pdf'))) {
+          const blob = new Blob([response.data], { type: 'application/pdf' });
+          const now = new Date();
+          const pad = (n) => String(n).padStart(2, '0');
+          const stamp =
+            `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` +
+            `_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+          const safeOrg = (currentOrgName || 'organisation').replace(/[^a-zA-Z0-9_-]/g, '_');
+          const fileName = `Analytics_${safeOrg}_${stamp}.pdf`;
 
-        const downloadUrl = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = downloadUrl;
-        link.download = fileName;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.URL.revokeObjectURL(downloadUrl);
-        setPdfModalOpen(false);
-        return;
+          const downloadUrl = window.URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = downloadUrl;
+          link.download = fileName;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          window.URL.revokeObjectURL(downloadUrl);
+          setPdfModalOpen(false);
+          return;
+        } else {
+          console.warn('[PDF] Live Puppeteer PDF response is not a valid PDF blob, falling back to client-side vector generator.');
+        }
       } catch (serverErr) {
         console.warn('[PDF] Live Puppeteer PDF endpoint failed, falling back to client-side vector generator:', serverErr);
       }
@@ -3221,8 +3225,9 @@ export default function Analytics({ printMode: printModeProp = false }) {
       } else {
         await generateAnalyticsPdf(data, `Analytics_${safeName}_${ts}.pdf`);
       }
+      setPdfModalOpen(false);
     } catch (err) {
-      console.error('[PDF] Analytics PDF generation failed:', err);
+      console.error('[PDF] Analytics PDF generation failed:', err?.message || err, err?.stack);
       alert('Failed to generate Analytics PDF. Please try again.');
     } finally {
       setGenerating(false);

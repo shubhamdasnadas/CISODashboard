@@ -525,7 +525,7 @@ export const ANALYTICS_CONFIG = [
           { label: 'Remediated', value: fmtNum(cur.remediated), cur: cur.remediated, prev: prev?.remediated, color: '#10b981', sub: `${cur.remediatedPct}% of total`, goodWhenUp: true },
           { label: 'Pending', value: fmtNum(cur.pending), cur: cur.pending, prev: prev?.pending, color: '#ef4444', sub: `${cur.pendingPct}% of total`, goodWhenUp: false },
           { label: 'Avg Severity', value: cur.avgSev, cur: cur.avgSevNum ? parseFloat(cur.avgSevNum.toFixed(1)) : null, prev: prev?.avgSevNum ? parseFloat(prev.avgSevNum.toFixed(1)) : null, color: '#f59e0b', sub: 'out of 5', goodWhenUp: false },
-          { label: 'Critical Events', value: fmtNum(cur.criticalCount), cur: cur.criticalCount, prev: prev?.criticalCount, color: '#ef4444', sub: 'severity ≥ 4', goodWhenUp: false },
+          { label: 'Critical Events', value: fmtNum(cur.criticalCount), cur: cur.criticalCount, prev: prev?.criticalCount, color: '#ef4444', sub: 'severity >= 4', goodWhenUp: false },
           { label: 'Detected', value: fmtNum(cur.detected), cur: cur.detected, prev: prev?.detected, color: '#f97316', sub: `${cur.detectedPct}% of total`, goodWhenUp: false },
         ],
       ];

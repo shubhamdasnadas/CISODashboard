@@ -136,13 +136,13 @@ function VDeltaBadge({ cur, prev, goodWhenUp = true }) {
   }
 
   const good = d.dir === 'up' ? goodWhenUp : !goodWhenUp;
-  const arrow = d.dir === 'up' ? '↑' : '↓';
+  const arrow = d.dir === 'up' ? '+' : '-';
   const color = good ? '#10b981' : '#ef4444';
   const bg = good ? 'rgba(16, 185, 129, 0.18)' : 'rgba(239, 68, 68, 0.18)';
 
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', backgroundColor: bg, borderWidth: 0.5, borderColor: color, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-      <Text style={{ fontSize: 7, color, fontWeight: 700 }}>{arrow} {d.pct}%</Text>
+      <Text style={{ fontSize: 7, color, fontWeight: 700 }}>{arrow}{d.pct}%</Text>
       <Text style={{ fontSize: 6.5, color: '#cbd5e1', marginLeft: 4 }}>prev: {fmtNum(prev)}</Text>
     </View>
   );
@@ -236,7 +236,7 @@ export function DynamicSectionPage({ config, data }) {
   }
 
   return (
-    <Page size="A3" orientation="landscape" style={S.page} wrap id={`sec-${config.id}`}>
+    <Page size="A3" orientation="landscape" style={S.page} wrap>
       {/* Fixed Header on every page of this section */}
       <View style={S.header} fixed>
         <View style={[S.headerTopBar, { backgroundColor: color || C.brand }]} />
@@ -260,7 +260,7 @@ export function DynamicSectionPage({ config, data }) {
       </View>
 
       {/* Section Heading & Rule */}
-      <View id={`sec-${config.id}`} style={S.sectionDivider} wrap={false}>
+      <View style={S.sectionDivider} wrap={false}>
         <View style={[S.sectionNumber, { backgroundColor: color || C.brand }]}>
           <Text style={S.sectionNumberText}>{number}</Text>
         </View>

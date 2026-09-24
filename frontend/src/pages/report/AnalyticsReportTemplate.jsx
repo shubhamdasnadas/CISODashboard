@@ -1,4 +1,4 @@
-import { Document, Page, View, Text, StyleSheet, Link } from '@react-pdf/renderer';
+import { Document, Page, View, Text, StyleSheet } from '@react-pdf/renderer';
 import { ANALYTICS_CONFIG } from './reportConfig';
 import { DynamicSectionPage } from './DynamicSectionPage';
 
@@ -110,20 +110,18 @@ export default function AnalyticsReportTemplate({ data }) {
             <Text style={S.tocHeaderTitle}>Analytics Report Contents</Text>
           </View>
           {activeSections.map((sec, idx) => (
-            <Link key={sec.id} src={`#sec-${sec.id}`} style={{ textDecoration: 'none' }}>
-              <View style={[S.tocRow, { borderTopWidth: idx === 0 ? 0 : 1 }]}>
-                <View style={[S.tocNumberBox, { backgroundColor: sec.color || '#818cf8' }]}>
-                  <Text style={S.tocNumberText}>{sec.number}</Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={S.tocTitle}>{sec.title}</Text>
-                  {sec.subtitle && <Text style={S.tocSubtitle}>{sec.subtitle}</Text>}
-                </View>
-                <View style={{ width: 20, height: 20, borderRadius: 5, backgroundColor: 'rgba(129, 140, 248, 0.15)', justifyContent: 'center', alignItems: 'center' }}>
-                  <Text style={{ fontSize: 8.5, color: '#818cf8', fontWeight: 800 }}>→</Text>
-                </View>
+            <View key={sec.id} style={[S.tocRow, { borderTopWidth: idx === 0 ? 0 : 1 }]}>
+              <View style={[S.tocNumberBox, { backgroundColor: sec.color || '#818cf8' }]}>
+                <Text style={S.tocNumberText}>{sec.number}</Text>
               </View>
-            </Link>
+              <View style={{ flex: 1 }}>
+                <Text style={S.tocTitle}>{sec.title}</Text>
+                {sec.subtitle && <Text style={S.tocSubtitle}>{sec.subtitle}</Text>}
+              </View>
+              <View style={{ width: 20, height: 20, borderRadius: 5, backgroundColor: 'rgba(129, 140, 248, 0.15)', justifyContent: 'center', alignItems: 'center' }}>
+                <Text style={{ fontSize: 9, color: '#818cf8', fontWeight: 700 }}>{'>'}</Text>
+              </View>
+            </View>
           ))}
           {activeSections.length === 0 && (
             <View style={{ padding: 20, alignItems: 'center' }}>

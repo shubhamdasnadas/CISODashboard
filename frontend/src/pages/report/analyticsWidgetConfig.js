@@ -197,7 +197,7 @@ export function buildZohoWidgets(tickets) {
       { label: 'On Hold', value: onHold, color: '#f59e0b' },
       { label: 'Departments', value: deptCount, color: undefined },
       { label: 'Avg Response Time', value: formatDuration(avgResponse), color: '#06b6d4', subtitle: 'time to first reply' },
-      { label: 'Avg Resolution Time', value: formatDuration(avgResolution), color: '#22c55e', subtitle: 'open → closed' },
+      { label: 'Avg Resolution Time', value: formatDuration(avgResolution), color: '#22c55e', subtitle: 'open -> closed' },
     ],
     filterChips: { status: filterStatusData, priority: filterPriorityData },
     groups: [
@@ -218,8 +218,8 @@ export function buildZohoWidgets(tickets) {
         { id: 'z-contacts', type: 'hbar', title: 'Top Contacts', subtitle: 'tickets per reporter', data: contactData, color: '#ec4899' },
       ]},
       { cols: 2, widgets: [
-        { id: 'z-resolution', type: 'hbar', title: 'Avg Resolution by Department', subtitle: 'hours to close (open → closed)', data: resolutionByDept, color: '#f59e0b', valueFmt: 'duration' },
-        { id: 'z-stacked', type: 'stacked', title: 'Status × Priority', subtitle: 'ticket mix by status stacked by priority', data: statusPriorityData, meta: { keys: priorityData.map((p) => p.name), fills: PRIORITY_COLORS } },
+        { id: 'z-resolution', type: 'hbar', title: 'Avg Resolution by Department', subtitle: 'hours to close (open -> closed)', data: resolutionByDept, color: '#f59e0b', valueFmt: 'duration' },
+        { id: 'z-stacked', type: 'stacked', title: 'Status x Priority', subtitle: 'ticket mix by status stacked by priority', data: statusPriorityData, meta: { keys: priorityData.map((p) => p.name), fills: PRIORITY_COLORS } },
       ]},
     ],
   };
@@ -601,7 +601,7 @@ export function buildCheckpointWidgets(events) {
       { label: 'Remediated', value: remediated, color: '#22c55e', subtitle: `${remediatedPct}% of total` },
       { label: 'Pending', value: pending, color: '#ef4444', subtitle: `${pendingPct}% of total` },
       { label: 'Avg Severity', value: avgSeverity ?? '—', color: '#f59e0b', subtitle: 'out of 5' },
-      { label: 'Critical Events', value: criticalCount, color: '#ef4444', subtitle: 'severity ≥ 4' },
+      { label: 'Critical Events', value: criticalCount, color: '#ef4444', subtitle: 'severity >= 4' },
       { label: 'Detected', value: detected, color: '#f97316', subtitle: `${detectedPct}% of total` },
     ],
     groups: [
