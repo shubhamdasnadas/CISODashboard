@@ -225,6 +225,28 @@ html, body { overflow-x: hidden; max-width: 100vw; }
   }
 }
 
+@keyframes slideInRight {
+  from {
+    transform: translateX(120%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideOutRight {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(120%);
+    opacity: 0;
+  }
+}
+
 .animate-logoBounce {
   animation: logoBounce 2.4s ease-in-out infinite;
 }
@@ -232,5 +254,129 @@ html, body { overflow-x: hidden; max-width: 100vw; }
 .animate-fadeIn {
   animation: fadeIn 0.25s ease-out forwards;
 }
+
+.animate-slideInRight {
+  animation: slideInRight 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-slideOutRight {
+  animation: slideOutRight 0.4s cubic-bezier(0.7, 0, 0.84, 0) forwards;
+}
+
+/* ── Print / PDF Headless Mode ───────────────────────────────────────────── */
+@page {
+  size: A3 landscape;
+  margin: 10mm;
+}
+
+@media print {
+  html, body, #root {
+    height: auto !important;
+    min-height: 100% !important;
+    overflow: visible !important;
+  }
+
+  body {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    background-color: var(--background) !important;
+  }
+
+  .print-page-break {
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+
+  * {
+    -webkit-transition: none !important;
+    transition: none !important;
+    -webkit-animation: none !important;
+    animation: none !important;
+  }
+}
+
+.pdf-print-container {
+  width: 100%;
+  height: auto !important;
+  min-height: 100vh;
+  overflow: visible !important;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.pdf-print-section {
+  page-break-after: always;
+  break-after: page;
+  margin-bottom: 24px;
+}
+
+.pdf-print-subpage {
+  page-break-before: always;
+  break-before: page;
+  padding-top: 14px;
+}
+
+.pdf-print-section:last-child {
+  page-break-after: avoid !important;
+  break-after: avoid !important;
+  margin-bottom: 0 !important;
+}
+
+.pdf-print-section > * {
+  break-inside: auto;
+}
+
+/* Ensure cards, chart containers, and grid items NEVER get fractured across page boundaries */
+.pdf-print-container .card-surface,
+.pdf-print-container .pdf-card-avoid-break,
+.pdf-print-container [class*="bg-[var(--card-bg)]"],
+.pdf-print-container .grid > *,
+.pdf-print-container .recharts-wrapper,
+.pdf-print-container .recharts-surface {
+  break-inside: avoid !important;
+  page-break-inside: avoid !important;
+  -webkit-column-break-inside: avoid !important;
+}
+
+/* ── Light and Dark Theme overrides for PDF export ───────────────────────── */
+.pdf-print-container.theme-dark {
+  background-color: #090e1a !important;
+  color: #f1f5f9 !important;
+}
+
+.pdf-print-container.theme-light {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+.pdf-print-container.theme-light .card-surface,
+.pdf-print-container.theme-light .pdf-card-avoid-break,
+.pdf-print-container.theme-light [class*="bg-[var(--card-bg)]"] {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  color: #0f172a !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
+}
+
+.pdf-print-container.theme-light .text-\[var\(--foreground\)\] {
+  color: #0f172a !important;
+}
+
+.pdf-print-container.theme-light .text-\[var\(--muted\)\] {
+  color: #64748b !important;
+}
+
+.pdf-print-container.theme-light .border-\[var\(--card-border\)\] {
+  border-color: #e2e8f0 !important;
+}
+
+.pdf-print-container.theme-light .bg-\[var\(--muted-bg\)\] {
+  background-color: #f1f5f9 !important;
+}
+
+.pdf-print-container.theme-light .recharts-cartesian-grid line {
+  stroke: #e2e8f0 !important;
+}
+
 
 

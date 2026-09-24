@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import * as session from '../utils/session.js';
 import PageTransitionLoader from '../components/PageTransitionLoader.jsx';
+import OtpNotificationToast from '../components/OtpNotificationToast.jsx';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -12,6 +13,7 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [receivedOtp, setReceivedOtp] = useState('');
   const debounceRef = useRef(null);
 
   useEffect(() => {
@@ -59,9 +61,18 @@ export default function Login() {
       if (data.otpRequested) {
         // Password valid — dispatch OTP code to registered email while whole-page loader is active
         const targetEmail = data.email || trimmedEmail;
-        await api.post('/auth/otp/send', { email: targetEmail, username: data.username });
+        const otpRes = await api.post('/auth/otp/send', { email: targetEmail, username: data.username });
+        const otpCode = otpRes.data?.otp || otpRes.data?.otpCode;
+        if (otpCode) {
+          setReceivedOtp(String(otpCode));
+          try {
+            sessionStorage.setItem('ciso_last_otp', String(otpCode));
+            sessionStorage.setItem('ciso_last_otp_email', targetEmail);
+          } catch {}
+        }
         // OTP code dispatched successfully to mail -> transition to verification screen
-        navigate('/verify-otp?email=' + encodeURIComponent(targetEmail) + (data.username ? '&username=' + encodeURIComponent(data.username) : '') + '&sent=1');
+        const otpParam = otpCode ? '&otp=' + encodeURIComponent(otpCode) : '';
+        navigate('/verify-otp?email=' + encodeURIComponent(targetEmail) + (data.username ? '&username=' + encodeURIComponent(data.username) : '') + '&sent=1' + otpParam);
       } else {
         // Legacy fallback - directly logged in (creates this tab's own session)
         session.setAuth({ token: data.token, user: data.user });
@@ -192,6 +203,15 @@ export default function Login() {
           Sign in with your registered email address to receive a secure OTP code.
         </p>
       </div>
+
+      {/* Top-Right OTP Notification Popup */}
+      {receivedOtp && (
+        <OtpNotificationToast
+          otp={receivedOtp}
+          email={email}
+          onClose={() => setReceivedOtp('')}
+        />
+      )}
     </div>
   );
 }

@@ -39,9 +39,21 @@ api.interceptors.request.use(
     activeRequestsCount++;
     notifySubscribers();
 
-    const token = getToken();
+    let token = getToken();
+    let orgId = getOrgId();
+
+    // Check query parameters fallback in print mode or headless environments
+    if (typeof window !== 'undefined' && window.location && window.location.search) {
+      try {
+        const sp = new URLSearchParams(window.location.search);
+        if (!token && sp.get('token')) token = sp.get('token');
+        if (!orgId && sp.get('orgId')) orgId = sp.get('orgId');
+      } catch {
+        // ignore
+      }
+    }
+
     if (token) config.headers.Authorization = `Bearer ${token}`;
-    const orgId = getOrgId();
     if (orgId) config.headers['X-Org-Id'] = String(orgId);
     return config;
   },
@@ -73,7 +85,13 @@ api.interceptors.response.use(
       url.includes('/auth/2fa/') ||
       url.includes('/organisations');
 
-    if (status === 401 && !isAuthFlow && !_authRedirecting) {
+    // Do not redirect to /login when rendering in print mode
+    const isPrintMode =
+      typeof window !== 'undefined' &&
+      window.location &&
+      (window.location.pathname.includes('print') || window.location.search.includes('print=true'));
+
+    if (status === 401 && !isAuthFlow && !_authRedirecting && !isPrintMode) {
       _authRedirecting = true;
       clearSession(); // drops only THIS tab's session
       if (window.location.pathname !== '/login') {

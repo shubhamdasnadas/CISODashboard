@@ -19,6 +19,7 @@ const router = express.Router();
 // The per-org sub-folder under reportList keeps every organisation's PDFs
 // isolated in its own directory on disk.
 const { renderReportPdf } = require('../scripts/reportRenderer.cjs');
+const { generateLiveAnalyticsPdf } = require('../services/puppeteerPdfService');
 
 // backend/reportList/<orgSlug>/  — repo-root-relative, safe across machines.
 const REPORT_LIST_ROOT = path.join(__dirname, '..', 'reportList');
@@ -29,7 +30,7 @@ const safeName = (s) => String(s || 'org').replace(/[^a-zA-Z0-9_-]/g, '_').slice
 
 router.post('/generate', async (req, res) => {
   try {
-    const { data, orgName } = req.body || {};
+    const { data } = req.body || {};
     if (!data || typeof data !== 'object') {
       return res.status(400).json({ message: 'report data is required in the request body' });
     }
@@ -104,6 +105,87 @@ router.post('/generate', async (req, res) => {
   } catch (err) {
     console.error('[reports/generate] Failed:', err);
     return res.status(500).json({ message: err.message || 'PDF generation failed' });
+  }
+});
+
+/**
+ * POST /api/reports/live-pdf
+ * Real-time on-demand PDF generation of the live Analytics page via Puppeteer.
+ * Captures the exact live UI state (filters, active tabs, multi-view chart types).
+ */
+router.post('/live-pdf', async (req, res) => {
+  try {
+    const { section, from, to, dayPreset, periodLabel, chartViews, orgName, theme } = req.body || {};
+    if (!req.orgSlug) {
+      return res.status(400).json({ message: 'Active organisation not resolved.' });
+    }
+
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+
+    console.log('[reports/live-pdf] Generating real-time PDF via Puppeteer for org:', req.orgSlug, 'orgId:', req.currentOrgId, 'theme:', theme || 'dark');
+
+    const pdfBuffer = await generateLiveAnalyticsPdf({
+      token,
+      orgSlug: req.orgSlug,
+      orgId: req.currentOrgId,
+      orgName: orgName || req.orgSlug,
+      user: req.user,
+      section: section || 'all',
+      from,
+      to,
+      dayPreset,
+      chartViews,
+      theme: theme || 'dark',
+    });
+
+    // 1. Build the per-organisation sub-folder path: reportList/<orgSlug>/
+    const orgFolderName = safeName(req.orgSlug);
+    const orgDir = path.join(REPORT_LIST_ROOT, orgFolderName);
+    fs.mkdirSync(orgDir, { recursive: true });
+
+    // 2. Filename: <username>_<orgSlug>_YYYY-MM-DD_HH-MM-SS.pdf
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const stamp =
+      `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` +
+      `_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+    const userName = safeName(req.user?.username || req.user?.userId || 'user');
+    const fileName = `Analytics_${userName}_${orgFolderName}_${stamp}.pdf`;
+    const filePath = path.join(orgDir, fileName);
+
+    // 3. Save to disk
+    fs.writeFileSync(filePath, pdfBuffer);
+
+    // 4. Save to reports DB table
+    const dbTitle = `Live Analytics Report — ${orgName || req.orgSlug} — ${periodLabel || 'All Time'}`;
+    const dbDesc = `Real-time on-demand Analytics PDF report. File: ${fileName}.`;
+    try {
+      await req.orgPool.query(
+        `INSERT INTO reports
+           (title, description, type, status, file_path, org_slug, created_by, generated_at)
+         VALUES ($1, $2, 'analytics', 'published', $3, $4, $5, NOW())`,
+        [
+          dbTitle,
+          dbDesc,
+          filePath,
+          req.orgSlug,
+          req.user?.username || req.user?.userId || 'system',
+        ]
+      );
+    } catch (dbErr) {
+      console.warn('[reports/live-pdf] DB insert warning:', dbErr.message);
+    }
+
+    // 5. Stream PDF directly to client
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.setHeader('X-Saved-Path', encodeURIComponent(filePath));
+    return res.end(pdfBuffer);
+  } catch (err) {
+    console.error('[reports/live-pdf] Error generating live PDF:', err);
+    return res.status(500).json({ message: err.message || 'Live PDF generation failed' });
   }
 });
 

@@ -113,6 +113,7 @@ export default function App() {
               <Route path="/login-2fa" element={<Login2FA />} />
               <Route path="/verify-otp" element={<OtpVerify />} />
               <Route path="/select-organisation" element={<SelectOrganisation />} />
+              <Route path="/analytics-print" element={<Analytics printMode={true} />} />
               <Route
                 element={
                   <ProtectedRoute>

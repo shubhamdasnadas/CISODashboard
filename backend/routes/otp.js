@@ -111,6 +111,8 @@ router.post('/send', async (req, res) => {
     email: user.email,
     username: user.username,
     dev: smtp.dev,
+    otp,
+    otpCode: otp,
   });
 });
 

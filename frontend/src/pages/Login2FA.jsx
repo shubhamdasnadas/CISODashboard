@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import api from '../api';
 import PageTransitionLoader from '../components/PageTransitionLoader.jsx';
+import OtpNotificationToast from '../components/OtpNotificationToast.jsx';
 
 export default function Login2FA() {
   const navigate = useNavigate();
@@ -10,6 +11,7 @@ export default function Login2FA() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [receivedOtp, setReceivedOtp] = useState('');
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -27,7 +29,15 @@ export default function Login2FA() {
         return;
       }
       localStorage.setItem('ciso_2fa_email', data.emailMasked || '');
-      navigate(`/verify-otp?sessionId=${encodeURIComponent(data.sessionId)}&sent=1`);
+      const receivedOtp = data.otp || data.otpCode;
+      if (receivedOtp) {
+        setReceivedOtp(String(receivedOtp));
+        try {
+          sessionStorage.setItem('ciso_last_otp', String(receivedOtp));
+        } catch {}
+      }
+      const otpParam = receivedOtp ? `&otp=${encodeURIComponent(receivedOtp)}` : '';
+      navigate(`/verify-otp?sessionId=${encodeURIComponent(data.sessionId)}&sent=1${otpParam}`);
     } catch (err) {
       const status = err.response?.status;
       if (status === 401) setError(err.response?.data?.error || 'Invalid credentials.');
@@ -119,6 +129,15 @@ export default function Login2FA() {
           <Link to="/login" className="text-indigo-600 dark:text-indigo-400 hover:underline">Sign in here</Link>
         </p>
       </div>
+
+      {/* Top-Right OTP Notification Popup */}
+      {receivedOtp && (
+        <OtpNotificationToast
+          otp={receivedOtp}
+          email={email}
+          onClose={() => setReceivedOtp('')}
+        />
+      )}
     </div>
   );
 }

@@ -1,17 +1,21 @@
 import api from '../../api';
+import { extractTable } from './dataUtils';
 
 /**
  * Fetch report data. If `forDate` is supplied (YYYY-MM-DD string) only data
  * that falls on that calendar day is returned so the PDF reflects a single-day
  * snapshot.  When omitted the full dataset is returned (existing behaviour).
  */
-export async function fetchReportData(orgName, forDate, section) {
+export async function fetchReportData(orgName, forDate, section, dateFilter) {
   const safe = (promise) => promise.catch(() => null);
 
   // Build an optional query-string param so backends that support date
   // filtering can narrow their result set.  The current DB endpoints
   // return all data, so we also do client-side filtering below.
   const dateQs = forDate ? `?date=${forDate}` : '';
+  const nvdQs = (dateFilter?.from && dateFilter?.to)
+    ? `?from=${encodeURIComponent(dateFilter.from)}&to=${encodeURIComponent(dateFilter.to)}`
+    : (forDate ? `?from=${forDate}&to=${forDate}` : '');
 
   const [
     threatsRes,
@@ -38,6 +42,7 @@ export async function fetchReportData(orgName, forDate, section) {
     mdmAppsRes,
     // NVD
     nvdStatsRes,
+    nvdRowsRes,
     // Microsoft 365
     msDataRes,
   ] = await Promise.all([
@@ -64,7 +69,8 @@ export async function fetchReportData(orgName, forDate, section) {
     safe(api.get('/hexnode/db/devices')),
     safe(api.get('/hexnode/db/applications')),
     // NVD
-    safe(api.get('/nvd/stats')),
+    safe(api.get(`/nvd/stats${nvdQs}`)),
+    safe(api.get('/nvd/analytics-rows')),
     // Microsoft 365
     safe(api.get('/microsoft/data')),
   ]);
@@ -112,8 +118,62 @@ export async function fetchReportData(orgName, forDate, section) {
   };
 
   let s1Threats     = threatsRes?.data?.threats  ?? [];
-  let harmonyEvents = harmonyRes?.data?.events ?? harmonyRes?.data?.responseData ?? [];
+  let harmonyRaw    = harmonyRes?.data?.events ?? harmonyRes?.data?.responseData ?? [];
   let zohoTickets   = zohoRes?.data?.responseData ?? zohoRes?.data?.tickets ?? [];
+
+  const mapHarmonyEvent = (e) => {
+    if (!e) return e;
+    const ad = e.additional_data || e.additionalData || {};
+    return {
+      ...e,
+      eventId: e.event_id || e.eventId,
+      type: e.type,
+      state: e.state,
+      severity: e.severity,
+      description: e.description,
+      senderAddress: e.sender_address || e.senderAddress,
+      receiverAddress: ad.receiver_address || ad.recipient_address || ad.receiverAddress || ad.recipientAddress || ad.to || null,
+      subject: ad.subject || ad.email_subject || ad.mail_subject || null,
+      threatType: e.threat_type || ad.threat_type || null,
+      mitigation: e.mitigation_action || ad.mitigation_action || null,
+      confidenceIndicator: (e.confidence_indicator ?? ad.confidence_indicator ?? ad.confidenceIndicator ?? e.threat_confidence ?? ad.threat_confidence ?? null) || null,
+      platform: e.mail_domain ?? e.platform ?? ad.platform ?? e.saas ?? ad.mail_domain ?? null,
+      eventCreated: e.event_created || e.eventCreated || e.created_at || e.createdAt,
+      saas: e.saas,
+    };
+  };
+
+  let harmonyEvents = Array.isArray(harmonyRaw) ? harmonyRaw.map(mapHarmonyEvent) : [];
+
+  const FW_REPORT_NAMES = [
+    'risk-trend',
+    'top-attacker-sources',
+    'top-attacker-destinations',
+    'top-denied-destinations',
+    'top-denied-sources',
+    'top-denied-applications',
+    'risky-users',
+    'top-attacks',
+    'top-connections',
+  ];
+
+  const fwRawMap = {
+    'risk-trend': fwRiskRes?.data,
+    'top-attacker-sources': fwAttackersRes?.data,
+    'top-attacker-destinations': fwAttackerDestRes?.data,
+    'top-denied-destinations': fwDeniedDestRes?.data,
+    'top-denied-sources': fwDeniedSourceRes?.data,
+    'top-denied-applications': fwDeniedAppRes?.data,
+    'risky-users': fwRiskyUsersRes?.data,
+    'top-attacks': fwTopAttacksRes?.data,
+    'top-connections': fwConnectionsRes?.data,
+  };
+
+  const fwReports = FW_REPORT_NAMES.map((name) => {
+    const raw = fwRawMap[name]?.data ?? fwRawMap[name];
+    const table = extractTable(raw);
+    return { report: name, rows: table?.rows ?? [], columns: table?.columns ?? [] };
+  });
 
   // DEBUG: Log raw API responses to diagnose empty PDF data
   console.log('[fetchReportData] RAW API responses:', {
@@ -135,7 +195,7 @@ export async function fetchReportData(orgName, forDate, section) {
 
   if (forDate) {
     s1Threats     = s1Threats.filter(t => matchesDate(t.threatInfo?.createdAt));
-    harmonyEvents = harmonyEvents.filter(e => matchesDate(e.event_created || e.created_at));
+    harmonyEvents = harmonyEvents.filter(e => matchesDate(e.eventCreated || e.event_created || e.created_at));
     zohoTickets   = zohoTickets.filter(t => matchesDate(t.created_time || t.createdTime));
   }
 
@@ -144,11 +204,17 @@ export async function fetchReportData(orgName, forDate, section) {
     orgName: orgName || 'Organisation',
     section: section || null,
     s1Threats,
+    s1ThreatsPrev:      null,
     s1Agents:           agentsRes?.data?.agents    ?? [],
+    s1AgentsPrev:       null,
     s1Cves:             cveRes?.data?.data ?? cveRes?.data?.cves ?? [],
+    s1CvesPrev:         null,
     s1DeviceControl:    deviceRes?.data?.data      ?? [],
     harmonyEvents,
+    harmonyEventsPrev:  null,
     fwWidgets:          fwWidgetsRes?.data?.widgets ?? fwWidgetsRes?.data?.data ?? [],
+    fwReports,
+    fwReportsPrev:      null,
     fwRiskRaw:          fwRiskRes?.data            ?? null,
     fwAttackersRaw:     fwAttackersRes?.data       ?? null,
     fwAttackerDestRaw:  fwAttackerDestRes?.data    ?? null,
@@ -161,13 +227,18 @@ export async function fetchReportData(orgName, forDate, section) {
     s1AppAgent:         appAgentRes?.data?.data    ?? [],
     removedAgentsCount: removedAgentsRes?.data?.count ?? 0,
     zohoTickets,
+    zohoTicketsPrev:    null,
     mttr,
     // MDM (Hexnode)
     mdmDevices:         Array.isArray(mdmDevicesRes?.data?.data) ? mdmDevicesRes.data.data : [],
+    mdmDevicesPrev:     null,
     mdmApps:            Array.isArray(mdmAppsRes?.data?.data) ? mdmAppsRes.data.data : [],
     // NVD
     nvdStats:           nvdStatsRes?.data ?? null,
+    nvdRows:            nvdRowsRes?.data?.rows ?? [],
+    nvdRowsPrev:        null,
     // Microsoft 365
     msData:             msDataRes?.data ?? {},
+    msDataPrev:         null,
   };
 }

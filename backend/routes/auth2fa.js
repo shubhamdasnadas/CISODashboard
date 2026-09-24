@@ -99,6 +99,8 @@ router.post('/2fa/login', async (req, res) => {
       sessionId,
       emailMasked: maskEmail(user.email),
       dev: smtp.dev, // true => OTP also printed to server console
+      otp,
+      otpCode: otp,
     });
   } catch (err) {
     console.error('[2fa] login error:', err.message);
@@ -248,7 +250,7 @@ router.post('/2fa/resend-otp', async (req, res) => {
              <p>It expires in 5 minutes. If you did not request this, you can ignore this email.</p>`,
     });
 
-    res.json({ message: 'OTP resent', emailMasked: maskEmail(user.email), dev: smtp.dev });
+    res.json({ message: 'OTP resent', emailMasked: maskEmail(user.email), dev: smtp.dev, otp, otpCode: otp });
   } catch (err) {
     console.error('[2fa] resend-otp error:', err.message);
     res.status(500).json({ error: 'Server error' });

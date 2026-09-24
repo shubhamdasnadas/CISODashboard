@@ -27,6 +27,9 @@ const BUNDLE = path.join(__dirname, '..', 'dist', 'reportTemplate.cjs');
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const SOURCE_FILES = [
   path.join(REPO_ROOT, 'frontend', 'src', 'pages', 'report', 'ReportTemplate.jsx'),
+  path.join(REPO_ROOT, 'frontend', 'src', 'pages', 'report', 'AnalyticsReportTemplate.jsx'),
+  path.join(REPO_ROOT, 'frontend', 'src', 'pages', 'report', 'DynamicSectionPage.jsx'),
+  path.join(REPO_ROOT, 'frontend', 'src', 'pages', 'report', 'reportConfig.js'),
   path.join(REPO_ROOT, 'frontend', 'src', 'pages', 'report', 'dataUtils.js'),
   path.join(REPO_ROOT, 'frontend', 'src', 'pages', 'report', 'pdfChartComponents.jsx'),
 ];

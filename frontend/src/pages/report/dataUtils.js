@@ -176,22 +176,35 @@ export function shortName(v, max = 18) {
 }
 
 export function buildCveData(apps) {
-  const sc = (r) => parseFloat(r.baseScore) || 0;
+  const cveList = Array.isArray(apps) ? apps : [];
+  const sc = (r) => {
+    const v = parseFloat(r.baseScore ?? r.cvss_score ?? r.cvssScore ?? r.cvss_base_score);
+    return !isNaN(v) ? v : 0;
+  };
 
   const appMap = {};
-  apps.forEach((r) => {
+  let scoreSum = 0, scoreCount = 0;
+
+  cveList.forEach((r) => {
+    if (!r) return;
     const key = r.applicationName || r.application || 'Unknown';
-    if (!appMap[key]) appMap[key] = { name: key, vendor: r.applicationVendor || '', cves: new Set(), endpoints: new Set(), severities: [], scores: [], daysDetected: 0 };
+    if (!appMap[key]) appMap[key] = { name: key, vendor: r.applicationVendor || r.vendor || '', cves: new Set(), endpoints: new Set(), severities: [], scores: [], daysDetected: 0 };
     const a = appMap[key];
     if (r.cveId) a.cves.add(r.cveId);
-    if (r.endpointId || r.endpointName) a.endpoints.add(r.endpointId || r.endpointName);
+    if (r.endpointId || r.endpointName || r.endpoint) a.endpoints.add(r.endpointId || r.endpointName || r.endpoint);
     if (r.severity) a.severities.push(String(r.severity).toUpperCase());
-    a.scores.push(sc(r));
-    a.daysDetected = Math.max(a.daysDetected, r.daysDetected || 0);
+    const scoreVal = sc(r);
+    if (scoreVal > 0) {
+      a.scores.push(scoreVal);
+      scoreSum += scoreVal;
+      scoreCount++;
+    }
+    a.daysDetected = Math.max(a.daysDetected, Number(r.daysDetected) || 0);
   });
 
   const appList = Object.values(appMap).map((a) => ({
-    name: a.name, vendor: a.vendor,
+    name: a.name,
+    vendor: a.vendor,
     cveCount: a.cves.size,
     endpointCount: a.endpoints.size,
     highestSeverity: SEVER_ORDER.find((s) => a.severities.includes(s)) || 'UNKNOWN',
@@ -199,12 +212,17 @@ export function buildCveData(apps) {
     daysDetected: a.daysDetected,
   }));
 
-  const totalCves = new Set(apps.map((r) => r.cveId).filter(Boolean)).size || apps.length;
-  const totalEndpoints = new Set(apps.map((r) => r.endpointId || r.endpointName).filter(Boolean)).size;
-  const avgScore = apps.length ? (apps.reduce((s, r) => s + sc(r), 0) / apps.length).toFixed(1) : 0;
+  const totalApplications = appList.length;
+  const totalCves = new Set(cveList.map((r) => r.cveId).filter(Boolean)).size || cveList.length;
+  const totalEndpoints = new Set(cveList.map((r) => r.endpointId || r.endpointName || r.endpoint).filter(Boolean)).size;
+  const avgScore = scoreCount > 0 ? (scoreSum / scoreCount).toFixed(1) : (cveList.length > 0 ? '0.0' : 0);
 
   const severityMap = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 };
-  apps.forEach((r) => { const s = String(r.severity || 'UNKNOWN').toUpperCase(); severityMap[s in severityMap ? s : 'UNKNOWN']++; });
+  cveList.forEach((r) => {
+    if (!r) return;
+    const s = String(r.severity || 'UNKNOWN').toUpperCase();
+    severityMap[s in severityMap ? s : 'UNKNOWN']++;
+  });
 
   const severityDistribution = Object.entries(severityMap)
     .filter(([, v]) => v > 0)
@@ -214,9 +232,13 @@ export function buildCveData(apps) {
     .map((a) => ({ name: shortName(a.name), fullName: a.name, cves: a.cveCount, score: a.highestNvdBaseScore }));
 
   const agingBuckets = { '0-30': 0, '31-90': 0, '91-180': 0, '180+': 0 };
-  apps.forEach((r) => {
+  cveList.forEach((r) => {
+    if (!r) return;
     const d = parseInt(r.daysDetected, 10) || 0;
-    if (d <= 30) agingBuckets['0-30']++; else if (d <= 90) agingBuckets['31-90']++; else if (d <= 180) agingBuckets['91-180']++; else agingBuckets['180+']++;
+    if (d <= 30) agingBuckets['0-30']++;
+    else if (d <= 90) agingBuckets['31-90']++;
+    else if (d <= 180) agingBuckets['91-180']++;
+    else agingBuckets['180+']++;
   });
   const cveAging = Object.entries(agingBuckets).map(([name, count]) => ({ name, count }));
 
@@ -224,31 +246,45 @@ export function buildCveData(apps) {
     .map((a) => ({ name: shortName(a.name), endpoints: a.endpointCount }));
 
   const scoreRangeBuckets = [
-    { name: 'Low (0-3.9)', fill: '#3b82f6', count: 0 },
-    { name: 'Med (4-6.9)', fill: '#eab308', count: 0 },
+    { name: 'Critical (9-10)', fill: '#a855f7', count: 0 },
     { name: 'High (7-8.9)', fill: '#ef4444', count: 0 },
-    { name: 'Crit (9-10)', fill: '#a855f7', count: 0 },
+    { name: 'Medium (4-6.9)', fill: '#eab308', count: 0 },
+    { name: 'Low (0-3.9)', fill: '#3b82f6', count: 0 },
   ];
-  apps.forEach((r) => {
+  cveList.forEach((r) => {
+    if (!r) return;
     const s = sc(r);
-    if (s < 4) scoreRangeBuckets[0].count++; else if (s < 7) scoreRangeBuckets[1].count++; else if (s < 9) scoreRangeBuckets[2].count++; else scoreRangeBuckets[3].count++;
+    if (s >= 9) scoreRangeBuckets[0].count++;
+    else if (s >= 7) scoreRangeBuckets[1].count++;
+    else if (s >= 4) scoreRangeBuckets[2].count++;
+    else scoreRangeBuckets[3].count++;
   });
-  const scoreRange = scoreRangeBuckets.filter((b) => b.count > 0).map((b) => ({ name: b.name, value: b.count, fill: b.fill }));
+  const scoreRange = scoreRangeBuckets
+    .filter((b) => b.count > 0)
+    .map((b) => ({ name: b.name, value: b.count, count: b.count, fill: b.fill }));
 
   const vendorCounts = {};
-  apps.forEach((r) => { const v = r.applicationVendor || ''; if (v) vendorCounts[v] = (vendorCounts[v] || 0) + 1; });
+  cveList.forEach((r) => {
+    if (!r) return;
+    const v = r.applicationVendor || r.vendor || '';
+    if (v) vendorCounts[v] = (vendorCounts[v] || 0) + 1;
+  });
   const vendorRisk = Object.entries(vendorCounts).sort((a, b) => b[1] - a[1]).slice(0, 10)
     .map(([name, cves]) => ({ name: shortName(name), cves, fullName: name }));
 
   const statusCounts = {};
-  apps.forEach((r) => { const s = r.status || 'Unknown'; statusCounts[s] = (statusCounts[s] || 0) + 1; });
+  cveList.forEach((r) => {
+    if (!r) return;
+    const s = r.status || 'Unknown';
+    statusCounts[s] = (statusCounts[s] || 0) + 1;
+  });
   const estimateStatus = Object.entries(statusCounts)
     .map(([name, value], i) => ({ name, value, fill: ['#f97316', '#22c55e', '#3b82f6', '#a855f7'][i % 4] }));
 
   const criticalApps = appList.filter((a) => a.highestSeverity === 'CRITICAL' && a.name !== 'Microsoft Office Standard 2016')
     .sort((a, b) => b.cveCount - a.cveCount).slice(0, 6);
 
-  return { totalApplications: appList.length, totalCves, totalEndpoints, avgScore, severityMap, severityDistribution, topRiskyApps, cveAging, endpointImpact, scoreRange, vendorRisk, estimateStatus, criticalApps };
+  return { totalApplications, totalCves, totalEndpoints, avgScore, severityMap, severityDistribution, topRiskyApps, cveAging, endpointImpact, scoreRange, vendorRisk, estimateStatus, criticalApps };
 }
 
 // ── Weekly insights (Week-over-Week) helpers ─────────────────────────────────

@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import api from '../api';
 import * as session from '../utils/session.js';
 import PageTransitionLoader from '../components/PageTransitionLoader.jsx';
+import OtpNotificationToast from '../components/OtpNotificationToast.jsx';
 
 const TOTAL_STEPS = 2;
 
@@ -27,6 +28,9 @@ export default function OtpVerify() {
   const [emailMasked, setEmailMasked] = useState(email || '');
   const [cooldownUntil, setCooldownUntil] = useState(0); // epoch ms when resend unlocks
   const [resendCooldown, setResendCooldown] = useState(0); // seconds remaining
+  const [toastOtp, setToastOtp] = useState(() => {
+    return params.get('otp') || sessionStorage.getItem('ciso_last_otp') || '';
+  });
   const initialOtpSentRef = useRef(false);
 
   // ---------------------------------------------------------------------------
@@ -81,12 +85,16 @@ export default function OtpVerify() {
           const r = await api.post('/auth/otp/send', { email: userIdentifier, username: userIdentifier });
           const masked = r.data?.emailMasked;
           if (masked) setEmailMasked(masked);
+          const newOtp = r.data?.otp || r.data?.otpCode;
+          if (newOtp) setToastOtp(String(newOtp));
         } else if (is2faFlow && sessionId) {
           // Direct visit without ?sent=1 (e.g. after refresh): re-dispatch through
           // the cooldown-aware resend path.
           const r = await api.post('/auth/2fa/resend-otp', { sessionId });
           const masked = r.data?.emailMasked;
           if (masked) setEmailMasked(masked);
+          const newOtp = r.data?.otp || r.data?.otpCode;
+          if (newOtp) setToastOtp(String(newOtp));
         }
 
         if (!cancelled) {
@@ -127,14 +135,23 @@ export default function OtpVerify() {
     setSendingOtp(true);
     try {
       let masked = null;
+      let newOtp = null;
       if (isTraditionalFlow && userIdentifier) {
         const r = await api.post('/auth/otp/send', { email: userIdentifier, username: userIdentifier });
         masked = r.data?.emailMasked;
+        newOtp = r.data?.otp || r.data?.otpCode;
       } else if (is2faFlow && sessionId) {
         const r = await api.post('/auth/2fa/resend-otp', { sessionId });
         masked = r.data?.emailMasked;
+        newOtp = r.data?.otp || r.data?.otpCode;
       }
       if (masked) setEmailMasked(masked);
+      if (newOtp) {
+        setToastOtp(String(newOtp));
+        try {
+          sessionStorage.setItem('ciso_last_otp', String(newOtp));
+        } catch {}
+      }
       setResendSuccess(`A new code has been sent to ${masked || emailMasked || 'your registered email'}.`);
       startResendCooldown();
     } catch (err) {
@@ -180,6 +197,7 @@ export default function OtpVerify() {
       session.setAuth({ token, user });
       session.setOrgId(null);
       localStorage.removeItem('ciso_2fa_email');
+      sessionStorage.removeItem('ciso_last_otp');
       delete api.defaults.headers.common['X-Org-Id'];
       navigate('/select-organisation', { replace: true });
     } catch (err) {
@@ -352,6 +370,16 @@ export default function OtpVerify() {
           </div>
         </div>
       </div>
+
+      {/* Top-Right OTP Notification Popup */}
+      {toastOtp && (
+        <OtpNotificationToast
+          otp={toastOtp}
+          email={emailMasked || email || ''}
+          onClose={() => setToastOtp('')}
+          onAutoFill={(code) => setOtp(code)}
+        />
+      )}
     </div>
   );
 }

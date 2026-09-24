@@ -7,6 +7,7 @@ import {
 } from 'recharts';
 
 import api from '../api.js';
+import * as session from '../utils/session.js';
 import { useOrg } from '../context/OrgContext.jsx';
 import { generateAnalyticsPdf, generateAnalyticsPdfForSection } from './report/generatePdf.jsx';
 import { fetchReportData } from './report/fetchReportData.js';
@@ -405,7 +406,7 @@ function StatCard({ title, value, subtitle, color = 'default', onClick, cur, pre
   return (
     <div
       onClick={onClick}
-      className={`bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-4 flex flex-col justify-between gap-1.5 shadow-sm ${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
+      className={`card-surface pdf-card-avoid-break bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-4 flex flex-col justify-between gap-1.5 shadow-sm ${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
     >
       <div>
         <p className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-widest">{title}</p>
@@ -428,8 +429,23 @@ function ChartCard({
   defaultChartType = 'donut',
   onViewTypeChange,
   extraControls,
+  storageKey,
 }) {
-  const [localChartType, setLocalChartType] = useState(defaultChartType);
+  const resolvedStorageKey = storageKey || (title ? `ciso_analytics_chart_${String(title).toLowerCase().replace(/[^a-z0-9]+/g, '_')}` : null);
+
+  const [localChartType, setLocalChartType] = useState(() => {
+    if (typeof window !== 'undefined' && resolvedStorageKey) {
+      try {
+        const saved = localStorage.getItem(resolvedStorageKey);
+        if (saved && (!viewOptions || viewOptions.some((v) => v.type === saved))) {
+          return saved;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return defaultChartType;
+  });
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
 
@@ -443,6 +459,13 @@ function ChartCard({
 
   const handleChartTypeChange = (type) => {
     setLocalChartType(type);
+    if (typeof window !== 'undefined' && resolvedStorageKey) {
+      try {
+        localStorage.setItem(resolvedStorageKey, type);
+      } catch {
+        // ignore
+      }
+    }
     setDropdownOpen(false);
     onViewTypeChange?.(type);
   };
@@ -451,7 +474,7 @@ function ChartCard({
   const groups = viewOptions ? [...new Set(viewOptions.map((v) => v.group))] : [];
 
   return (
-    <div className={`bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl overflow-hidden shadow-sm ${className}`}>
+    <div className={`card-surface pdf-card-avoid-break bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl overflow-hidden shadow-sm ${className}`}>
       <div className="flex items-center justify-between px-4 pt-4 pb-2 gap-2 flex-wrap">
         <div className="min-w-0">
           <p className="text-sm font-bold text-[var(--foreground)]">{title}</p>
@@ -1094,7 +1117,7 @@ function WizardSection({ id, kicker, title, icon, accent, meta, syncing, onSync,
 
 // ─── Module section components ─────────────────────────────────────────────────
 
-function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThreats, syncing, onSync }) {
+function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThreats, syncing, onSync, allSubTabs = false }) {
   // Each widget filters independently via FilterByDays — no global from/to
 
   // Secondary tabs inside the SentinelOne section (mirrors the module page).
@@ -1237,30 +1260,38 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
     <WizardSection id="security" kicker="Endpoint Protection" title="SentinelOne" icon="🛡️" accent="#10b981"
       meta={`${fullAgents.length} agents · ${fullCves.length} CVEs · ${fullThreats.length} threats`} syncing={syncing} onSync={onSync}>
 
-      {/* Nested tabs for the three SentinelOne areas */}
-      <div className="flex items-center gap-1.5 overflow-x-auto border-b border-[var(--card-border)] -mb-1">
-        {SUB_TABS.map((tab) => {
-          const isActive = activeSubTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveSubTab(tab.id)}
-              className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-t-lg transition-all whitespace-nowrap ${isActive
-                ? 'bg-[var(--muted-bg)] text-indigo-500 border border-[var(--card-border)] border-b-0 -mb-px'
-                : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
-                }`}
-            >
-              <span>{tab.icon}</span>
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
-      </div>
+      {/* Nested tabs for the three SentinelOne areas (hidden in allSubTabs print mode) */}
+      {!allSubTabs && (
+        <div className="flex items-center gap-1.5 overflow-x-auto border-b border-[var(--card-border)] -mb-1">
+          {SUB_TABS.map((tab) => {
+            const isActive = activeSubTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveSubTab(tab.id)}
+                className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-t-lg transition-all whitespace-nowrap ${isActive
+                  ? 'bg-[var(--muted-bg)] text-indigo-500 border border-[var(--card-border)] border-b-0 -mb-px'
+                  : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+                  }`}
+              >
+                <span>{tab.icon}</span>
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* ── AGENTS TAB ── */}
-      {activeSubTab === 'agents' && (
-        <>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-3">
+      {(allSubTabs ? fullAgents.length > 0 : activeSubTab === 'agents') && (
+        <div id="sec-s1-agents" className="space-y-4">
+          {allSubTabs && (
+            <div className="flex items-center gap-2 pt-2 border-t border-[var(--card-border)]">
+              <span className="text-sm">🖥️</span>
+              <h3 className="text-sm font-bold text-[var(--foreground)] uppercase tracking-wider">Agent Analytics</h3>
+            </div>
+          )}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-1">
             {[
               { title: 'Total Agents', color: 'blue', fn: (a) => a.length, good: true },
               { title: 'Active', color: 'green', fn: (a) => a.filter((x) => x.isActive).length, good: true },
@@ -1304,22 +1335,30 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
               </FilterByDays>
             ))}
           </div>
-          <FilterByDays data={fullAgents} dateFn={(a) => a.installTime || a.lastSeen || a.createdAt}>
-            {({ filtered }) => (
-              <ChartCard title="Scan Status" viewOptions={VIEW_OPTIONS}>
-                {(chartType) => {
-                  const scanData = computeAgentCharts(filtered).scanStatus;
-                  return scanData.length === 0 ? <Empty /> : <MultiViewChart data={scanData} chartType={chartType} />;
-                }}
-              </ChartCard>
-            )}
-          </FilterByDays>
-        </>
+          {!allSubTabs && (
+            <FilterByDays data={fullAgents} dateFn={(a) => a.installTime || a.lastSeen || a.createdAt}>
+              {({ filtered }) => (
+                <ChartCard title="Scan Status" viewOptions={VIEW_OPTIONS}>
+                  {(chartType) => {
+                    const scanData = computeAgentCharts(filtered).scanStatus;
+                    return scanData.length === 0 ? <Empty /> : <MultiViewChart data={scanData} chartType={chartType} />;
+                  }}
+                </ChartCard>
+              )}
+            </FilterByDays>
+          )}
+        </div>
       )}
 
       {/* ── CVEs TAB ── */}
-      {activeSubTab === 'cves' && (
-        <>
+      {(allSubTabs ? fullCves.length > 0 : activeSubTab === 'cves') && (
+        <div id="sec-s1-cves" className={`space-y-4 ${allSubTabs ? 'pdf-print-subpage' : ''}`}>
+          {allSubTabs && (
+            <div className="flex items-center gap-2 pt-2 border-t border-[var(--card-border)]">
+              <span className="text-sm">🔍</span>
+              <h3 className="text-sm font-bold text-[var(--foreground)] uppercase tracking-wider">Application CVEs</h3>
+            </div>
+          )}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { title: 'Applications', color: 'default', fn: (a) => new Set(a.map((r) => r.applicationName || r.application).filter(Boolean)).size, good: true },
@@ -1359,12 +1398,18 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
               </FilterByDays>
             ))}
           </div>
-        </>
+        </div>
       )}
 
       {/* ── THREATS TAB ── */}
-      {activeSubTab === 'threats' && hasThreats && (
-        <>
+      {(allSubTabs ? fullThreats.length > 0 : activeSubTab === 'threats') && hasThreats && (
+        <div id="sec-s1-threats" className={`space-y-4 ${allSubTabs ? 'pdf-print-subpage' : ''}`}>
+          {allSubTabs && (
+            <div className="flex items-center gap-2 pt-2 border-t border-[var(--card-border)]">
+              <span className="text-sm">⚠️</span>
+              <h3 className="text-sm font-bold text-[var(--foreground)] uppercase tracking-wider">Threat Analytics</h3>
+            </div>
+          )}
           <FilterByDays data={fullThreats} dateFn={(t) => t.threatInfo?.createdAt}>
             {({ current, previous, isFiltered }) => {
               const curTs = computeThreatStats(current);
@@ -1474,7 +1519,7 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
               );
             }}
           </FilterByDays>
-        </>
+        </div>
       )}
     </WizardSection>
   );
@@ -1552,20 +1597,27 @@ function MdmSection({ devices: fullDevices, apps: fullApps, syncing, onSync }) {
   );
 }
 
-function NvdSection({ stats, syncing, onSync }) {
+function NvdSection({ stats, rows: propRows, syncing, onSync }) {
   // Full lightweight row set (no descriptions/raw JSONB) fetched once — each widget
   // below filters it independently with its own FilterByDays, like the other sections.
-  const [rows, setRows] = useState([]);
-  const [loadingRows, setLoadingRows] = useState(true);
+  const [internalRows, setInternalRows] = useState([]);
+  const [loadingRows, setLoadingRows] = useState(!propRows || propRows.length === 0);
 
   useEffect(() => {
+    if (propRows && propRows.length > 0) {
+      setInternalRows(propRows);
+      setLoadingRows(false);
+      return;
+    }
     let alive = true;
     api.get('/nvd/analytics-rows')
-      .then((r) => { if (alive) setRows(r.data?.rows || []); })
-      .catch(() => { if (alive) setRows([]); })
+      .then((r) => { if (alive) setInternalRows(r.data?.rows || []); })
+      .catch(() => { if (alive) setInternalRows([]); })
       .finally(() => { if (alive) setLoadingRows(false); });
     return () => { alive = false; };
-  }, []);
+  }, [propRows]);
+
+  const rows = propRows && propRows.length > 0 ? propRows : internalRows;
 
   // Date used by each widget's independent day filter.
   const nvdDateFn = (v) => v.published || v.last_modified || v.synced_at;
@@ -1858,8 +1910,28 @@ function CheckpointSection({ events: fullEvents, syncing, onSync }) {
   }, [events]);
 
   // Interactive daily trend (with type filter + bar/line toggle)
-  const [cpChartMode, setCpChartMode] = useState('bar');
+  const [cpChartMode, setCpChartMode] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        return localStorage.getItem('ciso_analytics_cp_chart_mode') || 'bar';
+      } catch {
+        // ignore
+      }
+    }
+    return 'bar';
+  });
   const [cpTypeFilter, setCpTypeFilter] = useState('');
+
+  const handleCpChartModeChange = (mode) => {
+    setCpChartMode(mode);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('ciso_analytics_cp_chart_mode', mode);
+      } catch {
+        // ignore
+      }
+    }
+  };
 
   return (
     <WizardSection id="checkpoint" kicker="Email Security" title="Checkpoint Harmony" icon="📧" accent="#6366f1"
@@ -1901,8 +1973,8 @@ function CheckpointSection({ events: fullEvents, syncing, onSync }) {
               ))}
               <span className="hidden sm:inline text-[var(--card-border)]">|</span>
               <div className="flex rounded-lg border border-[var(--card-border)] overflow-hidden">
-                <button onClick={() => setCpChartMode('bar')} className={`text-[11px] px-2.5 py-1 transition-colors ${cpChartMode === 'bar' ? 'bg-indigo-500/10 text-indigo-500 font-semibold' : 'text-[var(--muted)] hover:text-[var(--foreground)]'}`}>📊 Bar</button>
-                <button onClick={() => setCpChartMode('line')} className={`text-[11px] px-2.5 py-1 transition-colors ${cpChartMode === 'line' ? 'bg-indigo-500/10 text-indigo-500 font-semibold' : 'text-[var(--muted)] hover:text-[var(--foreground)]'}`}>📈 Line</button>
+                <button onClick={() => handleCpChartModeChange('bar')} className={`text-[11px] px-2.5 py-1 transition-colors ${cpChartMode === 'bar' ? 'bg-indigo-500/10 text-indigo-500 font-semibold' : 'text-[var(--muted)] hover:text-[var(--foreground)]'}`}>📊 Bar</button>
+                <button onClick={() => handleCpChartModeChange('line')} className={`text-[11px] px-2.5 py-1 transition-colors ${cpChartMode === 'line' ? 'bg-indigo-500/10 text-indigo-500 font-semibold' : 'text-[var(--muted)] hover:text-[var(--foreground)]'}`}>📈 Line</button>
               </div>
             </div>
             <div style={{ height: 288 }}>
@@ -2829,19 +2901,76 @@ const NAV_ITEMS = [
 ];
 
 // ─── Main Component ───────────────────────────────────────────────────────────
-export default function Analytics() {
+export default function Analytics({ printMode: printModeProp = false }) {
   const [searchParams] = useSearchParams();
+  const isPrint = printModeProp || searchParams.get('print') === 'true';
   const launchModule = searchParams.get('module');
   const [activeTab, setActiveTab] = useState('security');
   const [isTabTransitioning, setIsTabTransitioning] = useState(false);
   const { currentOrg } = useOrg();
-  const currentOrgName = currentOrg?.org_name || currentOrg?.name || 'Organisation';
+  const currentOrgName = currentOrg?.org_name || currentOrg?.name || searchParams.get('orgName') || 'Organisation';
 
-  // ── Global Common Date Filter State (default to 10 days preset) ──
-  const [dayPreset, setDayPreset] = useState(10);
-  const [customFrom, setCustomFrom] = useState('');
-  const [customTo, setCustomTo] = useState('');
-  const [isCustom, setIsCustom] = useState(false);
+  // ── PDF Export Theme Modal State ──
+  const [pdfModalOpen, setPdfModalOpen] = useState(false);
+  const [selectedPdfTheme, setSelectedPdfTheme] = useState('dark');
+  const [targetPdfSection, setTargetPdfSection] = useState(null);
+
+  // In print mode, ensure session token, org ID, and theme are immediately active before component fetches
+  if (isPrint) {
+    const pToken = searchParams.get('token');
+    const pOrgId = searchParams.get('orgId');
+    const pTheme = searchParams.get('theme') || 'dark';
+
+    if (typeof document !== 'undefined') {
+      if (pTheme === 'light') {
+        document.documentElement.classList.remove('dark');
+        document.documentElement.classList.add('light');
+      } else {
+        document.documentElement.classList.add('dark');
+        document.documentElement.classList.remove('light');
+      }
+    }
+
+    if (pToken) {
+      session.initSession();
+      session.setAuth({ token: pToken, user: { role: 'superAdmin', username: 'print_user' } });
+      api.defaults.headers.common['Authorization'] = `Bearer ${pToken}`;
+    }
+    if (pOrgId) {
+      session.setOrgId(pOrgId);
+      api.defaults.headers.common['X-Org-Id'] = String(pOrgId);
+    }
+  }
+
+  // ── Global Common Date Filter State (default to 10 days preset or URL params) ──
+  const initialPreset = searchParams.get('dayPreset') ? Number(searchParams.get('dayPreset')) : 10;
+  const initialFrom = searchParams.get('from') || '';
+  const initialTo = searchParams.get('to') || '';
+  const initialIsCustom = Boolean(initialFrom || initialTo);
+
+  const [dayPreset, setDayPreset] = useState(initialIsCustom ? null : initialPreset);
+  const [customFrom, setCustomFrom] = useState(initialFrom);
+  const [customTo, setCustomTo] = useState(initialTo);
+  const [isCustom, setIsCustom] = useState(initialIsCustom);
+
+  // In print mode, populate localStorage with any user-selected chart views passed in URL
+  useEffect(() => {
+    if (isPrint) {
+      const cv = searchParams.get('chartViews');
+      if (cv) {
+        try {
+          const parsed = JSON.parse(cv);
+          if (parsed && typeof parsed === 'object') {
+            Object.entries(parsed).forEach(([k, v]) => {
+              if (k && v) localStorage.setItem(k, v);
+            });
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }, [isPrint, searchParams]);
 
   const dateWindows = useMemo(() => {
     return computeDateWindows(dayPreset, customFrom, customTo, isCustom);
@@ -2917,14 +3046,173 @@ export default function Analytics() {
   const [generating, setGenerating] = useState(false);
 
   /**
-   * Generate a client-side PDF of the Analytics page (all components across the
-   * active/relevant sections, with cover pages). Uses AnalyticsReportTemplate.
+   * Real-time PDF generation triggered by clicking "Generate PDF".
+   * First requests real-time rendering via Puppeteer on the server with user-selected theme.
+   * If server generation is unavailable, smoothly falls back to client vector generation.
    */
-  const handleGeneratePdf = async (section = null) => {
+  const handleGeneratePdf = async (section = null, theme = selectedPdfTheme) => {
     if (generating) return;
     setGenerating(true);
     try {
-      const data = await fetchReportData(currentOrgName);
+      const { from, to, isFiltered, dayPreset: curDayPreset, periodLabel, prevPeriodLabel } = dateFilterContextValue;
+
+      // 1. Collect user-selected chart views from localStorage
+      const chartViews = {};
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && (key.startsWith('ciso_analytics_chart_') || key.startsWith('analytics-'))) {
+            chartViews[key] = localStorage.getItem(key);
+          }
+        }
+      } catch (e) {
+        console.warn('[PDF] Failed to read chartViews from localStorage:', e);
+      }
+
+      // 2. Attempt real-time headless Chrome generation on backend
+      try {
+        console.log('[PDF] Requesting real-time Puppeteer PDF generation with theme:', theme);
+        const response = await api.post(
+          '/reports/live-pdf',
+          {
+            section: section || 'all',
+            from: isFiltered ? from : undefined,
+            to: isFiltered ? to : undefined,
+            dayPreset: isFiltered ? curDayPreset : undefined,
+            periodLabel: isFiltered ? periodLabel : 'All Time',
+            chartViews,
+            orgName: currentOrgName,
+            theme: theme || 'dark',
+          },
+          {
+            responseType: 'blob',
+            timeout: 60000,
+          }
+        );
+
+        const blob = new Blob([response.data], { type: 'application/pdf' });
+        const now = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const stamp =
+          `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` +
+          `_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+        const safeOrg = (currentOrgName || 'organisation').replace(/[^a-zA-Z0-9_-]/g, '_');
+        const fileName = `Analytics_${safeOrg}_${stamp}.pdf`;
+
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(downloadUrl);
+        setPdfModalOpen(false);
+        return;
+      } catch (serverErr) {
+        console.warn('[PDF] Live Puppeteer PDF endpoint failed, falling back to client-side vector generator:', serverErr);
+      }
+
+      // 3. Client-side vector fallback via @react-pdf/renderer
+      const data = await fetchReportData(currentOrgName, null, section, isFiltered && (from || to) ? { from, to } : undefined);
+
+      // Prioritize active component state
+      if (agents.length > 0) data.s1Agents = agents;
+      if (cves.length > 0) data.s1Cves = cves;
+      if (threats.length > 0) data.s1Threats = threats;
+      if (devices.length > 0) data.mdmDevices = devices;
+      if (apps.length > 0) data.mdmApps = apps;
+      if (nvdStats) data.nvdStats = nvdStats;
+      if (nvdRows.length > 0) data.nvdRows = nvdRows;
+      if (cpEvents.length > 0) data.harmonyEvents = cpEvents;
+      if (fwReports.length > 0) data.fwReports = fwReports;
+      if (zohoTickets.length > 0) data.zohoTickets = zohoTickets;
+      if (msData && Object.keys(msData).length > 0) data.msData = msData;
+
+      // Pass active date filter context and selected theme into PDF template
+      data.isFiltered = isFiltered;
+      data.dayPreset = curDayPreset;
+      data.periodLabel = isFiltered ? periodLabel : null;
+      data.prevPeriodLabel = isFiltered ? prevPeriodLabel : null;
+      data.from = from;
+      data.to = to;
+      data.theme = theme || 'dark';
+
+      if (isFiltered && (from || to)) {
+        if (Array.isArray(data.s1Agents) && data.s1Agents.length > 0) {
+          const split = splitByWindow(data.s1Agents, (a) => a.installTime || a.lastSeen || a.createdAt || a.registeredAt || a.registered_at || a.created_at || a.updatedAt, from, to);
+          data.s1Agents = split.current;
+          data.s1AgentsPrev = split.previous;
+        }
+        if (Array.isArray(data.s1Cves) && data.s1Cves.length > 0) {
+          const split = splitByWindow(data.s1Cves, (r) => r.publishedDate || r.lastModified || r.detectionDate || r.detectedAt || r.firstDetectedAt || r.createdAt || r.created_at, from, to);
+          data.s1Cves = split.current;
+          data.s1CvesPrev = split.previous;
+        }
+        if (Array.isArray(data.s1Threats) && data.s1Threats.length > 0) {
+          const split = splitByWindow(data.s1Threats, (t) => t.threatInfo?.createdAt || t.threatInfo?.identifiedAt || t.createdAt || t.created_at, from, to);
+          data.s1Threats = split.current;
+          data.s1ThreatsPrev = split.previous;
+        }
+        if (Array.isArray(data.mdmDevices) && data.mdmDevices.length > 0) {
+          const split = splitByWindow(data.mdmDevices, (d) => d.last_reported || d.enrolled_at || d.registered_at || d.createdAt || d.created_at, from, to);
+          data.mdmDevices = split.current;
+          data.mdmDevicesPrev = split.previous;
+        }
+        if (Array.isArray(data.harmonyEvents) && data.harmonyEvents.length > 0) {
+          const split = splitByWindow(data.harmonyEvents, (e) => e.eventCreated || e.event_created || e.created_at || e.createdAt, from, to);
+          data.harmonyEvents = split.current;
+          data.harmonyEventsPrev = split.previous;
+        }
+        if (Array.isArray(data.zohoTickets) && data.zohoTickets.length > 0) {
+          const split = splitByWindow(data.zohoTickets, (t) => t.created_at || t.createdTime || t.createdAt || t.created_time || t.createdDate, from, to);
+          data.zohoTickets = split.current;
+          data.zohoTicketsPrev = split.previous;
+        }
+        if (Array.isArray(data.nvdRows) && data.nvdRows.length > 0) {
+          const split = splitByWindow(data.nvdRows, (v) => v.published || v.last_modified || v.synced_at, from, to);
+          data.nvdRows = split.current;
+          data.nvdRowsPrev = split.previous;
+        }
+        if (Array.isArray(data.fwReports) && data.fwReports.length > 0) {
+          data.fwReportsPrev = data.fwReports.map((r) => ({
+            ...r,
+            rows: splitByWindow(r.rows, (row) => row.date || row.day || row.time || row.receive_time || row['slabbed-receive_time'], from, to).previous,
+          }));
+          data.fwReports = data.fwReports.map((r) => ({
+            ...r,
+            rows: splitByWindow(r.rows, (row) => row.date || row.day || row.time || row.receive_time || row['slabbed-receive_time'], from, to).current,
+          }));
+        }
+        if (data.msData && typeof data.msData === 'object') {
+          const msDateFn = (item) => item?.createdDateTime || item?.activityDateTime || item?.detectedDateTime || item?.signInDateTime || item?.created_at;
+          const filteredMsData = { ...data.msData };
+          const prevMsData = { ...data.msData };
+          ['auditSignIns', 'riskyUsers', 'riskDetections', 'securityAlerts', 'managedDevices', 'serviceIssues'].forEach((key) => {
+            const val = filteredMsData[key]?.data?.value;
+            if (Array.isArray(val)) {
+              const split = splitByWindow(val, msDateFn, from, to);
+              filteredMsData[key] = {
+                ...filteredMsData[key],
+                data: {
+                  ...filteredMsData[key].data,
+                  value: split.current,
+                },
+              };
+              prevMsData[key] = {
+                ...prevMsData[key],
+                data: {
+                  ...prevMsData[key].data,
+                  value: split.previous,
+                },
+              };
+            }
+          });
+          data.msData = filteredMsData;
+          data.msDataPrev = prevMsData;
+        }
+      }
+
       const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
       const safeName = (currentOrgName || 'organisation').replace(/\s+/g, '_');
       if (section) {
@@ -2948,6 +3236,7 @@ export default function Analytics() {
   const [devices, setDevices] = useState([]);
   const [apps, setApps] = useState([]);
   const [nvdStats, setNvdStats] = useState(null);
+  const [nvdRows, setNvdRows] = useState([]);
   const [cpEvents, setCpEvents] = useState([]);
   const [fwReports, setFwReports] = useState([]);
   const [zohoTickets, setZohoTickets] = useState([]);
@@ -2965,7 +3254,10 @@ export default function Analytics() {
   const loadThreats = () => api.get('/sentinelone/db/threats').then((r) => setThreats(r.data?.data || r.data?.threats || [])).catch(() => setThreats([]));
   const loadDevices = () => api.get('/hexnode/db/devices').then((r) => setDevices(Array.isArray(r.data?.data) ? r.data.data : [])).catch(() => setDevices([]));
   const loadApps = () => api.get('/hexnode/db/applications').then((r) => setApps(Array.isArray(r.data?.data) ? r.data.data : [])).catch(() => setApps([]));
-  const loadNvd = () => api.get('/nvd/stats').then((r) => setNvdStats(r.data)).catch(() => setNvdStats(null));
+  const loadNvd = () => Promise.allSettled([
+    api.get('/nvd/stats').then((r) => setNvdStats(r.data)).catch(() => setNvdStats(null)),
+    api.get('/nvd/analytics-rows').then((r) => setNvdRows(r.data?.rows || [])).catch(() => setNvdRows([])),
+  ]);
   const loadCheckpoint = () => api.get('/harmony/events-db').then((r) => {
     const raw = r.data?.events || r.data?.responseData || [];
     const mapEvent = (e) => {
@@ -3039,8 +3331,32 @@ export default function Analytics() {
     finally { markSyncing('microsoft', false); }
   };
 
-  // When arriving via "View in Analytics" (?module=...), switch to the tab for that
-  // module after data has loaded.
+  // Signal Puppeteer when data is ready in print mode
+  useEffect(() => {
+    if (isPrint) {
+      if (loaded) {
+        const timer = setTimeout(() => {
+          window.__REPORT_READY__ = true;
+          if (typeof document !== 'undefined') {
+            document.body.setAttribute('data-report-ready', 'true');
+          }
+        }, 800);
+        return () => clearTimeout(timer);
+      } else {
+        // Fallback safety timeout: after 10s, force ready so Puppeteer never captures a blank loader
+        const fallbackTimer = setTimeout(() => {
+          setLoaded(true);
+          window.__REPORT_READY__ = true;
+          if (typeof document !== 'undefined') {
+            document.body.setAttribute('data-report-ready', 'true');
+          }
+        }, 10000);
+        return () => clearTimeout(fallbackTimer);
+      }
+    }
+  }, [isPrint, loaded]);
+
+  // When arriving via "View in Analytics" (?module=...), switch to the tab for that module
   useEffect(() => {
     if (!loaded || !launchModule) return;
     const map = { security: 'security', mdm: 'mdm', nvd: 'nvd', checkpoint: 'checkpoint', paloalto: 'firewall', microsoft365: 'microsoft', 'zoho-one': 'zoho' };
@@ -3048,7 +3364,7 @@ export default function Analytics() {
     if (tab) setActiveTab(tab);
   }, [loaded, launchModule]);
 
-  if (!loaded) {
+  if (!loaded && !isPrint) {
     return (
       <PageTransitionLoader
         isLoading={true}
@@ -3056,6 +3372,318 @@ export default function Analytics() {
         badge="Analytics"
         statusText="Aggregating Analytics & Multi-Module Telemetry…"
       />
+    );
+  }
+
+  // ── Print Mode for Puppeteer PDF Capture ────────────────────────────────────
+  if (isPrint) {
+    const printSection = searchParams.get('section') || 'all';
+
+    // Build Table of Contents / Index for Cover Page (Page 1)
+    const tocSections = [];
+    if (agents.length > 0) {
+      tocSections.push({
+        id: 'sec-s1-agents',
+        number: '01',
+        title: 'SentinelOne · Agent Analytics',
+        subtitle: 'Endpoint OS distribution, active status, firewall status & version posture',
+        icon: '🖥️',
+        badge: `${agents.length} Endpoints`,
+        color: '#10b981',
+      });
+    }
+    if (cves.length > 0) {
+      tocSections.push({
+        id: 'sec-s1-cves',
+        number: String(tocSections.length + 1).padStart(2, '0'),
+        title: 'SentinelOne · Application CVEs',
+        subtitle: 'Vulnerability severity distribution, CVSS score metrics & aging',
+        icon: '🔍',
+        badge: `${cves.length} CVEs`,
+        color: '#ef4444',
+      });
+    }
+    if (threats.length > 0) {
+      tocSections.push({
+        id: 'sec-s1-threats',
+        number: String(tocSections.length + 1).padStart(2, '0'),
+        title: 'SentinelOne · Threat Analytics',
+        subtitle: 'Threat mitigation velocity, MTTD/MTTM durations & incident classification',
+        icon: '⚠️',
+        badge: `${threats.length} Threats`,
+        color: '#f59e0b',
+      });
+    }
+    if (devices.length > 0 || apps.length > 0) {
+      tocSections.push({
+        id: 'sec-mdm',
+        number: String(tocSections.length + 1).padStart(2, '0'),
+        title: 'Hexnode MDM · Fleet & Applications',
+        subtitle: 'Managed device fleet compliance, OS distribution & application inventory',
+        icon: '📱',
+        badge: `${devices.length} Devices · ${apps.length} Apps`,
+        color: '#3b82f6',
+      });
+    }
+    if (nvdStats || nvdRows.length > 0) {
+      tocSections.push({
+        id: 'sec-nvd',
+        number: String(tocSections.length + 1).padStart(2, '0'),
+        title: 'National Vulnerability Database (NVD)',
+        subtitle: 'Global vulnerability ingestion, CVSS base score trends & CPE impact',
+        icon: '🛡️',
+        badge: 'NVD Intel',
+        color: '#8b5cf6',
+      });
+    }
+    if (cpEvents.length > 0) {
+      tocSections.push({
+        id: 'sec-checkpoint',
+        number: String(tocSections.length + 1).padStart(2, '0'),
+        title: 'Check Point · Harmony Email Security',
+        subtitle: 'Phishing prevention, malicious attachment detection & remediation telemetry',
+        icon: '📧',
+        badge: `${cpEvents.length} Events`,
+        color: '#ec4899',
+      });
+    }
+    if (fwReports.some((r) => r.rows && r.rows.length > 0)) {
+      tocSections.push({
+        id: 'sec-firewall',
+        number: String(tocSections.length + 1).padStart(2, '0'),
+        title: 'Palo Alto · Next-Gen Firewall',
+        subtitle: 'Network traffic patterns, blocked URL categories & high-risk application sessions',
+        icon: '🔥',
+        badge: 'Traffic Telemetry',
+        color: '#f97316',
+      });
+    }
+    if (zohoTickets.length > 0) {
+      tocSections.push({
+        id: 'sec-zoho',
+        number: String(tocSections.length + 1).padStart(2, '0'),
+        title: 'Zoho Desk · Incident & Support Tickets',
+        subtitle: 'Ticket volume trends, resolution aging & departmental service performance',
+        icon: '🎫',
+        badge: `${zohoTickets.length} Tickets`,
+        color: '#06b6d4',
+      });
+    }
+    if (Object.keys(msData).length > 0 && Object.values(msData).some((v) => v?.data?.value?.length > 0)) {
+      tocSections.push({
+        id: 'sec-microsoft',
+        number: String(tocSections.length + 1).padStart(2, '0'),
+        title: 'Microsoft 365 · Cloud Posture',
+        subtitle: 'Identity security, license utilization, MFA adoption & cloud apps',
+        icon: '🟦',
+        badge: 'Cloud Telemetry',
+        color: '#6366f1',
+      });
+    }
+
+    const printTheme = searchParams.get('theme') || 'dark';
+    const isLightPrint = printTheme === 'light';
+
+    return (
+      <DateFilterContext.Provider value={dateFilterContextValue}>
+        <div className={`pdf-print-container theme-${printTheme} p-8 space-y-8 ${isLightPrint ? 'bg-[#f8fafc] text-[#0f172a]' : 'bg-[var(--background)] text-[var(--foreground)]'} min-h-screen`}>
+          {/* ── Page 1: Executive Cover Page & Clickable Table of Contents (Index) ── */}
+          <div
+            className="pdf-print-section print-page-break min-h-[90vh] flex flex-col justify-between"
+            style={{ pageBreakAfter: 'always', breakAfter: 'page' }}
+          >
+            <div>
+              <div className="h-1.5 w-full bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 rounded-full mb-6" />
+
+              <div className="flex items-start justify-between gap-4 pb-6 border-b border-[var(--card-border)]">
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-purple-500 flex items-center justify-center text-white font-black text-2xl shadow-lg ring-4 ring-indigo-500/20">
+                    🛡️
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-bold uppercase tracking-widest text-indigo-400 bg-indigo-500/10 px-2.5 py-1 rounded-md border border-indigo-500/20">
+                      Executive Security Intelligence
+                    </span>
+                    <h1 className="text-3xl font-black tracking-tight text-[var(--foreground)] mt-1.5">
+                      {currentOrgName}
+                    </h1>
+                    <p className="text-sm font-semibold text-[var(--muted)]">
+                      CISO Analytics &amp; Security Posture Report
+                    </p>
+                  </div>
+                </div>
+
+                <div className="text-right space-y-1.5">
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[var(--card-bg)] border border-[var(--card-border)] shadow-sm">
+                    <span className="text-xs text-[var(--muted)]">Date Filter:</span>
+                    <span className="text-xs font-bold text-indigo-400">
+                      {dateFilterContextValue.periodLabel || 'All Time'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[var(--muted)]">
+                    Generated on{' '}
+                    {new Date().toLocaleDateString('en-US', {
+                      day: 'numeric',
+                      month: 'long',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </p>
+                </div>
+              </div>
+
+              {/* Table of Contents Header */}
+              <div className="mt-8 mb-4 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-1 h-5 bg-indigo-500 rounded-full" />
+                  <h2 className="text-sm font-black uppercase tracking-widest text-[var(--foreground)]">
+                    Report Index &amp; Table of Contents
+                  </h2>
+                </div>
+                <span className="text-xs font-medium text-[var(--muted)]">
+                  Click any section below to navigate directly to that page
+                </span>
+              </div>
+
+              {/* Interactive TOC Cards Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                {tocSections.map((sec) => (
+                  <a
+                    key={sec.id}
+                    href={`#${sec.id}`}
+                    className="group card-surface pdf-card-avoid-break bg-[var(--card-bg)] border border-[var(--card-border)] hover:border-indigo-500/50 rounded-2xl p-4 flex items-center justify-between gap-3 transition-all no-underline text-inherit cursor-pointer"
+                    style={{ textDecoration: 'none' }}
+                  >
+                    <div className="flex items-center gap-3.5 min-w-0">
+                      <div
+                        className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-black text-sm flex-shrink-0 shadow-sm"
+                        style={{ backgroundColor: sec.color || '#6366f1' }}
+                      >
+                        {sec.number}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-base">{sec.icon}</span>
+                          <h3 className="text-sm font-bold text-[var(--foreground)] group-hover:text-indigo-400 transition-colors truncate">
+                            {sec.title}
+                          </h3>
+                        </div>
+                        <p className="text-[11px] text-[var(--muted)] mt-0.5 line-clamp-1 truncate">
+                          {sec.subtitle}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {sec.badge && (
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-[var(--muted-bg)] text-[var(--muted)] border border-[var(--card-border)]">
+                          {sec.badge}
+                        </span>
+                      )}
+                      <span className="w-7 h-7 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center text-xs font-bold group-hover:bg-indigo-600 group-hover:text-white transition-all">
+                        →
+                      </span>
+                    </div>
+                  </a>
+                ))}
+                {tocSections.length === 0 && (
+                  <div className="col-span-2 p-8 text-center bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl">
+                    <p className="text-sm text-[var(--muted)]">
+                      No active telemetry modules found for the selected scope.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Cover Page Footer */}
+            <div className="pt-6 border-t border-[var(--card-border)] flex items-center justify-between text-xs text-[var(--muted)] mt-6">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded bg-red-500/10 text-red-400 font-bold border border-red-500/20 uppercase tracking-wider text-[10px]">
+                  Confidential
+                </span>
+                <span>Enterprise CISO Security Posture &amp; Multi-Integration Analytics</span>
+              </div>
+              <span>{currentOrgName} · Live Analytics Document</span>
+            </div>
+          </div>
+
+          {/* Render Sections with A3 Landscape Layout */}
+          {(printSection === 'security' ||
+            printSection === 'sentinelone' ||
+            (printSection === 'all' && (agents.length > 0 || cves.length > 0 || threats.length > 0))) && (
+            <div className="pdf-print-section">
+              <SecuritySection agents={agents} cves={cves} threats={threats} allSubTabs={true} syncing={false} />
+            </div>
+          )}
+
+          {(printSection === 'mdm' ||
+            printSection === 'hexnode' ||
+            (printSection === 'all' && (devices.length > 0 || apps.length > 0))) && (
+            <div id="sec-mdm" className="pdf-print-section pdf-print-subpage">
+              <MdmSection devices={devices} apps={apps} syncing={false} />
+            </div>
+          )}
+
+          {(printSection === 'nvd' || (printSection === 'all' && (nvdStats || nvdRows.length > 0))) && (
+            <div id="sec-nvd" className="pdf-print-section pdf-print-subpage">
+              <NvdSection stats={nvdStats} rows={nvdRows} syncing={false} />
+            </div>
+          )}
+
+          {(printSection === 'checkpoint' ||
+            printSection === 'harmony' ||
+            (printSection === 'all' && cpEvents.length > 0)) && (
+            <div id="sec-checkpoint" className="pdf-print-section pdf-print-subpage">
+              <CheckpointSection events={cpEvents} syncing={false} />
+            </div>
+          )}
+
+          {(printSection === 'firewall' ||
+            printSection === 'paloalto' ||
+            (printSection === 'all' && fwReports.some((r) => r.rows && r.rows.length > 0))) && (
+            <div id="sec-firewall" className="pdf-print-section pdf-print-subpage">
+              <FirewallSection reports={fwReports} syncing={false} />
+            </div>
+          )}
+
+          {(printSection === 'zoho' || (printSection === 'all' && zohoTickets.length > 0)) && (
+            <div id="sec-zoho" className="pdf-print-section pdf-print-subpage">
+              <ZohoSection tickets={zohoTickets} syncing={false} />
+            </div>
+          )}
+
+          {(printSection === 'microsoft' ||
+            (printSection === 'all' &&
+              Object.keys(msData).length > 0 &&
+              Object.values(msData).some((v) => v?.data?.value?.length > 0))) && (
+            <div id="sec-microsoft" className="pdf-print-section pdf-print-subpage">
+              <MicrosoftSection msData={msData} syncing={false} />
+            </div>
+          )}
+
+          {printSection === 'all' &&
+            !agents.length &&
+            !cves.length &&
+            !threats.length &&
+            !devices.length &&
+            !apps.length &&
+            !nvdStats &&
+            !nvdRows.length &&
+            !cpEvents.length &&
+            !fwReports.some((r) => r.rows?.length) &&
+            !zohoTickets.length &&
+            (!msData || !Object.values(msData).some((v) => v?.data?.value?.length)) && (
+              <div className="pdf-print-section p-12 text-center bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl">
+                <div className="text-3xl mb-2">📊</div>
+                <h2 className="text-lg font-bold text-[var(--foreground)]">No Telemetry Data Available</h2>
+                <p className="text-sm text-[var(--muted)] mt-1">
+                  There is currently no telemetry or event data found for the selected organisation and date filter.
+                </p>
+              </div>
+            )}
+        </div>
+      </DateFilterContext.Provider>
     );
   }
 
@@ -3075,7 +3703,10 @@ export default function Analytics() {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => handleGeneratePdf(null)}
+              onClick={() => {
+                setTargetPdfSection(null);
+                setPdfModalOpen(true);
+              }}
               disabled={generating}
               className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl bg-indigo-600 text-white shadow-sm hover:bg-indigo-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
             >
@@ -3136,7 +3767,7 @@ export default function Analytics() {
               <MdmSection devices={devices} apps={apps} syncing={syncing.mdm} onSync={syncMdm} />
             )}
             {activeTab === 'nvd' && (
-              <NvdSection stats={nvdStats} syncing={syncing.nvd} onSync={syncNvd} />
+              <NvdSection stats={nvdStats} rows={nvdRows} syncing={syncing.nvd} onSync={syncNvd} />
             )}
             {activeTab === 'checkpoint' && (
               <CheckpointSection events={cpEvents} syncing={syncing.checkpoint} onSync={syncCheckpoint} />
@@ -3152,6 +3783,174 @@ export default function Analytics() {
             )}
           </div>
         </div>
+
+        {/* ── PDF Theme Selection Modal ── */}
+        {pdfModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fadeIn">
+            <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-6 sm:p-7 max-w-xl w-full shadow-2xl space-y-6 relative overflow-hidden card-surface">
+              {/* Header */}
+              <div className="flex items-start justify-between gap-4 pb-4 border-b border-[var(--card-border)]">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-white text-lg shadow-md">
+                    📄
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-[var(--foreground)]">Export Analytics PDF</h3>
+                    <p className="text-xs text-[var(--muted)]">Choose your preferred visual presentation theme for the report</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => !generating && setPdfModalOpen(false)}
+                  disabled={generating}
+                  className="text-[var(--muted)] hover:text-[var(--foreground)] p-1.5 rounded-lg hover:bg-[var(--muted-bg)] transition-colors disabled:opacity-50"
+                  aria-label="Close modal"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Theme Options */}
+              <div className="space-y-3">
+                <label className="text-xs font-bold uppercase tracking-wider text-[var(--muted)]">
+                  Select Theme
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Dark Mode Card */}
+                  <div
+                    onClick={() => !generating && setSelectedPdfTheme('dark')}
+                    className={`cursor-pointer rounded-xl p-4 border-2 transition-all flex flex-col justify-between relative overflow-hidden ${
+                      selectedPdfTheme === 'dark'
+                        ? 'border-indigo-500 bg-indigo-500/10 shadow-md ring-2 ring-indigo-500/20'
+                        : 'border-[var(--card-border)] bg-[var(--card-bg)] hover:border-[var(--muted)]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-base">🌙</span>
+                        <span className="text-sm font-bold text-[var(--foreground)]">Executive Dark</span>
+                      </div>
+                      <div
+                        className={`w-5 h-5 rounded-full border flex items-center justify-center transition-colors ${
+                          selectedPdfTheme === 'dark'
+                            ? 'border-indigo-500 bg-indigo-600 text-white'
+                            : 'border-[var(--muted)] bg-transparent'
+                        }`}
+                      >
+                        {selectedPdfTheme === 'dark' && <span className="text-[10px] font-bold">✓</span>}
+                      </div>
+                    </div>
+
+                    {/* Dark Preview Mockup */}
+                    <div className="rounded-lg p-2.5 bg-[#090e1a] border border-indigo-500/30 mb-3 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <div className="h-1.5 w-12 bg-indigo-400 rounded" />
+                        <div className="h-1.5 w-6 bg-purple-400 rounded" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-1">
+                        <div className="h-4 bg-[#1e293b] rounded border border-slate-700/50" />
+                        <div className="h-4 bg-[#1e293b] rounded border border-slate-700/50" />
+                      </div>
+                      <div className="h-6 bg-[#131e34] rounded border border-indigo-500/20" />
+                    </div>
+
+                    <p className="text-xs text-[var(--muted)] leading-relaxed">
+                      Midnight palette with neon glows. Best for digital executive reviews and dashboard presentations.
+                    </p>
+                  </div>
+
+                  {/* Light Mode Card */}
+                  <div
+                    onClick={() => !generating && setSelectedPdfTheme('light')}
+                    className={`cursor-pointer rounded-xl p-4 border-2 transition-all flex flex-col justify-between relative overflow-hidden ${
+                      selectedPdfTheme === 'light'
+                        ? 'border-indigo-500 bg-indigo-500/10 shadow-md ring-2 ring-indigo-500/20'
+                        : 'border-[var(--card-border)] bg-[var(--card-bg)] hover:border-[var(--muted)]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-base">☀️</span>
+                        <span className="text-sm font-bold text-[var(--foreground)]">Classic Light</span>
+                      </div>
+                      <div
+                        className={`w-5 h-5 rounded-full border flex items-center justify-center transition-colors ${
+                          selectedPdfTheme === 'light'
+                            ? 'border-indigo-500 bg-indigo-600 text-white'
+                            : 'border-[var(--muted)] bg-transparent'
+                        }`}
+                      >
+                        {selectedPdfTheme === 'light' && <span className="text-[10px] font-bold">✓</span>}
+                      </div>
+                    </div>
+
+                    {/* Light Preview Mockup */}
+                    <div className="rounded-lg p-2.5 bg-[#f8fafc] border border-slate-300 mb-3 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <div className="h-1.5 w-12 bg-indigo-600 rounded" />
+                        <div className="h-1.5 w-6 bg-slate-400 rounded" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-1">
+                        <div className="h-4 bg-white rounded border border-slate-200" />
+                        <div className="h-4 bg-white rounded border border-slate-200" />
+                      </div>
+                      <div className="h-6 bg-white rounded border border-slate-200" />
+                    </div>
+
+                    <p className="text-xs text-[var(--muted)] leading-relaxed">
+                      Clean white ground with high-contrast charts. Ideal for physical printing and binder distribution.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Report Metadata Summary */}
+              <div className="p-3.5 rounded-xl bg-[var(--muted-bg)] border border-[var(--card-border)] text-xs text-[var(--muted)] space-y-1">
+                <div className="flex justify-between">
+                  <span className="font-semibold text-[var(--foreground)]">Organisation:</span>
+                  <span>{currentOrgName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-semibold text-[var(--foreground)]">Date Filter:</span>
+                  <span>{dateFilterContextValue.isFiltered ? dateFilterContextValue.periodLabel : 'All Time Telemetry'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-semibold text-[var(--foreground)]">Report Scope:</span>
+                  <span>{targetPdfSection ? `Section: ${targetPdfSection}` : 'All 7 Integrated Modules'}</span>
+                </div>
+              </div>
+
+              {/* Footer Actions */}
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setPdfModalOpen(false)}
+                  disabled={generating}
+                  className="px-4 py-2 text-sm font-semibold rounded-xl border border-[var(--card-border)] text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)] transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleGeneratePdf(targetPdfSection, selectedPdfTheme)}
+                  disabled={generating}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-bold rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {generating ? (
+                    <>
+                      <span className="inline-block w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                      Generating {selectedPdfTheme === 'light' ? 'Light' : 'Dark'} PDF…
+                    </>
+                  ) : (
+                    <>
+                      <span>⬇️</span> Download {selectedPdfTheme === 'light' ? 'Light' : 'Dark'} PDF
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </DateFilterContext.Provider>
   );
