@@ -46,15 +46,25 @@ api.interceptors.request.use(
     if (typeof window !== 'undefined' && window.location && window.location.search) {
       try {
         const sp = new URLSearchParams(window.location.search);
-        if (!token && sp.get('token')) token = sp.get('token');
-        if (!orgId && sp.get('orgId')) orgId = sp.get('orgId');
+        const qToken = sp.get('token');
+        const qOrgId = sp.get('orgId');
+        if ((!token || token === 'undefined' || token === 'null') && qToken && qToken !== 'undefined' && qToken !== 'null') {
+          token = qToken;
+        }
+        if ((!orgId || orgId === 'undefined' || orgId === 'null') && qOrgId && qOrgId !== 'undefined' && qOrgId !== 'null') {
+          orgId = qOrgId;
+        }
       } catch {
         // ignore
       }
     }
 
-    if (token) config.headers.Authorization = `Bearer ${token}`;
-    if (orgId) config.headers['X-Org-Id'] = String(orgId);
+    if (token && token !== 'undefined' && token !== 'null') {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    if (orgId && orgId !== 'undefined' && orgId !== 'null') {
+      config.headers['X-Org-Id'] = String(orgId);
+    }
     return config;
   },
   (err) => {

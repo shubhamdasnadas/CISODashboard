@@ -140,17 +140,17 @@ async function generateLiveAnalyticsPdf({
 }) {
   const resolvedBaseUrl = (baseUrl || process.env.APP_URL || 'http://localhost:5173').replace(/\/+$/, '');
   const query = new URLSearchParams();
-  if (token) query.set('token', token);
-  if (orgSlug) query.set('orgSlug', orgSlug);
-  if (orgId) query.set('orgId', String(orgId));
-  if (orgName) query.set('orgName', orgName);
-  if (section) query.set('section', section);
-  if (from) query.set('from', from);
-  if (to) query.set('to', to);
-  if (dayPreset != null) query.set('dayPreset', String(dayPreset));
+  if (token && token !== 'undefined' && token !== 'null') query.set('token', token);
+  if (orgSlug && orgSlug !== 'undefined' && orgSlug !== 'null') query.set('orgSlug', orgSlug);
+  if (orgId && orgId !== 'undefined' && orgId !== 'null') query.set('orgId', String(orgId));
+  if (orgName && orgName !== 'undefined' && orgName !== 'null') query.set('orgName', orgName);
+  if (section && section !== 'undefined' && section !== 'null') query.set('section', section);
+  if (from && from !== 'undefined' && from !== 'null') query.set('from', from);
+  if (to && to !== 'undefined' && to !== 'null') query.set('to', to);
+  if (dayPreset != null && dayPreset !== 'undefined' && dayPreset !== 'null') query.set('dayPreset', String(dayPreset));
   if (isCustom) query.set('isCustom', 'true');
-  if (periodLabel) query.set('periodLabel', periodLabel);
-  if (theme) query.set('theme', theme);
+  if (periodLabel && periodLabel !== 'undefined' && periodLabel !== 'null') query.set('periodLabel', periodLabel);
+  if (theme && theme !== 'undefined' && theme !== 'null') query.set('theme', theme);
   if (chartViews && Object.keys(chartViews).length > 0) {
     query.set('chartViews', JSON.stringify(chartViews));
   }
@@ -178,14 +178,17 @@ async function generateLiveAnalyticsPdf({
     });
     page.on('pageerror', (err) => console.error('[Puppeteer PageError]', err.message));
     page.on('requestfailed', (req) => {
-      console.warn('[Puppeteer RequestFailed]', req.url(), req.failure()?.errorText);
+      const errText = req.failure()?.errorText || '';
+      if (errText && errText !== 'net::ERR_ABORTED') {
+        console.warn('[Puppeteer RequestFailed]', req.url(), errText);
+      }
     });
 
     // Set HTTP headers directly on the headless browser session
     const extraHeaders = {};
-    if (token) extraHeaders['Authorization'] = `Bearer ${token}`;
-    if (orgId) extraHeaders['X-Org-Id'] = String(orgId);
-    if (orgSlug) extraHeaders['X-Org-Slug'] = String(orgSlug);
+    if (token && token !== 'undefined' && token !== 'null') extraHeaders['Authorization'] = `Bearer ${token}`;
+    if (orgId && orgId !== 'undefined' && orgId !== 'null') extraHeaders['X-Org-Id'] = String(orgId);
+    if (orgSlug && orgSlug !== 'undefined' && orgSlug !== 'null') extraHeaders['X-Org-Slug'] = String(orgSlug);
     if (Object.keys(extraHeaders).length > 0) {
       await page.setExtraHTTPHeaders(extraHeaders);
     }

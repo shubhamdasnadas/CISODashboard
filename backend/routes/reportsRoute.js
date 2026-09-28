@@ -121,7 +121,10 @@ router.post('/live-pdf', async (req, res) => {
     }
 
     const authHeader = req.headers.authorization || '';
-    const token = req.body?.token || (authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader);
+    const rawToken = req.body?.token;
+    const validBodyToken = rawToken && rawToken !== 'undefined' && rawToken !== 'null' ? rawToken : null;
+    const headerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+    const token = validBodyToken || (headerToken && headerToken !== 'undefined' && headerToken !== 'null' ? headerToken : null);
 
     // Resolve dynamic Base URL for print rendering:
     // 1. Explicit baseUrl passed from frontend window.location.origin

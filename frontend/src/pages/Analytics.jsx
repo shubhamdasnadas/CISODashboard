@@ -3217,13 +3217,28 @@ export default function Analytics({ printMode: printModeProp = false }) {
       try {
         console.log('[PDF] Requesting real-time Puppeteer PDF generation with theme:', theme, 'dayPreset:', curDayPreset, 'isCustom:', curIsCustom, 'period:', periodLabel);
         const currentOrigin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : undefined;
-        const currentToken = localStorage.getItem('token') || localStorage.getItem('ciso_token') || undefined;
+        const currentToken =
+          session.getToken() ||
+          localStorage.getItem('token') ||
+          localStorage.getItem('ciso_token') ||
+          undefined;
+        const currentOrgId =
+          currentOrg?.id ||
+          session.getOrgId() ||
+          localStorage.getItem('ciso_current_org_id') ||
+          undefined;
+        const currentOrgSlug =
+          currentOrg?.slug ||
+          localStorage.getItem('ciso_org_slug') ||
+          undefined;
 
         const response = await api.post(
           '/reports/live-pdf',
           {
             baseUrl: currentOrigin,
             token: currentToken,
+            orgId: currentOrgId,
+            orgSlug: currentOrgSlug,
             section: section || 'all',
             from: curIsCustom ? from : (isFiltered ? from : undefined),
             to: curIsCustom ? to : (isFiltered ? to : undefined),
@@ -3311,7 +3326,7 @@ export default function Analytics({ printMode: printModeProp = false }) {
   const markSyncing = (key, val) => setSyncing((prev) => ({ ...prev, [key]: val }));
 
   // ── Loaders ─────────────────────────────────────────────────────────────────
-  const apiTimeout = isPrint ? 4000 : 30000;
+  const apiTimeout = isPrint ? 10000 : 30000;
   const loadAgents = () => api.get('/sentinelone/db/agents', { timeout: apiTimeout }).then((r) => setAgents(r.data?.agents || r.data?.data || [])).catch(() => setAgents([]));
   const loadCves = () => api.get('/sentinelone/db/application-cve', { timeout: apiTimeout }).then((r) => setCves(r.data?.data || r.data?.cves || [])).catch(() => setCves([]));
   const loadThreats = () => api.get('/sentinelone/db/threats', { timeout: apiTimeout }).then((r) => setThreats(r.data?.data || r.data?.threats || [])).catch(() => setThreats([]));
@@ -3357,7 +3372,7 @@ export default function Analytics({ printMode: printModeProp = false }) {
     let fallbackTimer = null;
 
     if (isPrint) {
-      // Hard fallback timer for print mode: after 2.5s maximum, force loaded & ready state
+      // Hard fallback timer for print mode: after 8s maximum, force loaded & ready state
       fallbackTimer = setTimeout(() => {
         if (isMounted) {
           setLoaded(true);
@@ -3366,7 +3381,7 @@ export default function Analytics({ printMode: printModeProp = false }) {
             document.body.setAttribute('data-report-ready', 'true');
           }
         }
-      }, 2500);
+      }, 8000);
     }
 
     Promise.allSettled([
