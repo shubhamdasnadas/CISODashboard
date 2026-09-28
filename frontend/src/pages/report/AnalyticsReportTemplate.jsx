@@ -141,9 +141,9 @@ export default function AnalyticsReportTemplate({ data }) {
       </Page>
 
       {/* 2. Dynamically rendered active sections */}
-      {activeSections.map((secConfig) => (
+      {/* {activeSections.map((secConfig) => (
         <DynamicSectionPage key={secConfig.id} config={secConfig} data={data} />
-      ))}
+      ))} */}
     </Document>
   );
 }
