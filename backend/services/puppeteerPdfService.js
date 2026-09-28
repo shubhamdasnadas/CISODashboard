@@ -192,44 +192,37 @@ async function generateLiveAnalyticsPdf({
 
     // Pre-populate session storage and local storage with authentication, numeric org ID, and theme
     await page.evaluateOnNewDocument((tokenVal, orgSlugVal, orgIdVal, userObj, chartViewsObj, themeVal) => {
-      const sessId = 'print_session';
-      sessionStorage.setItem('ciso_active_session', sessId);
-      if (tokenVal) {
-        localStorage.setItem(`ciso_s_${sessId}_token`, tokenVal);
-        localStorage.setItem('ciso_token', tokenVal);
-        localStorage.setItem('token', tokenVal);
-      }
-      if (orgIdVal) {
-        localStorage.setItem(`ciso_s_${sessId}_org`, String(orgIdVal));
-        localStorage.setItem('ciso_current_org_id', String(orgIdVal));
-        localStorage.setItem('ciso_org_id', String(orgIdVal));
-        localStorage.setItem('currentOrg', String(orgIdVal));
-      }
-      if (orgSlugVal) {
-        localStorage.setItem(`ciso_s_${sessId}_org_slug`, String(orgSlugVal));
-        localStorage.setItem('ciso_org_slug', String(orgSlugVal));
-      }
-      if (userObj) {
-        localStorage.setItem(`ciso_s_${sessId}_user`, JSON.stringify(userObj));
-        localStorage.setItem('ciso_user', JSON.stringify(userObj));
-      }
-      if (chartViewsObj && typeof chartViewsObj === 'object') {
-        Object.entries(chartViewsObj).forEach(([k, v]) => {
-          if (k && v) localStorage.setItem(k, v);
-        });
-      }
-      if (themeVal === 'light') {
-        localStorage.setItem('theme', 'light');
-        if (document && document.documentElement) {
-          document.documentElement.classList.remove('dark');
-          document.documentElement.classList.add('light');
+      try {
+        const sessId = 'print_session';
+        sessionStorage.setItem('ciso_active_session', sessId);
+        if (tokenVal) {
+          localStorage.setItem(`ciso_s_${sessId}_token`, tokenVal);
+          localStorage.setItem('ciso_token', tokenVal);
+          localStorage.setItem('token', tokenVal);
         }
-      } else {
-        localStorage.setItem('theme', 'dark');
-        if (document && document.documentElement) {
-          document.documentElement.classList.add('dark');
-          document.documentElement.classList.remove('light');
+        if (orgIdVal) {
+          localStorage.setItem(`ciso_s_${sessId}_org`, String(orgIdVal));
+          localStorage.setItem('ciso_current_org_id', String(orgIdVal));
+          localStorage.setItem('ciso_org_id', String(orgIdVal));
+          localStorage.setItem('currentOrg', String(orgIdVal));
         }
+        if (orgSlugVal) {
+          localStorage.setItem(`ciso_s_${sessId}_org_slug`, String(orgSlugVal));
+          localStorage.setItem('ciso_org_slug', String(orgSlugVal));
+        }
+        if (userObj) {
+          const userStr = typeof userObj === 'string' ? userObj : JSON.stringify(userObj);
+          localStorage.setItem(`ciso_s_${sessId}_user`, userStr);
+          localStorage.setItem('ciso_user', userStr);
+        }
+        if (chartViewsObj && typeof chartViewsObj === 'object') {
+          Object.entries(chartViewsObj).forEach(([k, v]) => {
+            if (k && v) localStorage.setItem(k, v);
+          });
+        }
+        localStorage.setItem('theme', themeVal === 'light' ? 'light' : 'dark');
+      } catch (err) {
+        // non-fatal
       }
     }, token, orgSlug, orgId, user, chartViews, theme);
 
@@ -259,11 +252,11 @@ async function generateLiveAnalyticsPdf({
     // Wait until the report signals that all API data & charts have rendered
     try {
       await page.waitForFunction(
-        () => window.__REPORT_READY__ === true || document.body.getAttribute('data-report-ready') === 'true',
-        { timeout: 30000 }
+        () => Boolean(window.__REPORT_READY__ === true || (document.body && document.body.getAttribute('data-report-ready') === 'true')),
+        { timeout: 8000, polling: 100 }
       );
     } catch (waitErr) {
-      console.warn('[Puppeteer] Timeout waiting for __REPORT_READY__, proceeding with current render state:', waitErr.message);
+      console.warn('[Puppeteer] Fast-forwarding to render state:', waitErr.message);
     }
 
     // Disable all CSS animations and transitions, and ensure html/body/#root have height: auto and overflow: visible for multi-page flow

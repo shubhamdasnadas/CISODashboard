@@ -3311,16 +3311,17 @@ export default function Analytics({ printMode: printModeProp = false }) {
   const markSyncing = (key, val) => setSyncing((prev) => ({ ...prev, [key]: val }));
 
   // ── Loaders ─────────────────────────────────────────────────────────────────
-  const loadAgents = () => api.get('/sentinelone/db/agents').then((r) => setAgents(r.data?.agents || r.data?.data || [])).catch(() => setAgents([]));
-  const loadCves = () => api.get('/sentinelone/db/application-cve').then((r) => setCves(r.data?.data || r.data?.cves || [])).catch(() => setCves([]));
-  const loadThreats = () => api.get('/sentinelone/db/threats').then((r) => setThreats(r.data?.data || r.data?.threats || [])).catch(() => setThreats([]));
-  const loadDevices = () => api.get('/hexnode/db/devices').then((r) => setDevices(Array.isArray(r.data?.data) ? r.data.data : [])).catch(() => setDevices([]));
-  const loadApps = () => api.get('/hexnode/db/applications').then((r) => setApps(Array.isArray(r.data?.data) ? r.data.data : [])).catch(() => setApps([]));
+  const apiTimeout = isPrint ? 4000 : 30000;
+  const loadAgents = () => api.get('/sentinelone/db/agents', { timeout: apiTimeout }).then((r) => setAgents(r.data?.agents || r.data?.data || [])).catch(() => setAgents([]));
+  const loadCves = () => api.get('/sentinelone/db/application-cve', { timeout: apiTimeout }).then((r) => setCves(r.data?.data || r.data?.cves || [])).catch(() => setCves([]));
+  const loadThreats = () => api.get('/sentinelone/db/threats', { timeout: apiTimeout }).then((r) => setThreats(r.data?.data || r.data?.threats || [])).catch(() => setThreats([]));
+  const loadDevices = () => api.get('/hexnode/db/devices', { timeout: apiTimeout }).then((r) => setDevices(Array.isArray(r.data?.data) ? r.data.data : [])).catch(() => setDevices([]));
+  const loadApps = () => api.get('/hexnode/db/applications', { timeout: apiTimeout }).then((r) => setApps(Array.isArray(r.data?.data) ? r.data.data : [])).catch(() => setApps([]));
   const loadNvd = () => Promise.allSettled([
-    api.get('/nvd/stats').then((r) => setNvdStats(r.data)).catch(() => setNvdStats(null)),
-    api.get('/nvd/analytics-rows').then((r) => setNvdRows(r.data?.rows || [])).catch(() => setNvdRows([])),
+    api.get('/nvd/stats', { timeout: apiTimeout }).then((r) => setNvdStats(r.data)).catch(() => setNvdStats(null)),
+    api.get('/nvd/analytics-rows', { timeout: apiTimeout }).then((r) => setNvdRows(r.data?.rows || [])).catch(() => setNvdRows([])),
   ]);
-  const loadCheckpoint = () => api.get('/harmony/events-db').then((r) => {
+  const loadCheckpoint = () => api.get('/harmony/events-db', { timeout: apiTimeout }).then((r) => {
     const raw = r.data?.events || r.data?.responseData || [];
     const mapEvent = (e) => {
       const ad = e.additional_data || e.additionalData || {};
@@ -3340,7 +3341,7 @@ export default function Analytics({ printMode: printModeProp = false }) {
   }).catch(() => setCpEvents([]));
   const loadFirewall = async () => {
     const results = await Promise.allSettled(
-      FW_REPORTS.map((name) => api.get(`/firewall/reports/${name}`).then((r) => {
+      FW_REPORTS.map((name) => api.get(`/firewall/reports/${name}`, { timeout: apiTimeout }).then((r) => {
         const raw = r.data?.data ?? r.data;
         const table = extractFirewallTable(raw);
         return { report: name, rows: table?.rows ?? [], columns: table?.columns ?? [] };
@@ -3348,12 +3349,55 @@ export default function Analytics({ printMode: printModeProp = false }) {
     );
     setFwReports(results.filter((r) => r.status === 'fulfilled').map((r) => r.value));
   };
-  const loadZoho = () => api.get('/zoho/tickets-db').then((r) => setZohoTickets(r.data?.responseData || r.data?.data || [])).catch(() => setZohoTickets([]));
-  const loadMicrosoft = () => api.get('/microsoft/data').then((r) => setMsData(r.data || {})).catch(() => setMsData({}));
+  const loadZoho = () => api.get('/zoho/tickets-db', { timeout: apiTimeout }).then((r) => setZohoTickets(r.data?.responseData || r.data?.data || [])).catch(() => setZohoTickets([]));
+  const loadMicrosoft = () => api.get('/microsoft/data', { timeout: apiTimeout }).then((r) => setMsData(r.data || {})).catch(() => setMsData({}));
 
   useEffect(() => {
-    Promise.allSettled([loadAgents(), loadCves(), loadThreats(), loadDevices(), loadApps(), loadNvd(), loadCheckpoint(), loadFirewall(), loadZoho(), loadMicrosoft()])
-      .finally(() => setLoaded(true));
+    let isMounted = true;
+    let fallbackTimer = null;
+
+    if (isPrint) {
+      // Hard fallback timer for print mode: after 2.5s maximum, force loaded & ready state
+      fallbackTimer = setTimeout(() => {
+        if (isMounted) {
+          setLoaded(true);
+          window.__REPORT_READY__ = true;
+          if (typeof document !== 'undefined' && document.body) {
+            document.body.setAttribute('data-report-ready', 'true');
+          }
+        }
+      }, 2500);
+    }
+
+    Promise.allSettled([
+      loadAgents(),
+      loadCves(),
+      loadThreats(),
+      loadDevices(),
+      loadApps(),
+      loadNvd(),
+      loadCheckpoint(),
+      loadFirewall(),
+      loadZoho(),
+      loadMicrosoft(),
+    ]).finally(() => {
+      if (isMounted) {
+        setLoaded(true);
+        if (isPrint) {
+          setTimeout(() => {
+            window.__REPORT_READY__ = true;
+            if (typeof document !== 'undefined' && document.body) {
+              document.body.setAttribute('data-report-ready', 'true');
+            }
+          }, 300);
+        }
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      if (fallbackTimer) clearTimeout(fallbackTimer);
+    };
   }, []);
 
   // ── Sync handlers ───────────────────────────────────────────────────────────
@@ -3395,26 +3439,14 @@ export default function Analytics({ printMode: printModeProp = false }) {
 
   // Signal Puppeteer when data is ready in print mode
   useEffect(() => {
-    if (isPrint) {
-      if (loaded) {
-        const timer = setTimeout(() => {
-          window.__REPORT_READY__ = true;
-          if (typeof document !== 'undefined') {
-            document.body.setAttribute('data-report-ready', 'true');
-          }
-        }, 800);
-        return () => clearTimeout(timer);
-      } else {
-        // Fallback safety timeout: after 10s, force ready so Puppeteer never captures a blank loader
-        const fallbackTimer = setTimeout(() => {
-          setLoaded(true);
-          window.__REPORT_READY__ = true;
-          if (typeof document !== 'undefined') {
-            document.body.setAttribute('data-report-ready', 'true');
-          }
-        }, 10000);
-        return () => clearTimeout(fallbackTimer);
-      }
+    if (isPrint && loaded) {
+      const timer = setTimeout(() => {
+        window.__REPORT_READY__ = true;
+        if (typeof document !== 'undefined' && document.body) {
+          document.body.setAttribute('data-report-ready', 'true');
+        }
+      }, 400);
+      return () => clearTimeout(timer);
     }
   }, [isPrint, loaded]);
 
