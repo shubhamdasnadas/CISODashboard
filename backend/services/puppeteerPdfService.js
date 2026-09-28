@@ -137,6 +137,7 @@ async function generateLiveAnalyticsPdf({
   periodLabel,
   chartViews = {},
   theme = 'dark',
+  data,
 }) {
   const resolvedBaseUrl = (baseUrl || process.env.APP_URL || 'http://localhost:5173').replace(/\/+$/, '');
   const query = new URLSearchParams();
@@ -193,8 +194,8 @@ async function generateLiveAnalyticsPdf({
       await page.setExtraHTTPHeaders(extraHeaders);
     }
 
-    // Pre-populate session storage and local storage with authentication, numeric org ID, and theme
-    await page.evaluateOnNewDocument((tokenVal, orgSlugVal, orgIdVal, userObj, chartViewsObj, themeVal) => {
+    // Pre-populate session storage and local storage with authentication, numeric org ID, report data, and theme
+    await page.evaluateOnNewDocument((tokenVal, orgSlugVal, orgIdVal, userObj, chartViewsObj, themeVal, initialData) => {
       try {
         const sessId = 'print_session';
         sessionStorage.setItem('ciso_active_session', sessId);
@@ -223,11 +224,19 @@ async function generateLiveAnalyticsPdf({
             if (k && v) localStorage.setItem(k, v);
           });
         }
+        if (initialData && typeof initialData === 'object') {
+          window.__INITIAL_REPORT_DATA__ = initialData;
+          try {
+            sessionStorage.setItem('ciso_print_report_data', JSON.stringify(initialData));
+          } catch (e) {
+            // non-fatal
+          }
+        }
         localStorage.setItem('theme', themeVal === 'light' ? 'light' : 'dark');
       } catch (err) {
         // non-fatal
       }
-    }, token, orgSlug, orgId, user, chartViews, theme);
+    }, token, orgSlug, orgId, user, chartViews, theme, data);
 
     // Navigate to print page (domcontentloaded avoids hanging on Vite HMR WebSocket)
     await page.goto(targetUrl, {

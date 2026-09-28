@@ -169,6 +169,7 @@ router.post('/live-pdf', async (req, res) => {
       periodLabel,
       chartViews,
       theme: theme || 'dark',
+      data: req.body?.data,
     });
 
     // 1. Build the per-organisation sub-folder path: reportList/<orgSlug>/
