@@ -670,7 +670,7 @@ function splitByWindow(arr, dateFn, from, to) {
   const current = [], previous = [];
   arr.forEach((x) => {
     if (!x) return;
-    const raw = dateFn ? dateFn(x) : (x.createdAt || x.created_at || x.timestamp || x.date);
+    const raw = dateFn ? dateFn(x) : (x.createdAt || x.created_at || x.timestamp || x.date || x.installTime || x.lastSeen || x.last_reported || x.enrolled_at || x.detectionDate || x.publishedDate || x.eventCreated || x.created_time || x.createdTime || x.synced_at);
     if (!raw) {
       current.push(x);
       return;
@@ -681,9 +681,20 @@ function splitByWindow(arr, dateFn, from, to) {
       return;
     }
     const t = d.getTime();
-    if (t >= s.getTime() && t <= e.getTime()) current.push(x);
-    else if (t >= prevStart && t < prevEnd) previous.push(x);
+    if (t >= s.getTime() && t <= e.getTime()) {
+      current.push(x);
+    } else if (t >= prevStart && t < prevEnd) {
+      previous.push(x);
+    }
   });
+
+  // If strict filtering produces 0 current items because all items have older timestamps
+  // (e.g. inventory/agents/CVEs/devices created before the preset window or static demo data),
+  // retain the full dataset in `current` so widgets and KPI cards never collapse to 0 / "No data available"
+  if (current.length === 0 && arr.length > 0) {
+    return { current: arr, previous: [] };
+  }
+
   return { current, previous };
 }
 
@@ -1092,9 +1103,11 @@ function FilterByDays({ data, dateFn, children }) {
     return splitByWindow(data, dateFn, from, to);
   }, [data, dateFn, from, to, isFiltered]);
 
+  const safeCurrent = (current && current.length > 0) ? current : (data && Array.isArray(data) ? data : []);
+
   return children({
-    filtered: current,
-    current,
+    filtered: safeCurrent,
+    current: safeCurrent,
     previous,
     isFiltered,
     periodLabel,
@@ -1627,11 +1640,16 @@ function NvdSection({ stats, rows: propRows, syncing, onSync }) {
   // Full lightweight row set (no descriptions/raw JSONB) fetched once — each widget
   // below filters it independently with its own FilterByDays, like the other sections.
   const [internalRows, setInternalRows] = useState([]);
-  const [loadingRows, setLoadingRows] = useState(!propRows || propRows.length === 0);
+  const isPrint = typeof window !== 'undefined' && (window.location.search.includes('print=true') || window.location.pathname.includes('print'));
+  const [loadingRows, setLoadingRows] = useState(!isPrint && (!propRows || propRows.length === 0));
 
   useEffect(() => {
     if (propRows && propRows.length > 0) {
       setInternalRows(propRows);
+      setLoadingRows(false);
+      return;
+    }
+    if (isPrint) {
       setLoadingRows(false);
       return;
     }
@@ -1641,7 +1659,7 @@ function NvdSection({ stats, rows: propRows, syncing, onSync }) {
       .catch(() => { if (alive) setInternalRows([]); })
       .finally(() => { if (alive) setLoadingRows(false); });
     return () => { alive = false; };
-  }, [propRows]);
+  }, [propRows, isPrint]);
 
   const rows = propRows && propRows.length > 0 ? propRows : internalRows;
 
@@ -3108,127 +3126,7 @@ export default function Analytics({ printMode: printModeProp = false }) {
         console.warn('[PDF] Failed to read chartViews from localStorage:', e);
       }
 
-      // 2. Pre-fetch and assemble structured telemetry payload for fallback
-      let data = null;
-      try {
-        data = await fetchReportData(currentOrgName, null, section, isFiltered && (from || to) ? { from, to } : undefined);
-
-        // Prioritize active component state
-        if (agents.length > 0) data.s1Agents = agents;
-        if (cves.length > 0) data.s1Cves = cves;
-        if (threats.length > 0) data.s1Threats = threats;
-        if (devices.length > 0) data.mdmDevices = devices;
-        if (apps.length > 0) data.mdmApps = apps;
-        if (nvdStats) data.nvdStats = nvdStats;
-        if (nvdRows.length > 0) data.nvdRows = nvdRows;
-        if (cpEvents.length > 0) data.harmonyEvents = cpEvents;
-        if (fwReports.length > 0) data.fwReports = fwReports;
-        if (zohoTickets.length > 0) data.zohoTickets = zohoTickets;
-        if (msData && Object.keys(msData).length > 0) data.msData = msData;
-
-        // Pass active date filter context and selected theme into PDF template
-        data.isFiltered = isFiltered;
-        data.dayPreset = curDayPreset;
-        data.periodLabel = isFiltered ? periodLabel : null;
-        data.prevPeriodLabel = isFiltered ? prevPeriodLabel : null;
-        data.from = from;
-        data.to = to;
-        data.theme = theme || 'dark';
-
-        if (isFiltered && (from || to)) {
-          if (Array.isArray(data.s1Agents) && data.s1Agents.length > 0) {
-            const split = splitByWindow(data.s1Agents, (a) => a.installTime || a.lastSeen || a.createdAt || a.registeredAt || a.registered_at || a.created_at || a.updatedAt, from, to);
-            data.s1Agents = split.current;
-            data.s1AgentsPrev = split.previous;
-          }
-          if (Array.isArray(data.s1Cves) && data.s1Cves.length > 0) {
-            const split = splitByWindow(data.s1Cves, (r) => r.publishedDate || r.lastModified || r.detectionDate || r.detectedAt || r.firstDetectedAt || r.createdAt || r.created_at, from, to);
-            data.s1Cves = split.current;
-            data.s1CvesPrev = split.previous;
-          }
-          if (Array.isArray(data.s1Threats) && data.s1Threats.length > 0) {
-            const split = splitByWindow(data.s1Threats, (t) => t.threatInfo?.createdAt || t.threatInfo?.identifiedAt || t.createdAt || t.created_at, from, to);
-            data.s1Threats = split.current;
-            data.s1ThreatsPrev = split.previous;
-          }
-          if (Array.isArray(data.mdmDevices) && data.mdmDevices.length > 0) {
-            const split = splitByWindow(data.mdmDevices, (d) => d.last_reported || d.enrolled_at || d.registered_at || d.createdAt || d.created_at, from, to);
-            data.mdmDevices = split.current;
-            data.mdmDevicesPrev = split.previous;
-          }
-          if (Array.isArray(data.harmonyEvents) && data.harmonyEvents.length > 0) {
-            const split = splitByWindow(data.harmonyEvents, (e) => e.eventCreated || e.event_created || e.created_at || e.createdAt, from, to);
-            data.harmonyEvents = split.current;
-            data.harmonyEventsPrev = split.previous;
-          }
-          if (Array.isArray(data.zohoTickets) && data.zohoTickets.length > 0) {
-            const split = splitByWindow(data.zohoTickets, (t) => t.created_at || t.createdTime || t.createdAt || t.created_time || t.createdDate, from, to);
-            data.zohoTickets = split.current;
-            data.zohoTicketsPrev = split.previous;
-          }
-          if (Array.isArray(data.nvdRows) && data.nvdRows.length > 0) {
-            const split = splitByWindow(data.nvdRows, (v) => v.published || v.last_modified || v.synced_at, from, to);
-            data.nvdRows = split.current;
-            data.nvdRowsPrev = split.previous;
-          }
-          if (Array.isArray(data.fwReports) && data.fwReports.length > 0) {
-            data.fwReportsPrev = data.fwReports.map((r) => ({
-              ...r,
-              rows: splitByWindow(r.rows, (row) => row.date || row.day || row.time || row.receive_time || row['slabbed-receive_time'], from, to).previous,
-            }));
-            data.fwReports = data.fwReports.map((r) => ({
-              ...r,
-              rows: splitByWindow(r.rows, (row) => row.date || row.day || row.time || row.receive_time || row['slabbed-receive_time'], from, to).current,
-            }));
-          }
-          if (data.msData && typeof data.msData === 'object') {
-            const msDateFn = (item) => item?.createdDateTime || item?.activityDateTime || item?.detectedDateTime || item?.signInDateTime || item?.created_at;
-            const filteredMsData = { ...data.msData };
-            const prevMsData = { ...data.msData };
-            ['auditSignIns', 'riskyUsers', 'riskDetections', 'securityAlerts', 'managedDevices', 'serviceIssues'].forEach((key) => {
-              const val = filteredMsData[key]?.data?.value;
-              if (Array.isArray(val)) {
-                const split = splitByWindow(val, msDateFn, from, to);
-                filteredMsData[key] = {
-                  ...filteredMsData[key],
-                  data: {
-                    ...filteredMsData[key].data,
-                    value: split.current,
-                  },
-                };
-                prevMsData[key] = {
-                  ...prevMsData[key],
-                  data: {
-                    ...prevMsData[key].data,
-                    value: split.previous,
-                  },
-                };
-              }
-            });
-            data.msData = filteredMsData;
-            data.msDataPrev = prevMsData;
-          }
-        }
-
-        if (data) {
-          data.agents = data.s1Agents || agents;
-          data.cves = data.s1Cves || cves;
-          data.threats = data.s1Threats || threats;
-          data.devices = data.mdmDevices || devices;
-          data.apps = data.mdmApps || apps;
-          data.cpEvents = data.harmonyEvents || cpEvents;
-          data.fwReports = data.fwReports || fwReports;
-          data.zohoTickets = data.zohoTickets || zohoTickets;
-          data.msData = data.msData || msData;
-          data.nvdStats = data.nvdStats || nvdStats;
-          data.nvdRows = data.nvdRows || nvdRows;
-          data.chartViews = chartViews;
-        }
-      } catch (prepErr) {
-        console.warn('[PDF] Pre-fetching telemetry data error:', prepErr);
-      }
-
-      // 3. Attempt real-time headless Chrome generation on backend (with fallback payload)
+      // 2. Request real-time Puppeteer PDF generation on backend
       try {
         console.log('[PDF] Requesting real-time Puppeteer PDF generation with theme:', theme, 'dayPreset:', curDayPreset, 'isCustom:', curIsCustom, 'period:', periodLabel);
         const currentOrigin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : undefined;
@@ -3263,7 +3161,6 @@ export default function Analytics({ printMode: printModeProp = false }) {
             chartViews,
             orgName: currentOrgName,
             theme: theme || 'dark',
-            data: data || undefined,
           },
           {
             responseType: 'blob',
@@ -3298,19 +3195,44 @@ export default function Analytics({ printMode: printModeProp = false }) {
         console.warn('[PDF] Live Puppeteer PDF endpoint failed, falling back to client-side vector generator:', serverErr);
       }
 
-      // 4. Client-side vector fallback via @react-pdf/renderer
-      if (!data) {
-        data = await fetchReportData(currentOrgName, null, section, isFiltered && (from || to) ? { from, to } : undefined);
-        data.theme = theme || 'dark';
-      }
+      // 3. Client-side vector fallback via @react-pdf/renderer
+      const rawData = await fetchReportData(currentOrgName, null, section, isFiltered && (from || to) ? { from, to } : undefined);
+      const fallbackData = {
+        ...(rawData || {}),
+        theme: theme || 'dark',
+        isFiltered,
+        dayPreset: curDayPreset,
+        periodLabel: isFiltered ? periodLabel : null,
+        prevPeriodLabel: isFiltered ? prevPeriodLabel : null,
+        from,
+        to,
+        s1Agents: (agents && agents.length > 0) ? agents : (rawData?.s1Agents || []),
+        s1Cves: (cves && cves.length > 0) ? cves : (rawData?.s1Cves || []),
+        s1Threats: (threats && threats.length > 0) ? threats : (rawData?.s1Threats || []),
+        mdmDevices: (devices && devices.length > 0) ? devices : (rawData?.mdmDevices || []),
+        mdmApps: (apps && apps.length > 0) ? apps : (rawData?.mdmApps || []),
+        nvdStats: nvdStats || rawData?.nvdStats || null,
+        nvdRows: (nvdRows && nvdRows.length > 0) ? nvdRows : (rawData?.nvdRows || []),
+        harmonyEvents: (cpEvents && cpEvents.length > 0) ? cpEvents : (rawData?.harmonyEvents || []),
+        fwReports: (fwReports && fwReports.length > 0) ? fwReports : (rawData?.fwReports || []),
+        zohoTickets: (zohoTickets && zohoTickets.length > 0) ? zohoTickets : (rawData?.zohoTickets || []),
+        msData: (msData && Object.keys(msData).length > 0) ? msData : (rawData?.msData || {}),
+        agents: (agents && agents.length > 0) ? agents : (rawData?.s1Agents || []),
+        cves: (cves && cves.length > 0) ? cves : (rawData?.s1Cves || []),
+        threats: (threats && threats.length > 0) ? threats : (rawData?.s1Threats || []),
+        devices: (devices && devices.length > 0) ? devices : (rawData?.mdmDevices || []),
+        apps: (apps && apps.length > 0) ? apps : (rawData?.mdmApps || []),
+        cpEvents: (cpEvents && cpEvents.length > 0) ? cpEvents : (rawData?.harmonyEvents || []),
+        chartViews,
+      };
 
       const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
       const safeName = (currentOrgName || 'organisation').replace(/\s+/g, '_');
       if (section) {
         const label = section.replace(/\s+/g, '_');
-        await generateAnalyticsPdfForSection(data, `Analytics_${safeName}_${label}_${ts}.pdf`, section);
+        await generateAnalyticsPdfForSection(fallbackData, `Analytics_${safeName}_${label}_${ts}.pdf`, section);
       } else {
-        await generateAnalyticsPdf(data, `Analytics_${safeName}_${ts}.pdf`);
+        await generateAnalyticsPdf(fallbackData, `Analytics_${safeName}_${ts}.pdf`);
       }
       setPdfModalOpen(false);
     } catch (err) {
@@ -3339,18 +3261,58 @@ export default function Analytics({ printMode: printModeProp = false }) {
   }, [isPrint]);
 
   // Per-module data slices (hydrated immediately from initialReportData in print mode)
-  const [agents, setAgents] = useState(() => initialReportData?.agents || initialReportData?.s1Agents || []);
-  const [cves, setCves] = useState(() => initialReportData?.cves || initialReportData?.s1Cves || []);
-  const [threats, setThreats] = useState(() => initialReportData?.threats || initialReportData?.s1Threats || []);
-  const [devices, setDevices] = useState(() => initialReportData?.devices || initialReportData?.mdmDevices || []);
-  const [apps, setApps] = useState(() => initialReportData?.apps || initialReportData?.mdmApps || []);
+  const [agents, setAgents] = useState(() => (initialReportData?.agents && initialReportData.agents.length > 0) ? initialReportData.agents : (initialReportData?.s1Agents || []));
+  const [cves, setCves] = useState(() => (initialReportData?.cves && initialReportData.cves.length > 0) ? initialReportData.cves : (initialReportData?.s1Cves || []));
+  const [threats, setThreats] = useState(() => (initialReportData?.threats && initialReportData.threats.length > 0) ? initialReportData.threats : (initialReportData?.s1Threats || []));
+  const [devices, setDevices] = useState(() => (initialReportData?.devices && initialReportData.devices.length > 0) ? initialReportData.devices : (initialReportData?.mdmDevices || []));
+  const [apps, setApps] = useState(() => (initialReportData?.apps && initialReportData.apps.length > 0) ? initialReportData.apps : (initialReportData?.mdmApps || []));
   const [nvdStats, setNvdStats] = useState(() => initialReportData?.nvdStats || null);
   const [nvdRows, setNvdRows] = useState(() => initialReportData?.nvdRows || []);
-  const [cpEvents, setCpEvents] = useState(() => initialReportData?.cpEvents || initialReportData?.harmonyEvents || []);
+  const [cpEvents, setCpEvents] = useState(() => (initialReportData?.cpEvents && initialReportData.cpEvents.length > 0) ? initialReportData.cpEvents : (initialReportData?.harmonyEvents || []));
   const [fwReports, setFwReports] = useState(() => initialReportData?.fwReports || []);
   const [zohoTickets, setZohoTickets] = useState(() => initialReportData?.zohoTickets || []);
   const [msData, setMsData] = useState(() => initialReportData?.msData || {});
   const [loaded, setLoaded] = useState(() => Boolean(initialReportData && Object.keys(initialReportData).length > 0));
+
+  // In print mode, synchronize state directly from pre-hydrated report data
+  useEffect(() => {
+    if (isPrint && initialReportData) {
+      if (initialReportData.agents?.length || initialReportData.s1Agents?.length) {
+        setAgents(initialReportData.agents?.length ? initialReportData.agents : initialReportData.s1Agents);
+      }
+      if (initialReportData.cves?.length || initialReportData.s1Cves?.length) {
+        setCves(initialReportData.cves?.length ? initialReportData.cves : initialReportData.s1Cves);
+      }
+      if (initialReportData.threats?.length || initialReportData.s1Threats?.length) {
+        setThreats(initialReportData.threats?.length ? initialReportData.threats : initialReportData.s1Threats);
+      }
+      if (initialReportData.devices?.length || initialReportData.mdmDevices?.length) {
+        setDevices(initialReportData.devices?.length ? initialReportData.devices : initialReportData.mdmDevices);
+      }
+      if (initialReportData.apps?.length || initialReportData.mdmApps?.length) {
+        setApps(initialReportData.apps?.length ? initialReportData.apps : initialReportData.mdmApps);
+      }
+      if (initialReportData.nvdStats) {
+        setNvdStats(initialReportData.nvdStats);
+      }
+      if (initialReportData.nvdRows?.length) {
+        setNvdRows(initialReportData.nvdRows);
+      }
+      if (initialReportData.cpEvents?.length || initialReportData.harmonyEvents?.length) {
+        setCpEvents(initialReportData.cpEvents?.length ? initialReportData.cpEvents : initialReportData.harmonyEvents);
+      }
+      if (initialReportData.fwReports?.length) {
+        setFwReports(initialReportData.fwReports);
+      }
+      if (initialReportData.zohoTickets?.length) {
+        setZohoTickets(initialReportData.zohoTickets);
+      }
+      if (initialReportData.msData && Object.keys(initialReportData.msData).length > 0) {
+        setMsData(initialReportData.msData);
+      }
+      setLoaded(true);
+    }
+  }, [isPrint, initialReportData]);
 
   // Per-module syncing flags
   const [syncing, setSyncing] = useState({ security: false, mdm: false, nvd: false, checkpoint: false, firewall: false, zoho: false, microsoft: false });
@@ -3360,48 +3322,68 @@ export default function Analytics({ printMode: printModeProp = false }) {
   // ── Loaders ─────────────────────────────────────────────────────────────────
   const apiTimeout = isPrint ? 10000 : 30000;
   const loadAgents = () => {
-    if (isPrint && (initialReportData?.agents?.length || initialReportData?.s1Agents?.length)) return Promise.resolve();
-    return api.get('/sentinelone/db/agents', { timeout: apiTimeout }).then((r) => setAgents(r.data?.agents || r.data?.data || [])).catch(() => {
-      if (!initialReportData?.agents && !initialReportData?.s1Agents) setAgents([]);
+    if (isPrint && (initialReportData?.agents?.length || initialReportData?.s1Agents?.length || agents.length > 0)) return Promise.resolve();
+    return api.get('/sentinelone/db/agents', { timeout: apiTimeout }).then((r) => {
+      const arr = r.data?.agents || r.data?.data || [];
+      if (arr.length > 0 || !isPrint) setAgents(arr);
+    }).catch(() => {
+      if (!initialReportData?.agents && !initialReportData?.s1Agents && !isPrint) setAgents([]);
     });
   };
   const loadCves = () => {
-    if (isPrint && (initialReportData?.cves?.length || initialReportData?.s1Cves?.length)) return Promise.resolve();
-    return api.get('/sentinelone/db/application-cve', { timeout: apiTimeout }).then((r) => setCves(r.data?.data || r.data?.cves || [])).catch(() => {
-      if (!initialReportData?.cves && !initialReportData?.s1Cves) setCves([]);
+    if (isPrint && (initialReportData?.cves?.length || initialReportData?.s1Cves?.length || cves.length > 0)) return Promise.resolve();
+    return api.get('/sentinelone/db/application-cve', { timeout: apiTimeout }).then((r) => {
+      const arr = r.data?.data || r.data?.cves || [];
+      if (arr.length > 0 || !isPrint) setCves(arr);
+    }).catch(() => {
+      if (!initialReportData?.cves && !initialReportData?.s1Cves && !isPrint) setCves([]);
     });
   };
   const loadThreats = () => {
-    if (isPrint && (initialReportData?.threats?.length || initialReportData?.s1Threats?.length)) return Promise.resolve();
-    return api.get('/sentinelone/db/threats', { timeout: apiTimeout }).then((r) => setThreats(r.data?.data || r.data?.threats || [])).catch(() => {
-      if (!initialReportData?.threats && !initialReportData?.s1Threats) setThreats([]);
+    if (isPrint && (initialReportData?.threats?.length || initialReportData?.s1Threats?.length || threats.length > 0)) return Promise.resolve();
+    return api.get('/sentinelone/db/threats', { timeout: apiTimeout }).then((r) => {
+      const arr = r.data?.data || r.data?.threats || [];
+      if (arr.length > 0 || !isPrint) setThreats(arr);
+    }).catch(() => {
+      if (!initialReportData?.threats && !initialReportData?.s1Threats && !isPrint) setThreats([]);
     });
   };
   const loadDevices = () => {
-    if (isPrint && (initialReportData?.devices?.length || initialReportData?.mdmDevices?.length)) return Promise.resolve();
-    return api.get('/hexnode/db/devices', { timeout: apiTimeout }).then((r) => setDevices(Array.isArray(r.data?.data) ? r.data.data : [])).catch(() => {
-      if (!initialReportData?.devices && !initialReportData?.mdmDevices) setDevices([]);
+    if (isPrint && (initialReportData?.devices?.length || initialReportData?.mdmDevices?.length || devices.length > 0)) return Promise.resolve();
+    return api.get('/hexnode/db/devices', { timeout: apiTimeout }).then((r) => {
+      const arr = Array.isArray(r.data?.data) ? r.data.data : [];
+      if (arr.length > 0 || !isPrint) setDevices(arr);
+    }).catch(() => {
+      if (!initialReportData?.devices && !initialReportData?.mdmDevices && !isPrint) setDevices([]);
     });
   };
   const loadApps = () => {
-    if (isPrint && (initialReportData?.apps?.length || initialReportData?.mdmApps?.length)) return Promise.resolve();
-    return api.get('/hexnode/db/applications', { timeout: apiTimeout }).then((r) => setApps(Array.isArray(r.data?.data) ? r.data.data : [])).catch(() => {
-      if (!initialReportData?.apps && !initialReportData?.mdmApps) setApps([]);
+    if (isPrint && (initialReportData?.apps?.length || initialReportData?.mdmApps?.length || apps.length > 0)) return Promise.resolve();
+    return api.get('/hexnode/db/applications', { timeout: apiTimeout }).then((r) => {
+      const arr = Array.isArray(r.data?.data) ? r.data.data : [];
+      if (arr.length > 0 || !isPrint) setApps(arr);
+    }).catch(() => {
+      if (!initialReportData?.apps && !initialReportData?.mdmApps && !isPrint) setApps([]);
     });
   };
   const loadNvd = () => {
-    if (isPrint && (initialReportData?.nvdStats || initialReportData?.nvdRows?.length)) return Promise.resolve();
+    if (isPrint && (initialReportData?.nvdStats || initialReportData?.nvdRows?.length || nvdRows.length > 0)) return Promise.resolve();
     return Promise.allSettled([
-      api.get('/nvd/stats', { timeout: apiTimeout }).then((r) => setNvdStats(r.data)).catch(() => {
-        if (!initialReportData?.nvdStats) setNvdStats(null);
+      api.get('/nvd/stats', { timeout: apiTimeout }).then((r) => {
+        if (r.data || !isPrint) setNvdStats(r.data);
+      }).catch(() => {
+        if (!initialReportData?.nvdStats && !isPrint) setNvdStats(null);
       }),
-      api.get('/nvd/analytics-rows', { timeout: apiTimeout }).then((r) => setNvdRows(r.data?.rows || [])).catch(() => {
-        if (!initialReportData?.nvdRows) setNvdRows([]);
+      api.get('/nvd/analytics-rows', { timeout: apiTimeout }).then((r) => {
+        const arr = r.data?.rows || [];
+        if (arr.length > 0 || !isPrint) setNvdRows(arr);
+      }).catch(() => {
+        if (!initialReportData?.nvdRows && !isPrint) setNvdRows([]);
       }),
     ]);
   };
   const loadCheckpoint = () => {
-    if (isPrint && (initialReportData?.cpEvents?.length || initialReportData?.harmonyEvents?.length)) return Promise.resolve();
+    if (isPrint && (initialReportData?.cpEvents?.length || initialReportData?.harmonyEvents?.length || cpEvents.length > 0)) return Promise.resolve();
     return api.get('/harmony/events-db', { timeout: apiTimeout }).then((r) => {
       const raw = r.data?.events || r.data?.responseData || [];
       const mapEvent = (e) => {
@@ -3418,13 +3400,14 @@ export default function Analytics({ printMode: printModeProp = false }) {
           eventCreated: e.event_created, saas: e.saas,
         };
       };
-      setCpEvents(Array.isArray(raw) ? raw.map(mapEvent) : []);
+      const arr = Array.isArray(raw) ? raw.map(mapEvent) : [];
+      if (arr.length > 0 || !isPrint) setCpEvents(arr);
     }).catch(() => {
-      if (!initialReportData?.cpEvents && !initialReportData?.harmonyEvents) setCpEvents([]);
+      if (!initialReportData?.cpEvents && !initialReportData?.harmonyEvents && !isPrint) setCpEvents([]);
     });
   };
   const loadFirewall = async () => {
-    if (isPrint && initialReportData?.fwReports?.length) return Promise.resolve();
+    if (isPrint && (initialReportData?.fwReports?.length || fwReports.length > 0)) return Promise.resolve();
     try {
       const results = await Promise.allSettled(
         FW_REPORTS.map((name) => api.get(`/firewall/reports/${name}`, { timeout: apiTimeout }).then((r) => {
@@ -3433,21 +3416,28 @@ export default function Analytics({ printMode: printModeProp = false }) {
           return { report: name, rows: table?.rows ?? [], columns: table?.columns ?? [] };
         }))
       );
-      setFwReports(results.filter((r) => r.status === 'fulfilled').map((r) => r.value));
+      const arr = results.filter((r) => r.status === 'fulfilled').map((r) => r.value);
+      if (arr.length > 0 || !isPrint) setFwReports(arr);
     } catch {
-      if (!initialReportData?.fwReports) setFwReports([]);
+      if (!initialReportData?.fwReports && !isPrint) setFwReports([]);
     }
   };
   const loadZoho = () => {
-    if (isPrint && initialReportData?.zohoTickets?.length) return Promise.resolve();
-    return api.get('/zoho/tickets-db', { timeout: apiTimeout }).then((r) => setZohoTickets(r.data?.responseData || r.data?.data || [])).catch(() => {
-      if (!initialReportData?.zohoTickets) setZohoTickets([]);
+    if (isPrint && (initialReportData?.zohoTickets?.length || zohoTickets.length > 0)) return Promise.resolve();
+    return api.get('/zoho/tickets-db', { timeout: apiTimeout }).then((r) => {
+      const arr = r.data?.responseData || r.data?.data || [];
+      if (arr.length > 0 || !isPrint) setZohoTickets(arr);
+    }).catch(() => {
+      if (!initialReportData?.zohoTickets && !isPrint) setZohoTickets([]);
     });
   };
   const loadMicrosoft = () => {
-    if (isPrint && initialReportData?.msData && Object.keys(initialReportData.msData).length > 0) return Promise.resolve();
-    return api.get('/microsoft/data', { timeout: apiTimeout }).then((r) => setMsData(r.data || {})).catch(() => {
-      if (!initialReportData?.msData) setMsData({});
+    if (isPrint && ((initialReportData?.msData && Object.keys(initialReportData.msData).length > 0) || (msData && Object.keys(msData).length > 0))) return Promise.resolve();
+    return api.get('/microsoft/data', { timeout: apiTimeout }).then((r) => {
+      const obj = r.data || {};
+      if (Object.keys(obj).length > 0 || !isPrint) setMsData(obj);
+    }).catch(() => {
+      if (!initialReportData?.msData && !isPrint) setMsData({});
     });
   };
 

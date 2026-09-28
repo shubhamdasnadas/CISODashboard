@@ -119,7 +119,27 @@ export async function fetchReportData(orgName, forDate, section, dateFilter) {
 
   let s1Threats     = threatsRes?.data?.threats  ?? [];
   let harmonyRaw    = harmonyRes?.data?.events ?? harmonyRes?.data?.responseData ?? [];
-  let zohoTickets   = zohoRes?.data?.responseData ?? zohoRes?.data?.tickets ?? [];
+  let rawZoho = zohoRes?.data?.responseData ?? zohoRes?.data?.tickets ?? [];
+
+  const mapZohoTicket = (t) => {
+    if (!t) return t;
+    return {
+      id: t.id,
+      ticketNumber: t.ticketNumber || t.ticket_number,
+      subject: t.subject,
+      status: t.status,
+      priority: t.priority,
+      created_time: t.created_time || t.createdTime || t.createdAt,
+      closed_time: t.closed_time || t.closedTime || t.closedAt || t.closeTime,
+      customerResponseTime: t.customerResponseTime || t.customer_response_time || t.responseTime,
+      department: t.department ? { id: t.department.id, name: t.department.name } : (t.departmentName ? { name: t.departmentName } : null),
+      departmentName: t.departmentName || t.department?.name,
+      assignee: t.assignee ? { firstName: t.assignee.firstName, lastName: t.assignee.lastName, email: t.assignee.email } : null,
+      contact: t.contact ? { firstName: t.contact.firstName, lastName: t.contact.lastName, email: t.contact.email } : null,
+    };
+  };
+
+  let zohoTickets = Array.isArray(rawZoho) ? rawZoho.map(mapZohoTicket) : [];
 
   const mapHarmonyEvent = (e) => {
     if (!e) return e;
@@ -215,15 +235,6 @@ export async function fetchReportData(orgName, forDate, section, dateFilter) {
     fwWidgets:          fwWidgetsRes?.data?.widgets ?? fwWidgetsRes?.data?.data ?? [],
     fwReports,
     fwReportsPrev:      null,
-    fwRiskRaw:          fwRiskRes?.data            ?? null,
-    fwAttackersRaw:     fwAttackersRes?.data       ?? null,
-    fwAttackerDestRaw:  fwAttackerDestRes?.data    ?? null,
-    fwDeniedDestRaw:    fwDeniedDestRes?.data      ?? null,
-    fwDeniedSourceRaw:  fwDeniedSourceRes?.data    ?? null,
-    fwDeniedAppRaw:     fwDeniedAppRes?.data       ?? null,
-    fwRiskyUsersRaw:    fwRiskyUsersRes?.data      ?? null,
-    fwTopAttacksRaw:    fwTopAttacksRes?.data      ?? null,
-    fwConnectionsRaw:   fwConnectionsRes?.data     ?? null,
     s1AppAgent:         appAgentRes?.data?.data    ?? [],
     removedAgentsCount: removedAgentsRes?.data?.count ?? 0,
     zohoTickets,

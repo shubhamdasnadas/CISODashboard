@@ -60,8 +60,8 @@ app.use(cors());
 // Large JSON bodies: the report `data` object (Zoho/SentinelOne/Checkpoint/Palo
 // Alto aggregates, especially raw Zoho ticket payloads) can be many MB, far past
 // Express's 100KB default — so raise the cap well above any realistic report.
-app.use(express.json({ limit: '100mb' }));
-app.use(express.urlencoded({ extended: true, limit: '100mb' }));
+app.use(express.json({ limit: '200mb' }));
+app.use(express.urlencoded({ extended: true, limit: '200mb' }));
 
 app.get('/', (req, res) => {
   res.json({ name: 'CISO Dashboard API', status: 'running' });
