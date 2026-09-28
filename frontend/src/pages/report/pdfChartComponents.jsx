@@ -109,19 +109,30 @@ export function VBarChart({ data, width = 320, height = 135, color = '#4f46e5', 
 export function VLineChart({ data, width = 680, height = 135, stroke = '#f97316', labelKey = 'date', valueKey = 'avg' }) {
   if (!data || data.length === 0) return null;
   const padL = 26, padR = 10, padT = 12, padB = 24;
-  const chartW = width - padL - padR;
-  const chartH = height - padT - padB;
+  const chartW = Math.max(10, width - padL - padR);
+  const chartH = Math.max(10, height - padT - padB);
   const max = Math.max(...data.map(d => Number(d[valueKey]) || 0), 1);
   const n = data.length;
-  const step = n > 1 ? chartW / (n - 1) : 0;
 
-  const pts = data.map((d, i) => ({
-    x: padL + i * step,
-    y: padT + chartH - (Number(d[valueKey]) || 0) / max * chartH,
-  }));
+  let pts = [];
+  let linePath = '';
+  let areaPath = '';
 
-  const linePath = pts.map((p, i) => (i === 0 ? `M ${p.x} ${p.y}` : `L ${p.x} ${p.y}`)).join(' ');
-  const areaPath = `${linePath} L ${pts[pts.length - 1].x} ${padT + chartH} L ${pts[0].x} ${padT + chartH} Z`;
+  if (n === 1) {
+    const singleVal = Number(data[0][valueKey]) || 0;
+    const yVal = padT + chartH - (singleVal / max) * chartH;
+    pts = [{ x: padL + chartW / 2, y: yVal }];
+    linePath = `M ${padL} ${yVal} L ${padL + chartW} ${yVal}`;
+    areaPath = `M ${padL} ${yVal} L ${padL + chartW} ${yVal} L ${padL + chartW} ${padT + chartH} L ${padL} ${padT + chartH} Z`;
+  } else {
+    const step = chartW / (n - 1);
+    pts = data.map((d, i) => ({
+      x: padL + i * step,
+      y: padT + chartH - ((Number(d[valueKey]) || 0) / max) * chartH,
+    }));
+    linePath = pts.map((p, i) => (i === 0 ? `M ${p.x} ${p.y}` : `L ${p.x} ${p.y}`)).join(' ');
+    areaPath = `${linePath} L ${pts[pts.length - 1].x} ${padT + chartH} L ${pts[0].x} ${padT + chartH} Z`;
+  }
 
   const xTicks = [];
   for (let i = 0; i < n; i += Math.max(1, Math.ceil(n / 7))) {
@@ -140,9 +151,11 @@ export function VLineChart({ data, width = 680, height = 135, stroke = '#f97316'
         <Circle key={i} cx={p.x} cy={p.y} r={2.5} fill={stroke} />
       ))}
       {xTicks.map((i) => (
-        <SvgText key={i} x={pts[i].x} y={height - 8} fontSize={7.5} fill="#94a3b8" textAnchor="middle">
-          {String(data[i][labelKey])}
-        </SvgText>
+        <G key={i}>
+          <SvgText x={pts[i]?.x ?? padL} y={height - 8} fontSize={7.5} fill="#94a3b8" textAnchor="middle">
+            {String(data[i][labelKey])}
+          </SvgText>
+        </G>
       ))}
     </Svg>
   );
@@ -197,7 +210,7 @@ export function VLegendRow({ data, colors }) {
               {String(d.name).slice(0, 20)}
             </Text>
             <Text style={{ fontSize: 7, color: '#94a3b8', marginLeft: 3 }}>
-              ({val}{total > 0 ? ` · ${pct}%` : ''})
+              ({val}{total > 0 ? ` (${pct}%)` : ''})
             </Text>
           </View>
         );
@@ -284,16 +297,18 @@ export function VGauge({ pct = 0, size = 140, title, goodLabel = 'Resolved', bad
 // ── Multi-segment horizontal stacked bar ──────────────────────────────────────
 export function VStackedBar({ segments, width = 320, height = 14 }) {
   if (!segments || segments.length === 0) return null;
-  const total = segments.reduce((s, seg) => s + (seg.value || 0), 0);
+  const activeSegments = segments.filter(seg => (Number(seg.value) || 0) > 0);
+  const total = activeSegments.reduce((s, seg) => s + (Number(seg.value) || 0), 0);
   if (total <= 0) return null;
 
   let currentX = 0;
-  const rects = segments.map((seg, i) => {
-    const w = (seg.value / total) * width;
+  const rects = activeSegments.map((seg, i) => {
+    const val = Number(seg.value) || 0;
+    const w = Math.max(1, (val / total) * width);
     const x = currentX;
     currentX += w;
     return (
-      <Rect key={i} x={x} y={0} width={w} height={height} fill={seg.fill || '#3b82f6'} rx={i === 0 || i === segments.length - 1 ? 2 : 0} />
+      <Rect key={i} x={x} y={0} width={w} height={height} fill={seg.fill || '#3b82f6'} rx={i === 0 || i === activeSegments.length - 1 ? 2 : 0} />
     );
   });
 
@@ -310,6 +325,7 @@ export function VScoreBar({ label, value, max = 100, color = '#10b981', sub, wid
   const m = Number(max) || 100;
   const pct = m > 0 ? Math.min(Math.max((v / m) * 100, 0), 100) : 0;
   const fillW = Math.max(0, Math.min(width, (pct / 100) * width));
+  const radius = Math.min(height / 2, 6);
 
   return (
     <View style={{ width: '100%' }}>
@@ -318,8 +334,8 @@ export function VScoreBar({ label, value, max = 100, color = '#10b981', sub, wid
         <Text style={{ fontSize: 8.5, fontWeight: 800, color }}>{Math.round(pct)}%</Text>
       </View>
       <Svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
-        <Rect x={0} y={0} width={width} height={height} rx={height / 2} fill="#334155" />
-        <Rect x={0} y={0} width={fillW} height={height} rx={height / 2} fill={color} />
+        <Rect x={0} y={0} width={width} height={height} rx={radius} fill="#334155" />
+        {fillW > 0 && <Rect x={0} y={0} width={fillW} height={height} rx={radius} fill={color} />}
       </Svg>
       {sub && <Text style={{ fontSize: 7.5, color: '#94a3b8', marginTop: 4 }}>{sub}</Text>}
     </View>

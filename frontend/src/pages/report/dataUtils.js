@@ -112,7 +112,7 @@ export const makeTopChartData = (rows, cols, limit = 8) => {
   return Array.from(map.entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, limit)
-    .map(([name, value]) => ({ name: name.length > 30 ? name.slice(0, 30) + '…' : name, value }));
+    .map(([name, value]) => ({ name: name.length > 30 ? name.slice(0, 30) + '...' : name, value }));
 };
 
 export const makeRiskTrendData = (rows) => {
@@ -172,7 +172,7 @@ export const isClosedTicket = (t) => ['closed', 'technically closed', 'resolved'
 
 // ── CVE helpers ──────────────────────────────────────────────────────────────
 export function shortName(v, max = 18) {
-  return v && v.length > max ? v.slice(0, max) + '…' : (v || '');
+  return v && v.length > max ? v.slice(0, max) + '...' : (v || '');
 }
 
 export function buildCveData(apps) {
@@ -325,7 +325,7 @@ export function computeWeeklyStats(harmonyEvents, s1Threats, s1Agents = [], s1Cv
   const lastStart = new Date(lastEnd); lastStart.setDate(lastEnd.getDate() - 7);
 
   const fmtDate = (d) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-  const periodLabel = `${fmtDate(thisStart)} – ${fmtDate(thisEnd)}`;
+  const periodLabel = `${fmtDate(thisStart)} - ${fmtDate(thisEnd)}`;
 
   const thisWeekEvents = events.filter(e => { const d = parseTs(e.event_created); return d && d >= thisStart && d <= thisEnd; });
   const lastWeekEvents = events.filter(e => { const d = parseTs(e.event_created); return d && d >= lastStart && d < lastEnd; });
@@ -411,14 +411,14 @@ export function computeWeeklyStats(harmonyEvents, s1Threats, s1Agents = [], s1Cv
   thisWeekEvents.forEach(e => { const s = senderOf(e); sThis[s] = (sThis[s] || 0) + 1; });
   lastWeekEvents.forEach(e => { const s = senderOf(e); sLast[s] = (sLast[s] || 0) + 1; });
   const topSenders = Object.entries(sThis).sort((a, b) => b[1] - a[1]).slice(0, 10)
-    .map(([s, tw]) => ({ sender_address: s.length > 45 ? s.slice(0, 45) + '…' : s, 'This Week': tw, 'Last Week': sLast[s] || 0, Change: tw - (sLast[s] || 0) }));
+    .map(([s, tw]) => ({ sender_address: s.length > 45 ? s.slice(0, 45) + '...' : s, 'This Week': tw, 'Last Week': sLast[s] || 0, Change: tw - (sLast[s] || 0) }));
 
   const getEp = t => t.agentRealtimeInfo?.agentComputerName || t.agentDetectionInfo?.agentComputerName || '';
   const epThis = {}, epLast = {};
   thisWeekThreats.forEach(t => { const ep = getEp(t); if (ep) epThis[ep] = (epThis[ep] || 0) + 1; });
   lastWeekThreats.forEach(t => { const ep = getEp(t); if (ep) epLast[ep] = (epLast[ep] || 0) + 1; });
   const topEndpoints = Object.entries(epThis).sort((a, b) => b[1] - a[1]).slice(0, 5)
-    .map(([ep, tw]) => ({ endpoint: ep.length > 40 ? ep.slice(0, 40) + '…' : ep, 'This Week': tw, 'Last Week': epLast[ep] || 0 }));
+    .map(([ep, tw]) => ({ endpoint: ep.length > 40 ? ep.slice(0, 40) + '...' : ep, 'This Week': tw, 'Last Week': epLast[ep] || 0 }));
 
   const thisNames = new Set(thisWeekThreats.map(t => t.threatInfo?.threatName).filter(Boolean));
   const lastNames = new Set(lastWeekThreats.map(t => t.threatInfo?.threatName).filter(Boolean));
@@ -434,7 +434,7 @@ export function computeWeeklyStats(harmonyEvents, s1Threats, s1Agents = [], s1Cv
   thisWeekThreats.forEach(t => { const u = getUser(t); if (u) userThis[u] = (userThis[u] || 0) + 1; });
   lastWeekThreats.forEach(t => { const u = getUser(t); if (u) userLast[u] = (userLast[u] || 0) + 1; });
   const topUsers = Object.entries(userThis).sort((a, b) => b[1] - a[1]).slice(0, 5)
-    .map(([u, tw]) => ({ user: u.length > 40 ? u.slice(0, 40) + '…' : u, 'This Week': tw, 'Last Week': userLast[u] || 0 }));
+    .map(([u, tw]) => ({ user: u.length > 40 ? u.slice(0, 40) + '...' : u, 'This Week': tw, 'Last Week': userLast[u] || 0 }));
 
   const getAgentDate = a => a.registeredAt || a.createdAt || a.registered_at || a.created_at;
   const newAgentsThis = agents.filter(a => { const d = parseTs(getAgentDate(a)); return d && d >= thisStart && d <= thisEnd; }).length;
@@ -506,10 +506,10 @@ export function buildThreatAnalytics(threats) {
   };
 
   const mitigationData = byCount(x => String(x.threatInfo?.mitigationStatus || 'unknown'))
-    .map(d => ({ ...d, name: d.name.length > 20 ? d.name.slice(0, 20) + '…' : d.name }));
+    .map(d => ({ ...d, name: d.name.length > 20 ? d.name.slice(0, 20) + '...' : d.name }));
   const classData = byCount(x => x.threatInfo?.classification || 'Unknown')
     .slice(0, 8)
-    .map(d => ({ ...d, name: d.name.length > 20 ? d.name.slice(0, 20) + '…' : d.name }));
+    .map(d => ({ ...d, name: d.name.length > 20 ? d.name.slice(0, 20) + '...' : d.name }));
   const incidentStatusData = byCount(x => x.threatInfo?.incidentStatus || 'unknown');
 
   const confidenceData = byCount(x => x.threatInfo?.confidenceLevel || x.threatInfo?.classification || 'Unknown')
@@ -534,11 +534,11 @@ export function buildThreatAnalytics(threats) {
   const tacticData = Object.entries(tacticCounts)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 12)
-    .map(([name, value]) => ({ name: name.length > 28 ? name.slice(0, 28) + '…' : name, value }));
+    .map(([name, value]) => ({ name: name.length > 28 ? name.slice(0, 28) + '...' : name, value }));
 
   const siteData = byCount(x => x.agentRealtimeInfo?.siteName || x.siteName || x.agentDetectionInfo?.siteName || 'Unknown')
     .slice(0, 10)
-    .map(d => ({ ...d, name: d.name.length > 22 ? d.name.slice(0, 22) + '…' : d.name }));
+    .map(d => ({ ...d, name: d.name.length > 22 ? d.name.slice(0, 22) + '...' : d.name }));
 
   // Per-process-user threat counts (top users). Mirrors the dashboard's
   // topUsersData — falls back across the field names SentinelOne uses in
@@ -548,12 +548,12 @@ export function buildThreatAnalytics(threats) {
     x.threatInfo?.processUser ||
     x.agentDetectionInfo?.agentLastLoggedInUserName ||
     'Unknown'
-  ).slice(0, 10).map(d => ({ ...d, name: d.name.length > 24 ? d.name.slice(0, 24) + '…' : d.name }));
+  ).slice(0, 10).map(d => ({ ...d, name: d.name.length > 24 ? d.name.slice(0, 24) + '...' : d.name }));
 
   // Per-group threat counts. Mirrors the dashboard's byGroupData.
   const groupData = byCount(x =>
     x.agentRealtimeInfo?.groupName || x.group_name || x.agentDetectionInfo?.groupName || 'Unknown'
-  ).slice(0, 10).map(d => ({ ...d, name: d.name.length > 24 ? d.name.slice(0, 24) + '…' : d.name }));
+  ).slice(0, 10).map(d => ({ ...d, name: d.name.length > 24 ? d.name.slice(0, 24) + '...' : d.name }));
 
   const mitigated = t.filter(x => x.threatInfo?.mitigationStatus === 'mitigated').length;
   const mitigatedAll = t.filter(x => ['mitigated', 'mitigated_preemptively'].includes(x.threatInfo?.mitigationStatus)).length;
@@ -688,9 +688,9 @@ export function buildAtRisk(threats) {
   const top = obj => Object.entries(obj).sort((a, b) => b[1] - a[1]);
   const entries = { devices: top(byDevice), users: top(byUser), groups: top(byGroup) };
   return {
-    devices: entries.devices.map(([name, value]) => ({ name: name.length > 30 ? name.slice(0, 30) + '…' : name, value })),
-    users: entries.users.map(([name, value]) => ({ name: name.length > 30 ? name.slice(0, 30) + '…' : name, value })),
-    groups: entries.groups.map(([name, value]) => ({ name: name.length > 30 ? name.slice(0, 30) + '…' : name, value })),
+    devices: entries.devices.map(([name, value]) => ({ name: name.length > 30 ? name.slice(0, 30) + '...' : name, value })),
+    users: entries.users.map(([name, value]) => ({ name: name.length > 30 ? name.slice(0, 30) + '...' : name, value })),
+    groups: entries.groups.map(([name, value]) => ({ name: name.length > 30 ? name.slice(0, 30) + '...' : name, value })),
     topDevice: entries.devices[0], topUser: entries.users[0], topGroup: entries.groups[0],
   };
 }

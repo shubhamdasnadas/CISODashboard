@@ -269,11 +269,20 @@ html, body { overflow-x: hidden; max-width: 100vw; }
   margin: 10mm;
 }
 
+html:has(.pdf-print-container),
+body:has(.pdf-print-container) {
+  height: auto !important;
+  min-height: 100% !important;
+  overflow: visible !important;
+  max-width: none !important;
+}
+
 @media print {
   html, body, #root {
     height: auto !important;
     min-height: 100% !important;
     overflow: visible !important;
+    max-width: none !important;
   }
 
   body {
@@ -298,7 +307,7 @@ html, body { overflow-x: hidden; max-width: 100vw; }
 .pdf-print-container {
   width: 100%;
   height: auto !important;
-  min-height: 100vh;
+  min-height: 100vh !important;
   overflow: visible !important;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
@@ -317,20 +326,21 @@ html, body { overflow-x: hidden; max-width: 100vw; }
 }
 
 .pdf-print-section:last-child {
-  page-break-after: avoid !important;
-  break-after: avoid !important;
+  page-break-after: auto !important;
+  break-after: auto !important;
   margin-bottom: 0 !important;
 }
 
-.pdf-print-section > * {
-  break-inside: auto;
+.pdf-print-container section,
+.pdf-print-container .pdf-print-section {
+  break-inside: auto !important;
+  page-break-inside: auto !important;
 }
 
-/* Ensure cards, chart containers, and grid items NEVER get fractured across page boundaries */
+/* Ensure cards, chart containers, and individual grid items NEVER get fractured across page boundaries */
 .pdf-print-container .card-surface,
 .pdf-print-container .pdf-card-avoid-break,
-.pdf-print-container [class*="bg-[var(--card-bg)]"],
-.pdf-print-container .grid > *,
+.pdf-print-container .grid > div,
 .pdf-print-container .recharts-wrapper,
 .pdf-print-container .recharts-surface {
   break-inside: avoid !important;

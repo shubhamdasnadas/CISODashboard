@@ -20,6 +20,7 @@ const { execFileSync } = require('child_process');
 const { renderToBuffer } = require('@react-pdf/renderer');
 
 const BUNDLE = path.join(__dirname, '..', 'dist', 'reportTemplate.cjs');
+const ANALYTICS_BUNDLE = path.join(__dirname, '..', 'dist', 'analyticsReportTemplate.cjs');
 
 // The frontend source files that feed the bundle. If ANY of these is newer than
 // the bundle, we rebuild so the PDF always reflects the latest ReportTemplate.jsx
@@ -34,8 +35,6 @@ const SOURCE_FILES = [
   path.join(REPO_ROOT, 'frontend', 'src', 'pages', 'report', 'pdfChartComponents.jsx'),
 ];
 
-let _cachedTemplate = null;
-
 /**
  * Rebuild the bundle from the frontend source via esbuild.
  * Errors are surfaced so the caller can report a clear message.
@@ -48,10 +47,10 @@ function rebuildBundle() {
   });
 }
 
-/** True if the bundle is missing or older than any source file. */
+/** True if either bundle is missing or older than any source file. */
 function bundleNeedsRebuild() {
-  if (!fs.existsSync(BUNDLE)) return true;
-  const bundleMtime = fs.statSync(BUNDLE).mtimeMs;
+  if (!fs.existsSync(BUNDLE) || !fs.existsSync(ANALYTICS_BUNDLE)) return true;
+  const bundleMtime = Math.min(fs.statSync(BUNDLE).mtimeMs, fs.statSync(ANALYTICS_BUNDLE).mtimeMs);
   return SOURCE_FILES.some(
     (f) => fs.existsSync(f) && fs.statSync(f).mtimeMs > bundleMtime
   );
@@ -66,7 +65,6 @@ function loadTemplate() {
   // Always stay in sync with the frontend source — rebuild when stale.
   if (bundleNeedsRebuild()) {
     rebuildBundle();
-    _cachedTemplate = null; // source changed; drop any cached component
   }
 
   if (!fs.existsSync(BUNDLE)) {
@@ -77,13 +75,6 @@ function loadTemplate() {
     );
   }
 
-  // CRITICAL: bust Node's require cache for the bundle path. Node caches modules
-  // by resolved absolute path, so even after rebuildBundle() rewrites the file on
-  // disk, a bare require(BUNDLE) would return the OLD in-memory module — meaning
-  // every edit to ReportTemplate.jsx / pdfChartComponents.jsx silently never
-  // appears in the generated PDF until a full server restart. Deleting the cache
-  // entry forces the freshly-written file to be loaded. We also clear any cached
-  // sub-modules the bundle pulls in so deep edits (chart primitives) take effect.
   const resolved = require.resolve(BUNDLE);
   if (require.cache[resolved]) {
     const walk = (id) => {
@@ -95,14 +86,47 @@ function loadTemplate() {
     walk(resolved);
   }
 
-  // eslint-disable-next-line global-require, import/no-dynamic-require
   const mod = require(BUNDLE);
   const ReportTemplate = mod.default || mod.ReportTemplate || mod;
   if (typeof ReportTemplate !== 'function') {
     throw new Error('Report template bundle did not export a valid React component.');
   }
-  _cachedTemplate = ReportTemplate;
   return ReportTemplate;
+}
+
+/**
+ * Resolve the AnalyticsReportTemplate component from the bundle.
+ */
+function loadAnalyticsTemplate() {
+  if (bundleNeedsRebuild()) {
+    rebuildBundle();
+  }
+
+  if (!fs.existsSync(ANALYTICS_BUNDLE)) {
+    throw new Error(
+      'Analytics report template bundle not found. Run `npm run build:report` in the ' +
+      'backend to build backend/dist/analyticsReportTemplate.cjs from the frontend ' +
+      'AnalyticsReportTemplate.jsx.'
+    );
+  }
+
+  const resolved = require.resolve(ANALYTICS_BUNDLE);
+  if (require.cache[resolved]) {
+    const walk = (id) => {
+      const m = require.cache[id];
+      if (!m) return;
+      (m.children || []).forEach((c) => walk(c.id));
+      delete require.cache[id];
+    };
+    walk(resolved);
+  }
+
+  const mod = require(ANALYTICS_BUNDLE);
+  const AnalyticsTemplate = mod.default || mod.AnalyticsReportTemplate || mod;
+  if (typeof AnalyticsTemplate !== 'function') {
+    throw new Error('Analytics report template bundle did not export a valid React component.');
+  }
+  return AnalyticsTemplate;
 }
 
 /**
@@ -120,4 +144,19 @@ async function renderReportPdf(data) {
   return Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
 }
 
-module.exports = { renderReportPdf, loadTemplate };
+/**
+ * Render the analytics report to a PDF Buffer.
+ * @param {object} data - the analytics data object
+ * @returns {Promise<Buffer>}
+ */
+async function renderAnalyticsPdf(data) {
+  if (!data || typeof data !== 'object') {
+    throw new Error('renderAnalyticsPdf: report data is required.');
+  }
+  const AnalyticsTemplate = loadAnalyticsTemplate();
+  const element = require('react').createElement(AnalyticsTemplate, { data });
+  const buffer = await renderToBuffer(element);
+  return Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+}
+
+module.exports = { renderReportPdf, renderAnalyticsPdf, loadTemplate, loadAnalyticsTemplate };

@@ -18,7 +18,7 @@ const router = express.Router();
 //
 // The per-org sub-folder under reportList keeps every organisation's PDFs
 // isolated in its own directory on disk.
-const { renderReportPdf } = require('../scripts/reportRenderer.cjs');
+const { renderReportPdf, renderAnalyticsPdf } = require('../scripts/reportRenderer.cjs');
 const { generateLiveAnalyticsPdf } = require('../services/puppeteerPdfService');
 
 // backend/reportList/<orgSlug>/  — repo-root-relative, safe across machines.
@@ -115,7 +115,7 @@ router.post('/generate', async (req, res) => {
  */
 router.post('/live-pdf', async (req, res) => {
   try {
-    const { section, from, to, dayPreset, periodLabel, chartViews, orgName, theme } = req.body || {};
+    const { section, from, to, dayPreset, isCustom, periodLabel, chartViews, orgName, theme } = req.body || {};
     if (!req.orgSlug) {
       return res.status(400).json({ message: 'Active organisation not resolved.' });
     }
@@ -123,7 +123,7 @@ router.post('/live-pdf', async (req, res) => {
     const authHeader = req.headers.authorization || '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
 
-    console.log('[reports/live-pdf] Generating real-time PDF via Puppeteer for org:', req.orgSlug, 'orgId:', req.currentOrgId, 'theme:', theme || 'dark');
+    console.log('[reports/live-pdf] Generating real-time PDF via Puppeteer for org:', req.orgSlug, 'orgId:', req.currentOrgId, 'theme:', theme || 'dark', 'dayPreset:', dayPreset, 'isCustom:', isCustom);
 
     const pdfBuffer = await generateLiveAnalyticsPdf({
       token,
@@ -135,6 +135,8 @@ router.post('/live-pdf', async (req, res) => {
       from,
       to,
       dayPreset,
+      isCustom,
+      periodLabel,
       chartViews,
       theme: theme || 'dark',
     });
@@ -184,8 +186,26 @@ router.post('/live-pdf', async (req, res) => {
     res.setHeader('X-Saved-Path', encodeURIComponent(filePath));
     return res.end(pdfBuffer);
   } catch (err) {
-    console.error('[reports/live-pdf] Error generating live PDF:', err);
-    return res.status(500).json({ message: err.message || 'Live PDF generation failed' });
+    console.warn('[reports/live-pdf] Headless Chrome live-pdf unavailable:', err?.message || err);
+
+    // Server-side vector fallback: if report data was passed in body, render directly via @react-pdf/renderer
+    if (req.body?.data && typeof req.body.data === 'object') {
+      try {
+        console.log('[reports/live-pdf] Falling back to server-side vector PDF renderer...');
+        const fallbackPdfBuffer = await renderAnalyticsPdf(req.body.data);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', 'attachment; filename="Analytics_Report.pdf"');
+        res.setHeader('Content-Length', fallbackPdfBuffer.length);
+        return res.end(fallbackPdfBuffer);
+      } catch (fallbackErr) {
+        console.error('[reports/live-pdf] Server-side fallback also failed:', fallbackErr.message);
+      }
+    }
+
+    return res.status(503).json({
+      error: 'PUPPETEER_UNAVAILABLE',
+      message: err.message || 'Live PDF generation failed on host',
+    });
   }
 });
 

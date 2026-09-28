@@ -70,7 +70,7 @@ export default function AnalyticsReportTemplate({ data }) {
     }
   });
 
-  // Filter sections that have active data
+  // Filter sections based on selected section scope
   const activeSections = allSections.filter((sec) => {
     // Check if section matches the requested section scope
     if (selectedSection !== 'all') {
@@ -81,8 +81,7 @@ export default function AnalyticsReportTemplate({ data }) {
         sec.integrationAlias === selectedSection;
       if (!match) return false;
     }
-    // Check if section actually has data to display
-    return sec.hasData ? sec.hasData(data) : true;
+    return true;
   });
 
   return (
@@ -98,7 +97,7 @@ export default function AnalyticsReportTemplate({ data }) {
             <Text style={{ fontSize: 10, fontWeight: 600, color: '#e2e8f0', letterSpacing: 0.5 }}>{dateStr}</Text>
             {data.isFiltered && data.periodLabel && (
               <Text style={{ fontSize: 10, fontWeight: 700, color: '#818cf8', marginLeft: 10 }}>
-                · Date Filter: {data.periodLabel}
+                | Date Filter: {data.periodLabel}
               </Text>
             )}
           </View>

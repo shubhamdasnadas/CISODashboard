@@ -1,22 +1,109 @@
 const fs = require('fs');
 const puppeteer = require('puppeteer');
 
-function getExecutablePath() {
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) return process.env.PUPPETEER_EXECUTABLE_PATH;
-  if (process.env.CHROME_BIN) return process.env.CHROME_BIN;
+/**
+ * Gather potential Chrome / Chromium executable paths.
+ */
+function getCandidateExecutablePaths() {
+  const candidates = [];
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    candidates.push(process.env.PUPPETEER_EXECUTABLE_PATH);
+  }
+  if (process.env.CHROME_BIN) {
+    candidates.push(process.env.CHROME_BIN);
+  }
 
-  // Check common Linux chromium/chrome installations
+  // Common Linux Chrome / Chromium paths
   const commonLinuxPaths = [
     '/usr/bin/google-chrome',
     '/usr/bin/google-chrome-stable',
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
     '/snap/bin/chromium',
+    '/usr/bin/chromium/chrome',
   ];
   for (const p of commonLinuxPaths) {
-    if (fs.existsSync(p)) return p;
+    if (fs.existsSync(p) && !candidates.includes(p)) {
+      candidates.push(p);
+    }
   }
-  return undefined;
+
+  // Also allow Puppeteer's default bundled browser as a candidate
+  candidates.push(undefined);
+  return candidates;
+}
+
+/**
+ * Attempt to launch Puppeteer safely across candidate executable paths.
+ */
+async function launchBrowserSafely() {
+  const candidates = getCandidateExecutablePaths();
+  const baseArgs = [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--disable-software-rasterizer',
+    '--disable-extensions',
+    '--disable-background-networking',
+    '--disable-default-apps',
+    '--disable-sync',
+    '--disable-translate',
+    '--metrics-recording-only',
+    '--mute-audio',
+    '--no-first-run',
+    '--safebrowsing-disable-auto-update',
+    '--disable-web-security',
+    '--allow-running-insecure-content',
+    '--font-render-hinting=medium',
+    '--disable-features=IsolateOrigins,site-per-process,AudioServiceOutOfProcess',
+    '--disable-breakpad',
+    '--disable-component-update',
+    '--disable-domain-reliability',
+    '--disable-ipc-flooding-protection',
+    '--disable-renderer-backgrounding',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-background-timer-throttling',
+    '--force-color-profile=srgb',
+  ];
+
+  let lastError = null;
+
+  for (const executablePath of candidates) {
+    try {
+      const launchOptions = {
+        headless: true,
+        args: baseArgs,
+        ignoreHTTPSErrors: true,
+      };
+      if (executablePath) {
+        launchOptions.executablePath = executablePath;
+      }
+
+      console.log('[Puppeteer] Attempting browser launch with executable:', executablePath || 'bundled default');
+      const browser = await puppeteer.launch(launchOptions);
+      console.log('[Puppeteer] Successfully launched browser process.');
+      return browser;
+    } catch (err) {
+      lastError = err;
+      console.warn(`[Puppeteer] Launch failed with executable "${executablePath || 'bundled default'}":`, err.message);
+    }
+  }
+
+  console.error(
+    '[Puppeteer] Fatal: Failed to launch headless Chrome/Chromium on this machine.\n' +
+    'If running on Linux, ensure required system libraries are installed:\n' +
+    '  sudo apt-get update && sudo apt-get install -y \\\n' +
+    '    ca-certificates fonts-liberation libasound2 libatk-bridge2.0-0 libatk1.0-0 \\\n' +
+    '    libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgbm1 libgcc1 \\\n' +
+    '    libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 \\\n' +
+    '    libstdc++6 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 \\\n' +
+    '    libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 chromium-browser\n'
+  );
+
+  throw new Error(
+    `Puppeteer browser launch failed (missing Linux OS libraries or Chromium): ${lastError?.message || 'unknown error'}`
+  );
 }
 
 /**
@@ -45,6 +132,8 @@ async function generateLiveAnalyticsPdf({
   from,
   to,
   dayPreset,
+  isCustom,
+  periodLabel,
   chartViews = {},
   theme = 'dark',
 }) {
@@ -57,7 +146,9 @@ async function generateLiveAnalyticsPdf({
   if (section) query.set('section', section);
   if (from) query.set('from', from);
   if (to) query.set('to', to);
-  if (dayPreset) query.set('dayPreset', String(dayPreset));
+  if (dayPreset != null) query.set('dayPreset', String(dayPreset));
+  if (isCustom) query.set('isCustom', 'true');
+  if (periodLabel) query.set('periodLabel', periodLabel);
   if (theme) query.set('theme', theme);
   if (chartViews && Object.keys(chartViews).length > 0) {
     query.set('chartViews', JSON.stringify(chartViews));
@@ -65,34 +156,17 @@ async function generateLiveAnalyticsPdf({
   query.set('print', 'true');
 
   const targetUrl = `${baseUrl}/analytics-print?${query.toString()}`;
-  console.log('[Puppeteer] Launching headless browser for URL:', targetUrl);
+  console.log('[Puppeteer] Target print URL:', targetUrl);
 
-  const executablePath = getExecutablePath();
-  const launchOptions = {
-    headless: 'new',
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--disable-software-rasterizer',
-      '--no-zygote',
-      '--single-process',
-      '--disable-web-security',
-      '--allow-running-insecure-content',
-      '--font-render-hinting=medium',
-    ],
-  };
-  if (executablePath) {
-    launchOptions.executablePath = executablePath;
-  }
-
-  const browser = await puppeteer.launch(launchOptions);
+  const browser = await launchBrowserSafely();
 
   try {
     const page = await browser.newPage();
-    // A3 Landscape resolution at 2x DPI for crisp vectors and text
-    await page.setViewport({ width: 1754, height: 1240, deviceScaleFactor: 2 });
+    // A3 Landscape resolution (1x DPI avoids Linux headless OOM crash on Page.printToPDF)
+    await page.setViewport({ width: 1754, height: 1240, deviceScaleFactor: 1 });
+
+    // Emulate screen media so dark theme backgrounds & colors render as intended
+    await page.emulateMediaType('screen');
 
     // Enable detailed diagnostics from headless Chrome
     page.on('console', (msg) => {
@@ -170,27 +244,79 @@ async function generateLiveAnalyticsPdf({
       console.warn('[Puppeteer] Timeout waiting for __REPORT_READY__, proceeding with current render state:', waitErr.message);
     }
 
+    // Disable all CSS animations and transitions, and ensure html/body/#root have height: auto and overflow: visible for multi-page flow
+    try {
+      await page.addStyleTag({
+        content: `
+          *, *::before, *::after {
+            -webkit-animation: none !important;
+            animation: none !important;
+            -webkit-transition: none !important;
+            transition: none !important;
+          }
+          html, body, #root {
+            height: auto !important;
+            min-height: 100% !important;
+            overflow: visible !important;
+            max-width: none !important;
+          }
+          .pdf-print-container {
+            height: auto !important;
+            min-height: 100vh !important;
+            overflow: visible !important;
+          }
+          .print-page-break, .pdf-print-section {
+            page-break-after: always !important;
+            break-after: page !important;
+            display: block !important;
+          }
+          .pdf-print-subpage {
+            page-break-before: always !important;
+            break-before: page !important;
+            display: block !important;
+          }
+          .pdf-print-container section {
+            break-inside: auto !important;
+            page-break-inside: auto !important;
+          }
+          .pdf-print-section:last-child {
+            page-break-after: auto !important;
+            break-after: auto !important;
+          }
+        `,
+      });
+    } catch (styleErr) {
+      // non-fatal
+    }
+
     // Give a brief pause for SVG layout settlement
-    await new Promise((r) => setTimeout(r, 800));
+    await new Promise((r) => setTimeout(r, 600));
 
     // Capture PDF in A3 landscape
     const pdfBuffer = await page.pdf({
       format: 'A3',
       landscape: true,
       printBackground: true,
-      preferCSSPageSize: true,
+      preferCSSPageSize: false,
       margin: {
         top: '10mm',
         bottom: '10mm',
         left: '10mm',
         right: '10mm',
       },
+      timeout: 60000,
     });
 
     console.log(`[Puppeteer] Successfully generated PDF (${pdfBuffer.length} bytes)`);
     return Buffer.isBuffer(pdfBuffer) ? pdfBuffer : Buffer.from(pdfBuffer);
   } finally {
-    await browser.close();
+    if (browser) {
+      try {
+        await browser.close();
+      } catch (closeErr) {
+        console.warn('[Puppeteer] Error closing browser:', closeErr.message);
+      }
+    }
   }
 }
 

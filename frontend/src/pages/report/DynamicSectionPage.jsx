@@ -169,10 +169,19 @@ function KpiTile({ label, value, sub, color, cur, prev, goodWhenUp = true, isFil
 // ── Widget Card Primitive ─────────────────────────────────────────────────────
 function GenericWidgetCard({ widget, width, C, S }) {
   const { title, type, data, color = C.brand, half = true, valueFmt, labelKey, valueKey } = widget;
-  if (!data || (Array.isArray(data) && data.length === 0)) return null;
-
   const wrapStyle = half ? S.chartCard : S.card;
   const titleStyle = half ? S.chartCardTitle : S.cardTitle;
+
+  if (!data || (Array.isArray(data) && data.length === 0)) {
+    return (
+      <View style={wrapStyle} wrap={false}>
+        <Text style={titleStyle}>{title}</Text>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 18 }}>
+          <Text style={{ fontSize: 8.5, color: C.muted }}>No telemetry records in selected period</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={wrapStyle} wrap={false}>
@@ -243,7 +252,7 @@ export function DynamicSectionPage({ config, data }) {
         <View style={S.headerRow}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Text style={S.headerTitle}>{data.orgName}</Text>
-            <Text style={{ fontSize: 8, color: C.faint, marginLeft: 8 }}>· CISO Analytics Report</Text>
+            <Text style={{ fontSize: 8, color: C.faint, marginLeft: 8 }}>- CISO Analytics Report</Text>
           </View>
           <View style={S.headerMeta}>
             {data.isFiltered && data.periodLabel && (
@@ -327,10 +336,10 @@ export function DynamicSectionPage({ config, data }) {
 
       {/* Dynamic Footer with auto page numbers */}
       <View style={S.footer} fixed>
-        <Text>CISO Analytics Report · {data.orgName}</Text>
+        <Text>CISO Analytics Report | {data.orgName}</Text>
         <Text
           render={({ pageNumber, totalPages }) =>
-            `${dateStr} · Section ${number} · Page ${pageNumber} of ${totalPages}`
+            `${dateStr} | Section ${number} | Page ${pageNumber} of ${totalPages}`
           }
         />
       </View>

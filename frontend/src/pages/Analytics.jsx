@@ -1283,7 +1283,7 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
       )}
 
       {/* ── AGENTS TAB ── */}
-      {(allSubTabs ? fullAgents.length > 0 : activeSubTab === 'agents') && (
+      {(allSubTabs || activeSubTab === 'agents') && (
         <div id="sec-s1-agents" className="space-y-4">
           {allSubTabs && (
             <div className="flex items-center gap-2 pt-2 border-t border-[var(--card-border)]">
@@ -1351,8 +1351,8 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
       )}
 
       {/* ── CVEs TAB ── */}
-      {(allSubTabs ? fullCves.length > 0 : activeSubTab === 'cves') && (
-        <div id="sec-s1-cves" className={`space-y-4 ${allSubTabs ? 'pdf-print-subpage' : ''}`}>
+      {(allSubTabs || activeSubTab === 'cves') && (
+        <div id="sec-s1-cves" className="space-y-4">
           {allSubTabs && (
             <div className="flex items-center gap-2 pt-2 border-t border-[var(--card-border)]">
               <span className="text-sm">🔍</span>
@@ -1402,7 +1402,7 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
       )}
 
       {/* ── THREATS TAB ── */}
-      {(allSubTabs ? fullThreats.length > 0 : activeSubTab === 'threats') && hasThreats && (
+      {(allSubTabs || (activeSubTab === 'threats' && hasThreats)) && (
         <div id="sec-s1-threats" className={`space-y-4 ${allSubTabs ? 'pdf-print-subpage' : ''}`}>
           {allSubTabs && (
             <div className="flex items-center gap-2 pt-2 border-t border-[var(--card-border)]">
@@ -2943,12 +2943,25 @@ export default function Analytics({ printMode: printModeProp = false }) {
   }
 
   // ── Global Common Date Filter State (default to 10 days preset or URL params) ──
-  const initialPreset = searchParams.get('dayPreset') ? Number(searchParams.get('dayPreset')) : 10;
+  const paramDayPreset = searchParams.get('dayPreset');
   const initialFrom = searchParams.get('from') || '';
   const initialTo = searchParams.get('to') || '';
-  const initialIsCustom = Boolean(initialFrom || initialTo);
+  const initialIsCustom = searchParams.get('isCustom') === 'true' || Boolean(initialFrom || initialTo);
 
-  const [dayPreset, setDayPreset] = useState(initialIsCustom ? null : initialPreset);
+  let initialPreset = null;
+  if (!initialIsCustom) {
+    if (paramDayPreset === 'all' || paramDayPreset === 'null') {
+      initialPreset = null;
+    } else if (paramDayPreset && !isNaN(Number(paramDayPreset))) {
+      initialPreset = Number(paramDayPreset);
+    } else if (isPrint) {
+      initialPreset = null; // In print mode if no explicit preset, do not force 10D
+    } else {
+      initialPreset = 10; // Default UI view on first visit is 10D
+    }
+  }
+
+  const [dayPreset, setDayPreset] = useState(initialPreset);
   const [customFrom, setCustomFrom] = useState(initialFrom);
   const [customTo, setCustomTo] = useState(initialTo);
   const [isCustom, setIsCustom] = useState(initialIsCustom);
@@ -3054,7 +3067,7 @@ export default function Analytics({ printMode: printModeProp = false }) {
     if (generating) return;
     setGenerating(true);
     try {
-      const { from, to, isFiltered, dayPreset: curDayPreset, periodLabel, prevPeriodLabel } = dateFilterContextValue;
+      const { from, to, isFiltered, dayPreset: curDayPreset, isCustom: curIsCustom, periodLabel, prevPeriodLabel } = dateFilterContextValue;
 
       // 1. Collect user-selected chart views from localStorage
       const chartViews = {};
@@ -3071,14 +3084,15 @@ export default function Analytics({ printMode: printModeProp = false }) {
 
       // 2. Attempt real-time headless Chrome generation on backend
       try {
-        console.log('[PDF] Requesting real-time Puppeteer PDF generation with theme:', theme);
+        console.log('[PDF] Requesting real-time Puppeteer PDF generation with theme:', theme, 'dayPreset:', curDayPreset, 'isCustom:', curIsCustom, 'period:', periodLabel);
         const response = await api.post(
           '/reports/live-pdf',
           {
             section: section || 'all',
-            from: isFiltered ? from : undefined,
-            to: isFiltered ? to : undefined,
-            dayPreset: isFiltered ? curDayPreset : undefined,
+            from: curIsCustom ? from : (isFiltered ? from : undefined),
+            to: curIsCustom ? to : (isFiltered ? to : undefined),
+            dayPreset: curIsCustom ? 'custom' : (curDayPreset != null ? curDayPreset : 'all'),
+            isCustom: Boolean(curIsCustom),
             periodLabel: isFiltered ? periodLabel : 'All Time',
             chartViews,
             orgName: currentOrgName,
@@ -3385,106 +3399,106 @@ export default function Analytics({ printMode: printModeProp = false }) {
     const printSection = searchParams.get('section') || 'all';
 
     // Build Table of Contents / Index for Cover Page (Page 1)
-    const tocSections = [];
-    if (agents.length > 0) {
-      tocSections.push({
+    const allTocSections = [
+      {
         id: 'sec-s1-agents',
+        sectionKey: 's1agents',
+        integrationId: 'security',
         number: '01',
-        title: 'SentinelOne · Agent Analytics',
-        subtitle: 'Endpoint OS distribution, active status, firewall status & version posture',
-        icon: '🖥️',
-        badge: `${agents.length} Endpoints`,
+        title: 'SentinelOne · Endpoints & Application CVEs',
+        subtitle: 'Endpoint health, OS & firewall posture, and application vulnerability telemetry',
+        icon: '🛡️',
+        badge: `${agents.length} Endpoints · ${cves.length} CVEs`,
         color: '#10b981',
-      });
-    }
-    if (cves.length > 0) {
-      tocSections.push({
-        id: 'sec-s1-cves',
-        number: String(tocSections.length + 1).padStart(2, '0'),
-        title: 'SentinelOne · Application CVEs',
-        subtitle: 'Vulnerability severity distribution, CVSS score metrics & aging',
-        icon: '🔍',
-        badge: `${cves.length} CVEs`,
-        color: '#ef4444',
-      });
-    }
-    if (threats.length > 0) {
-      tocSections.push({
+      },
+      {
         id: 'sec-s1-threats',
-        number: String(tocSections.length + 1).padStart(2, '0'),
+        sectionKey: 's1threats',
+        integrationId: 'security',
+        number: '02',
         title: 'SentinelOne · Threat Analytics',
         subtitle: 'Threat mitigation velocity, MTTD/MTTM durations & incident classification',
         icon: '⚠️',
         badge: `${threats.length} Threats`,
         color: '#f59e0b',
-      });
-    }
-    if (devices.length > 0 || apps.length > 0) {
-      tocSections.push({
+      },
+      {
         id: 'sec-mdm',
-        number: String(tocSections.length + 1).padStart(2, '0'),
+        sectionKey: 'mdm',
+        integrationId: 'mdm',
+        number: '03',
         title: 'Hexnode MDM · Fleet & Applications',
         subtitle: 'Managed device fleet compliance, OS distribution & application inventory',
         icon: '📱',
         badge: `${devices.length} Devices · ${apps.length} Apps`,
         color: '#3b82f6',
-      });
-    }
-    if (nvdStats || nvdRows.length > 0) {
-      tocSections.push({
+      },
+      {
         id: 'sec-nvd',
-        number: String(tocSections.length + 1).padStart(2, '0'),
+        sectionKey: 'nvd',
+        integrationId: 'nvd',
+        number: '04',
         title: 'National Vulnerability Database (NVD)',
         subtitle: 'Global vulnerability ingestion, CVSS base score trends & CPE impact',
         icon: '🛡️',
         badge: 'NVD Intel',
         color: '#8b5cf6',
-      });
-    }
-    if (cpEvents.length > 0) {
-      tocSections.push({
+      },
+      {
         id: 'sec-checkpoint',
-        number: String(tocSections.length + 1).padStart(2, '0'),
+        sectionKey: 'checkpoint',
+        integrationId: 'checkpoint',
+        number: '05',
         title: 'Check Point · Harmony Email Security',
         subtitle: 'Phishing prevention, malicious attachment detection & remediation telemetry',
         icon: '📧',
         badge: `${cpEvents.length} Events`,
         color: '#ec4899',
-      });
-    }
-    if (fwReports.some((r) => r.rows && r.rows.length > 0)) {
-      tocSections.push({
+      },
+      {
         id: 'sec-firewall',
-        number: String(tocSections.length + 1).padStart(2, '0'),
+        sectionKey: 'firewall',
+        integrationId: 'firewall',
+        number: '06',
         title: 'Palo Alto · Next-Gen Firewall',
         subtitle: 'Network traffic patterns, blocked URL categories & high-risk application sessions',
         icon: '🔥',
         badge: 'Traffic Telemetry',
         color: '#f97316',
-      });
-    }
-    if (zohoTickets.length > 0) {
-      tocSections.push({
+      },
+      {
         id: 'sec-zoho',
-        number: String(tocSections.length + 1).padStart(2, '0'),
+        sectionKey: 'zoho',
+        integrationId: 'zoho',
+        number: '07',
         title: 'Zoho Desk · Incident & Support Tickets',
         subtitle: 'Ticket volume trends, resolution aging & departmental service performance',
         icon: '🎫',
         badge: `${zohoTickets.length} Tickets`,
         color: '#06b6d4',
-      });
-    }
-    if (Object.keys(msData).length > 0 && Object.values(msData).some((v) => v?.data?.value?.length > 0)) {
-      tocSections.push({
+      },
+      {
         id: 'sec-microsoft',
-        number: String(tocSections.length + 1).padStart(2, '0'),
+        sectionKey: 'microsoft',
+        integrationId: 'microsoft',
+        number: '08',
         title: 'Microsoft 365 · Cloud Posture',
         subtitle: 'Identity security, license utilization, MFA adoption & cloud apps',
         icon: '🟦',
         badge: 'Cloud Telemetry',
         color: '#6366f1',
-      });
-    }
+      },
+    ];
+
+    const tocSections = allTocSections.filter((sec) => {
+      if (printSection === 'all') return true;
+      return (
+        sec.id === printSection ||
+        sec.id === `sec-${printSection}` ||
+        sec.sectionKey === printSection ||
+        sec.integrationId === printSection
+      );
+    });
 
     const printTheme = searchParams.get('theme') || 'dark';
     const isLightPrint = printTheme === 'light';
@@ -3614,79 +3628,52 @@ export default function Analytics({ printMode: printModeProp = false }) {
           </div>
 
           {/* Render Sections with A3 Landscape Layout */}
-          {(printSection === 'security' ||
+          {(printSection === 'all' ||
+            printSection === 'security' ||
             printSection === 'sentinelone' ||
-            (printSection === 'all' && (agents.length > 0 || cves.length > 0 || threats.length > 0))) && (
+            printSection === 's1agents' ||
+            printSection === 's1cves' ||
+            printSection === 's1threats') && (
             <div className="pdf-print-section">
               <SecuritySection agents={agents} cves={cves} threats={threats} allSubTabs={true} syncing={false} />
             </div>
           )}
 
-          {(printSection === 'mdm' ||
-            printSection === 'hexnode' ||
-            (printSection === 'all' && (devices.length > 0 || apps.length > 0))) && (
+          {(printSection === 'all' || printSection === 'mdm' || printSection === 'hexnode') && (
             <div id="sec-mdm" className="pdf-print-section pdf-print-subpage">
               <MdmSection devices={devices} apps={apps} syncing={false} />
             </div>
           )}
 
-          {(printSection === 'nvd' || (printSection === 'all' && (nvdStats || nvdRows.length > 0))) && (
+          {(printSection === 'all' || printSection === 'nvd') && (
             <div id="sec-nvd" className="pdf-print-section pdf-print-subpage">
               <NvdSection stats={nvdStats} rows={nvdRows} syncing={false} />
             </div>
           )}
 
-          {(printSection === 'checkpoint' ||
-            printSection === 'harmony' ||
-            (printSection === 'all' && cpEvents.length > 0)) && (
+          {(printSection === 'all' || printSection === 'checkpoint' || printSection === 'harmony') && (
             <div id="sec-checkpoint" className="pdf-print-section pdf-print-subpage">
               <CheckpointSection events={cpEvents} syncing={false} />
             </div>
           )}
 
-          {(printSection === 'firewall' ||
-            printSection === 'paloalto' ||
-            (printSection === 'all' && fwReports.some((r) => r.rows && r.rows.length > 0))) && (
+          {(printSection === 'all' || printSection === 'firewall' || printSection === 'paloalto') && (
             <div id="sec-firewall" className="pdf-print-section pdf-print-subpage">
               <FirewallSection reports={fwReports} syncing={false} />
             </div>
           )}
 
-          {(printSection === 'zoho' || (printSection === 'all' && zohoTickets.length > 0)) && (
+          {(printSection === 'all' || printSection === 'zoho') && (
             <div id="sec-zoho" className="pdf-print-section pdf-print-subpage">
               <ZohoSection tickets={zohoTickets} syncing={false} />
             </div>
           )}
 
-          {(printSection === 'microsoft' ||
-            (printSection === 'all' &&
-              Object.keys(msData).length > 0 &&
-              Object.values(msData).some((v) => v?.data?.value?.length > 0))) && (
+          {(printSection === 'all' || printSection === 'microsoft') && (
             <div id="sec-microsoft" className="pdf-print-section pdf-print-subpage">
               <MicrosoftSection msData={msData} syncing={false} />
             </div>
           )}
-
-          {printSection === 'all' &&
-            !agents.length &&
-            !cves.length &&
-            !threats.length &&
-            !devices.length &&
-            !apps.length &&
-            !nvdStats &&
-            !nvdRows.length &&
-            !cpEvents.length &&
-            !fwReports.some((r) => r.rows?.length) &&
-            !zohoTickets.length &&
-            (!msData || !Object.values(msData).some((v) => v?.data?.value?.length)) && (
-              <div className="pdf-print-section p-12 text-center bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl">
-                <div className="text-3xl mb-2">📊</div>
-                <h2 className="text-lg font-bold text-[var(--foreground)]">No Telemetry Data Available</h2>
-                <p className="text-sm text-[var(--muted)] mt-1">
-                  There is currently no telemetry or event data found for the selected organisation and date filter.
-                </p>
-              </div>
-            )}
         </div>
       </DateFilterContext.Provider>
     );

@@ -26,7 +26,7 @@ export const topN = (arr, keyFn, n = 8) => {
 export const parseDate = (v) => { if (!v) return null; const d = new Date(v); return isNaN(d.getTime()) ? null : d; };
 
 export const formatDuration = (minutes) => {
-  if (minutes == null || isNaN(minutes) || minutes === 0) return '—';
+  if (minutes == null || isNaN(minutes) || minutes === 0) return '-';
   if (minutes < 1) return '<1m';
   if (minutes < 60) return `${Math.round(minutes)}m`;
   if (minutes < 1440) { const h = Math.floor(minutes / 60); const m = Math.round(minutes % 60); return m > 0 ? `${h}h ${m}m` : `${h}h`; }
@@ -67,26 +67,30 @@ export const ANALYTICS_CONFIG = [
       (Array.isArray(data.s1Cves) && data.s1Cves.length > 0) ||
       (Array.isArray(data.s1Threats) && data.s1Threats.length > 0),
     subTabs: [
-      // 1.1 Agent Analytics
+      // 1.1 Endpoints & Application CVEs (Combined onto Page 2)
       {
         id: 's1agents',
         sectionKey: 's1agents',
-        number: '1.1',
-        title: 'SentinelOne — Agent Analytics',
-        subtitle: 'Endpoint protection & agent health',
+        number: '01',
+        title: 'SentinelOne · Endpoints & Application CVEs',
+        subtitle: 'Endpoint health, OS & firewall posture, and application vulnerability telemetry',
         color: '#10b981',
-        hasData: (data) => Array.isArray(data.s1Agents) && data.s1Agents.length > 0,
+        hasData: (data) =>
+          (Array.isArray(data.s1Agents) && data.s1Agents.length > 0) ||
+          (Array.isArray(data.s1Cves) && data.s1Cves.length > 0),
         getLead: (data) => {
           const agents = data.s1Agents || [];
           const active = agents.filter((a) => a.isActive).length;
           const health = agents.length ? Math.round((active / agents.length) * 100) : 0;
-          const threats = agents.filter((a) => (a.activeThreats || 0) > 0).length;
-          const outdated = agents.filter((a) => !a.isUpToDate).length;
-          return `${agents.length} agents · ${active} active (${health}% health) · ${agents.length - active} inactive · ${threats} with active threats · ${outdated} outdated.`;
+          const cveData = buildCveData(data.s1Cves || []);
+          return `${agents.length} endpoints | ${active} active (${health}% health) | ${cveData.totalApplications} applications | ${cveData.totalCves} CVEs | avg CVSS ${cveData.avgScore}.`;
         },
         getKpis: (data) => {
           const curList = data.s1Agents || [];
           const prevList = Array.isArray(data.s1AgentsPrev) ? data.s1AgentsPrev : null;
+          const curCve = buildCveData(data.s1Cves || []);
+          const prevCve = Array.isArray(data.s1CvesPrev) ? buildCveData(data.s1CvesPrev) : null;
+
           const compute = (arr) => ({
             total: arr.length,
             active: arr.filter((a) => a.isActive).length,
@@ -97,18 +101,21 @@ export const ANALYTICS_CONFIG = [
           const cur = compute(curList);
           const prev = prevList ? compute(prevList) : null;
           const health = cur.total ? Math.round((cur.active / cur.total) * 100) : 0;
+
           return [
             [
-              { label: 'Total Agents', value: cur.total, cur: cur.total, prev: prev?.total, color: '#3b82f6', goodWhenUp: true },
-              { label: 'Active', value: cur.active, cur: cur.active, prev: prev?.active, color: '#10b981', sub: `${health}% health`, goodWhenUp: true },
+              { label: 'Total Endpoints', value: cur.total, cur: cur.total, prev: prev?.total, color: '#3b82f6', goodWhenUp: true },
+              { label: 'Active Endpoints', value: cur.active, cur: cur.active, prev: prev?.active, color: '#10b981', sub: `${health}% health`, goodWhenUp: true },
               { label: 'Inactive', value: cur.inactive, cur: cur.inactive, prev: prev?.inactive, color: '#ef4444', goodWhenUp: false },
-              { label: 'Active Threats', value: cur.threats, cur: cur.threats, prev: prev?.threats, color: '#f59e0b', goodWhenUp: false },
-              { label: 'Outdated', value: cur.outdated, cur: cur.outdated, prev: prev?.outdated, color: '#ef4444', goodWhenUp: false },
+              { label: 'Total CVEs', value: curCve.totalCves, cur: curCve.totalCves, prev: prevCve?.totalCves, color: '#818cf8', goodWhenUp: false },
+              { label: 'Affected Endpoints', value: curCve.totalEndpoints, cur: curCve.totalEndpoints, prev: prevCve?.totalEndpoints, color: '#f59e0b', goodWhenUp: false },
+              { label: 'Avg CVSS', value: curCve.avgScore, cur: curCve.avgScore !== '-' ? parseFloat(curCve.avgScore) : null, prev: prevCve && prevCve.avgScore !== '-' ? parseFloat(prevCve.avgScore) : null, color: '#94a3b8', goodWhenUp: false },
             ],
           ];
         },
         getWidgets: (data) => {
           const agents = data.s1Agents || [];
+          const cveData = buildCveData(data.s1Cves || []);
           const active = agents.filter((a) => a.isActive).length;
           const inactive = agents.length - active;
           const osDist = bucket(agents, (a) => a.osName || 'Unknown');
@@ -124,87 +131,29 @@ export const ANALYTICS_CONFIG = [
             { name: 'Up to Date', value: agents.filter((a) => a.isUpToDate).length, fill: '#10b981' },
             { name: 'Outdated', value: agents.filter((a) => !a.isUpToDate).length, fill: '#ef4444' },
           ].filter((d) => d.value > 0);
-          const siteDist = bucket(agents, (a) => a.siteName || 'Unknown').slice(0, 8);
-          const networkStatus = bucket(agents, (a) => a.networkStatus || 'Unknown');
-          const scanStatus = bucket(agents, (a) => a.scanStatus || 'Unknown');
-
-          return [
-            { id: 'os_dist', title: 'OS Distribution', type: 'donut', data: osDist, half: true },
-            { id: 'active_status', title: 'Active Status', type: 'donut', data: activeStatus, half: true },
-            { id: 'fw_status', title: 'Firewall Status', type: 'donut', data: fwStatus, half: true },
-            { id: 'ver_status', title: 'Agent Version', type: 'donut', data: versionStatus, half: true },
-            { id: 'site_dist', title: 'Site Distribution', type: 'donut', data: siteDist, half: true },
-            { id: 'net_status', title: 'Network Status', type: 'donut', data: networkStatus, half: true },
-            ...(scanStatus.length > 0 ? [{ id: 'scan_status', title: 'Scan Status', type: 'donut', data: scanStatus, half: true }] : []),
-          ];
-        },
-      },
-
-      // 1.2 Application CVEs
-      {
-        id: 's1cves',
-        sectionKey: 's1cves',
-        number: '1.2',
-        title: 'SentinelOne — Application CVEs',
-        subtitle: 'Known vulnerabilities & CVSS analysis',
-        color: '#7c3aed',
-        hasData: (data) => Array.isArray(data.s1Cves) && data.s1Cves.length > 0,
-        getLead: (data) => {
-          const cveData = buildCveData(data.s1Cves || []);
-          return `${cveData.totalApplications} applications · ${cveData.totalCves} CVEs · ${cveData.totalEndpoints} endpoints affected · average CVSS ${cveData.avgScore}.`;
-        },
-        getKpis: (data) => {
-          const curData = buildCveData(data.s1Cves || []);
-          const prevData = Array.isArray(data.s1CvesPrev) ? buildCveData(data.s1CvesPrev) : null;
-          return [
-            [
-              { label: 'Applications', value: curData.totalApplications, cur: curData.totalApplications, prev: prevData?.totalApplications, color: '#a78bfa', goodWhenUp: true },
-              { label: 'Total CVEs', value: curData.totalCves, cur: curData.totalCves, prev: prevData?.totalCves, color: '#818cf8', goodWhenUp: false },
-              { label: 'Endpoints Affected', value: curData.totalEndpoints, cur: curData.totalEndpoints, prev: prevData?.totalEndpoints, color: '#3b82f6', goodWhenUp: false },
-              { label: 'Avg Score', value: curData.avgScore, cur: curData.avgScore !== '—' ? parseFloat(curData.avgScore) : null, prev: prevData && prevData.avgScore !== '—' ? parseFloat(prevData.avgScore) : null, color: '#94a3b8', goodWhenUp: false },
-            ],
-            [
-              { label: 'Critical', value: curData.severityMap.CRITICAL, cur: curData.severityMap.CRITICAL, prev: prevData?.severityMap?.CRITICAL, color: '#a855f7', goodWhenUp: false },
-              { label: 'High', value: curData.severityMap.HIGH, cur: curData.severityMap.HIGH, prev: prevData?.severityMap?.HIGH, color: '#ef4444', goodWhenUp: false },
-              { label: 'Medium', value: curData.severityMap.MEDIUM, cur: curData.severityMap.MEDIUM, prev: prevData?.severityMap?.MEDIUM, color: '#f59e0b', goodWhenUp: false },
-              { label: 'Low', value: curData.severityMap.LOW, cur: curData.severityMap.LOW, prev: prevData?.severityMap?.LOW, color: '#3b82f6', goodWhenUp: false },
-            ],
-          ];
-        },
-        getWidgets: (data) => {
-          const cveData = buildCveData(data.s1Cves || []);
           const scoreRange = cveData.scoreRange.length
             ? cveData.scoreRange.map((x) => ({ name: x.name, value: x.count, fill: x.fill }))
             : [];
-          const endpointImpact = cveData.endpointImpact.length
-            ? cveData.endpointImpact.slice(0, 6).map((x) => ({ name: x.name, value: x.endpoints, fill: COLORS[1] }))
-            : [];
-          const vendorRisk = cveData.vendorRisk.length
-            ? cveData.vendorRisk.slice(0, 6).map((x) => ({ name: x.name, value: x.cves, fill: COLORS[3] }))
-            : [];
-          const agingData = cveData.cveAging.length
-            ? cveData.cveAging.map((x) => ({ name: x.name, value: x.count, fill: COLORS[2] }))
-            : [];
 
           return [
+            { id: 'os_dist', title: 'Endpoint OS Distribution', type: 'donut', data: osDist, half: true },
+            { id: 'active_status', title: 'Endpoint Active Status', type: 'donut', data: activeStatus, half: true },
+            { id: 'fw_status', title: 'Firewall Posture', type: 'donut', data: fwStatus, half: true },
+            { id: 'ver_status', title: 'Agent Version Posture', type: 'donut', data: versionStatus, half: true },
             { id: 'cve_sev', title: 'CVE Severity Distribution', type: 'hbar', data: cveData.severityDistribution, half: true },
             { id: 'cve_cvss', title: 'CVSS Base Score Range', type: 'bar', data: scoreRange, half: true },
-            { id: 'cve_apps', title: 'Top Risky Applications', type: 'hbar', data: cveData.topRiskyApps.slice(0, 8).map((x) => ({ name: x.name, value: x.cves, fill: COLORS[0] })), color: '#ef4444', half: true },
-            { id: 'cve_aging', title: 'CVE Aging', type: 'bar', data: agingData, color: '#06b6d4', half: true },
-            { id: 'cve_endpoints', title: 'Endpoint Impact', type: 'hbar', data: endpointImpact, color: '#f59e0b', half: true },
-            { id: 'cve_vendors', title: 'Top Vendors by Risk', type: 'hbar', data: vendorRisk, color: '#8b5cf6', half: true },
           ];
         },
       },
 
-      // 1.3 Threat Analytics
+      // 1.2 Threat Analytics (Page 3)
       {
         id: 's1threats',
         sectionKey: 's1threats',
-        number: '1.3',
-        title: 'SentinelOne — Threat Analytics',
-        subtitle: 'Threat detection, trends & mitigation',
-        color: '#dc2626',
+        number: '02',
+        title: 'SentinelOne · Threat Analytics',
+        subtitle: 'Threat mitigation velocity, MTTD/MTTM durations & incident classification',
+        color: '#f59e0b',
         hasData: (data) => Array.isArray(data.s1Threats) && data.s1Threats.length > 0,
         getLead: (data) => {
           const list = data.s1Threats || [];
@@ -212,7 +161,7 @@ export const ANALYTICS_CONFIG = [
           const mitRate = list.length ? Math.round((mitigated / list.length) * 100) : 0;
           const unresolved = list.filter((t) => ['unresolved', 'active'].includes(t.threatInfo?.incidentStatus)).length;
           const fileless = list.filter((t) => t.threatInfo?.isFileless).length;
-          return `${list.length} threats · ${mitigated} mitigated (${mitRate}%) · ${unresolved} unresolved · ${fileless} fileless.`;
+          return `${list.length} threats | ${mitigated} mitigated (${mitRate}%) | ${unresolved} unresolved | ${fileless} fileless.`;
         },
         getKpis: (data) => {
           const curList = data.s1Threats || [];
@@ -266,7 +215,7 @@ export const ANALYTICS_CONFIG = [
             value: mitRate,
             max: 100,
             color: '#10b981',
-            sub: `${mitigated} mitigated of ${total} total threats · ${unresolved} unresolved`,
+            sub: `${mitigated} mitigated of ${total} total threats | ${unresolved} unresolved`,
           };
         },
         getWidgets: (data) => {
@@ -314,10 +263,10 @@ export const ANALYTICS_CONFIG = [
   {
     id: 'mdm',
     sectionKey: 'mdm',
-    number: '2',
-    title: 'MDM / Hexnode — Mobile Device Management',
-    subtitle: 'Mobile device management & compliance',
-    color: '#06b6d4',
+    number: '03',
+    title: 'Hexnode MDM · Fleet & Applications',
+    subtitle: 'Managed device fleet compliance, OS distribution & application inventory',
+    color: '#3b82f6',
     hasData: (data) => (Array.isArray(data.mdmDevices) && data.mdmDevices.length > 0) || (Array.isArray(data.mdmApps) && data.mdmApps.length > 0),
     getLead: (data) => {
       const devList = data.mdmDevices || [];
@@ -325,7 +274,7 @@ export const ANALYTICS_CONFIG = [
       const isStale = (d) => d.last_reported && (Date.now() - new Date(d.last_reported).getTime()) > 7 * 86400000;
       const nonCompliant = devList.filter((d) => d.compliant !== true).length;
       const stale = devList.filter(isStale).length;
-      return `${devList.length} devices · ${appList.length} applications tracked · ${nonCompliant} non-compliant · ${stale} stale devices.`;
+      return `${devList.length} devices | ${appList.length} applications tracked | ${nonCompliant} non-compliant | ${stale} stale devices.`;
     },
     getKpis: (data) => {
       const devList = data.mdmDevices || [];
@@ -369,9 +318,9 @@ export const ANALYTICS_CONFIG = [
   {
     id: 'nvd',
     sectionKey: 'nvd',
-    number: '3',
-    title: 'NVD — National Vulnerability Database',
-    subtitle: 'Vulnerability telemetry & CVSS breakdown',
+    number: '04',
+    title: 'National Vulnerability Database (NVD)',
+    subtitle: 'Global vulnerability ingestion, CVSS base score trends & CPE impact',
     color: '#8b5cf6',
     hasData: (data) => (Array.isArray(data.nvdRows) && data.nvdRows.length > 0) || Boolean(data.nvdStats),
     getLead: (data) => {
@@ -384,7 +333,7 @@ export const ANALYTICS_CONFIG = [
         if (s === 'CRITICAL' || s === 'HIGH' || sc >= 7) highRisk++;
       });
       const highRiskPct = total ? Math.round((highRisk / total) * 100) : 0;
-      return `${fmtNum(total)} CVEs in scope · ${fmtNum(highRisk)} Critical/High (${highRiskPct}%).`;
+      return `${fmtNum(total)} CVEs in scope | ${fmtNum(highRisk)} Critical/High (${highRiskPct}%).`;
     },
     getKpis: (data) => {
       const computeNvd = (arr) => {
@@ -430,7 +379,7 @@ export const ANALYTICS_CONFIG = [
         ],
         [
           { label: 'Critical + High', value: fmtNum(cur.highRisk), cur: cur.highRisk, prev: prev?.highRisk, color: '#ef4444', sub: `${cur.highRiskPct}% of window`, goodWhenUp: false },
-          { label: 'Avg CVSS Score', value: cur.avgCvss || '—', cur: cur.avgCvss ? parseFloat(cur.avgCvss) : null, prev: prev && prev.avgCvss ? parseFloat(prev.avgCvss) : null, color: '#f1f5f9', sub: `${cur.scoreCount} scored CVEs`, goodWhenUp: false },
+          { label: 'Avg CVSS Score', value: cur.avgCvss || '-', cur: cur.avgCvss ? parseFloat(cur.avgCvss) : null, prev: prev && prev.avgCvss ? parseFloat(prev.avgCvss) : null, color: '#f1f5f9', sub: `${cur.scoreCount} scored CVEs`, goodWhenUp: false },
           { label: 'With Weakness', value: fmtNum(cur.withWeakness), cur: cur.withWeakness, prev: prev?.withWeakness, color: '#10b981', sub: cur.total ? `${Math.round((cur.withWeakness / cur.total) * 100)}% of window` : '', goodWhenUp: false },
           { label: 'UNKNOWN Severity', value: fmtNum(cur.sevCounts.UNKNOWN), cur: cur.sevCounts.UNKNOWN, prev: prev?.sevCounts?.UNKNOWN, color: '#94a3b8', sub: 'no CVSS mapping', goodWhenUp: false },
         ],
@@ -487,10 +436,10 @@ export const ANALYTICS_CONFIG = [
   {
     id: 'checkpoint',
     sectionKey: 'checkpoint',
-    number: '4',
-    title: 'Checkpoint Harmony — Email & Cloud Security',
-    subtitle: 'Email threat detection & automated remediation',
-    color: '#6366f1',
+    number: '05',
+    title: 'Check Point · Harmony Email Security',
+    subtitle: 'Phishing prevention, malicious attachment detection & remediation telemetry',
+    color: '#ec4899',
     hasData: (data) => Array.isArray(data.harmonyEvents) && data.harmonyEvents.length > 0,
     getLead: (data) => {
       const list = data.harmonyEvents || [];
@@ -498,7 +447,7 @@ export const ANALYTICS_CONFIG = [
       const remediated = list.filter((e) => ['remediated', 'closed', 'done'].includes(e.state)).length;
       const pending = list.filter((e) => e.state === 'pending' || e.state === 'new').length;
       const remediatedPct = total ? Math.round((remediated / total) * 100) : 0;
-      return `${fmtNum(total)} events · ${fmtNum(remediated)} remediated (${remediatedPct}%) · ${fmtNum(pending)} pending.`;
+      return `${fmtNum(total)} events | ${fmtNum(remediated)} remediated (${remediatedPct}%) | ${fmtNum(pending)} pending.`;
     },
     getKpis: (data) => {
       const computeCp = (arr) => {
@@ -512,7 +461,7 @@ export const ANALYTICS_CONFIG = [
         const detectedPct = total ? Math.round((detected / total) * 100) : 0;
         const avgSevValid = list.filter((e) => e.severity !== '' && e.severity != null && !isNaN(Number(e.severity)));
         const avgSevNum = avgSevValid.length ? (avgSevValid.reduce((s, e) => s + Number(e.severity), 0) / avgSevValid.length) : null;
-        const avgSev = avgSevNum != null ? avgSevNum.toFixed(1) : '—';
+        const avgSev = avgSevNum != null ? avgSevNum.toFixed(1) : '-';
         const criticalCount = list.filter((e) => Number(e.severity) >= 4).length;
         return { total, remediated, pending, detected, remediatedPct, pendingPct, detectedPct, avgSevNum, avgSev, criticalCount };
       };
@@ -542,7 +491,7 @@ export const ANALYTICS_CONFIG = [
         value: remediatedPct,
         max: 100,
         color: '#10b981',
-        sub: `${fmtNum(remediated)} remediated of ${fmtNum(total)} total events · ${fmtNum(pending)} pending`,
+        sub: `${fmtNum(remediated)} remediated of ${fmtNum(total)} total events | ${fmtNum(pending)} pending`,
       };
     },
     getWidgets: (data) => {
@@ -593,7 +542,7 @@ export const ANALYTICS_CONFIG = [
         { id: 'cp_state', title: 'Event State', type: 'donut', data: stateData, half: true },
         { id: 'cp_confidence', title: 'Confidence Indicator', type: 'donut', data: confidenceData, half: true },
         { id: 'cp_saas', title: 'SaaS Platform Distribution', type: 'donut', data: saasData, half: true },
-        ...(typeSevData.length > 0 ? [{ id: 'cp_typesev', title: 'Event Type × Severity', type: 'stacked', data: typeSevData, half: true }] : []),
+        ...(typeSevData.length > 0 ? [{ id: 'cp_typesev', title: 'Event Type x Severity', type: 'stacked', data: typeSevData, half: true }] : []),
       ];
     },
   },
@@ -602,10 +551,10 @@ export const ANALYTICS_CONFIG = [
   {
     id: 'firewall',
     sectionKey: 'firewall',
-    number: '5',
-    title: 'Palo Alto Firewall — Network Security',
-    subtitle: 'Traffic flow, threat detection & perimeter defense',
-    color: '#f59e0b',
+    number: '06',
+    title: 'Palo Alto · Next-Gen Firewall',
+    subtitle: 'Network traffic patterns, blocked URL categories & high-risk application sessions',
+    color: '#f97316',
     hasData: (data) => Array.isArray(data.fwReports) && data.fwReports.some((r) => Array.isArray(r.rows) && r.rows.length > 0),
     getLead: (data) => {
       const allRows = (data.fwReports || []).flatMap((r) => r.rows || []);
@@ -728,10 +677,10 @@ export const ANALYTICS_CONFIG = [
   {
     id: 'zoho',
     sectionKey: 'zoho',
-    number: '6',
-    title: 'Zoho Desk — Ticketing',
-    subtitle: 'Service management & ticket resolution telemetry',
-    color: '#3b82f6',
+    number: '07',
+    title: 'Zoho Desk · Incident & Support Tickets',
+    subtitle: 'Ticket volume trends, resolution aging & departmental service performance',
+    color: '#06b6d4',
     hasData: (data) => Array.isArray(data.zohoTickets) && data.zohoTickets.length > 0,
     getLead: (data) => {
       const tickets = data.zohoTickets || [];
@@ -740,7 +689,7 @@ export const ANALYTICS_CONFIG = [
       const closed = tickets.filter(isClosed).length;
       const closedPct = total ? Math.round((closed / total) * 100) : 0;
       const openTickets = tickets.filter((t) => t.status === 'Open').length;
-      return `${fmtNum(total)} tickets · ${fmtNum(openTickets)} open · ${fmtNum(closed)} closed (${closedPct}%).`;
+      return `${fmtNum(total)} tickets | ${fmtNum(openTickets)} open | ${fmtNum(closed)} closed (${closedPct}%).`;
     },
     getKpis: (data) => {
       const computeZoho = (arr) => {
@@ -853,10 +802,10 @@ export const ANALYTICS_CONFIG = [
   {
     id: 'microsoft',
     sectionKey: 'microsoft',
-    number: '7',
-    title: 'Microsoft 365 — Cloud Identity & Security',
-    subtitle: 'Tenant security posture, identity risk & device management',
-    color: '#3b82f6',
+    number: '08',
+    title: 'Microsoft 365 · Cloud Posture',
+    subtitle: 'Identity security, license utilization, MFA adoption & cloud apps',
+    color: '#6366f1',
     hasData: (data) => data.msData && typeof data.msData === 'object' && Object.keys(data.msData).length > 0,
     getLead: (data) => {
       const arr = (key) => data.msData?.[key]?.data?.value ?? [];
@@ -864,7 +813,7 @@ export const ANALYTICS_CONFIG = [
       const signIns = arr('auditSignIns');
       const failed = signIns.filter((s) => s.status?.errorCode !== 0).length;
       const failedPct = signIns.length ? Math.round((failed / signIns.length) * 100) : 0;
-      return `${fmtNum(users.length)} total users · ${fmtNum(signIns.length)} sign-ins (${failedPct}% failed).`;
+      return `${fmtNum(users.length)} total users | ${fmtNum(signIns.length)} sign-ins (${failedPct}% failed).`;
     },
     getKpis: (data) => {
       const computeMs = (dataObj) => {
@@ -902,7 +851,7 @@ export const ANALYTICS_CONFIG = [
           { label: 'Failed Sign-ins', value: fmtNum(cur.failedSignIns), cur: cur.failedSignIns, prev: prev?.failedSignIns, color: '#ef4444', sub: `${cur.failedPct}% of sign-ins`, goodWhenUp: false },
           { label: 'Risky Users', value: fmtNum(cur.riskyUsers.length), cur: cur.riskyUsers.length, prev: prev?.riskyUsers?.length, color: '#ef4444', goodWhenUp: false },
           { label: 'Total Users', value: fmtNum(cur.users.length), cur: cur.users.length, prev: prev?.users?.length, color: '#3b82f6', goodWhenUp: true },
-          { label: 'Secure Score', value: `${cur.secureScore?.currentScore ?? '—'}`, color: '#10b981', sub: cur.secureScore?.maxScore ? `/ ${cur.secureScore.maxScore}` : '' },
+          { label: 'Secure Score', value: `${cur.secureScore?.currentScore ?? '-'}`, color: '#10b981', sub: cur.secureScore?.maxScore ? `/ ${cur.secureScore.maxScore}` : '' },
           { label: 'Security Alerts', value: fmtNum(cur.securityAlerts.length), cur: cur.securityAlerts.length, prev: prev?.securityAlerts?.length, color: '#f59e0b', goodWhenUp: false },
         ],
         [
@@ -926,7 +875,7 @@ export const ANALYTICS_CONFIG = [
         value: licenseUtil,
         max: 100,
         color: '#6366f1',
-        sub: `${fmtNum(assignedLicenses)} assigned · ${fmtNum(unassignedLicenses)} unassigned of ${fmtNum(totalLicenses)} total`,
+        sub: `${fmtNum(assignedLicenses)} assigned | ${fmtNum(unassignedLicenses)} unassigned of ${fmtNum(totalLicenses)} total`,
       };
     },
     getWidgets: (data) => {

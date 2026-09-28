@@ -26,6 +26,7 @@ const ROOT = path.resolve(__dirname, '..', '..'); // backend/.. = repo root
 const FRONTEND_REPORT = path.join(ROOT, 'frontend', 'src', 'pages', 'report');
 const OUT_DIR = path.join(__dirname, '..', 'dist');
 const OUT_FILE = path.join(OUT_DIR, 'reportTemplate.cjs');
+const OUT_ANALYTICS_FILE = path.join(OUT_DIR, 'analyticsReportTemplate.cjs');
 
 async function main() {
   if (!fs.existsSync(OUT_DIR)) {
@@ -44,8 +45,23 @@ async function main() {
     conditions: ['node', 'require'],
     logLevel: 'info',
     outfile: OUT_FILE,
-    // Keep react/react-pdf external so the backend's own installed copies are
-    // used at runtime (avoids dual React instances / and the browser build).
+    external: ['react', 'react-dom', '@react-pdf/renderer', 'react/jsx-runtime'],
+    absWorkingDir: ROOT,
+  });
+
+  console.log('[build:report] Bundling AnalyticsReportTemplate.jsx →', OUT_ANALYTICS_FILE);
+  await build({
+    entryPoints: [path.join(FRONTEND_REPORT, 'AnalyticsReportTemplate.jsx')],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    target: 'node18',
+    loader: { '.jsx': 'jsx', '.js': 'jsx' },
+    jsx: 'automatic',
+    mainFields: ['main', 'module'],
+    conditions: ['node', 'require'],
+    logLevel: 'info',
+    outfile: OUT_ANALYTICS_FILE,
     external: ['react', 'react-dom', '@react-pdf/renderer', 'react/jsx-runtime'],
     absWorkingDir: ROOT,
   });
