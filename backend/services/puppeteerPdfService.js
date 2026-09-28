@@ -219,12 +219,16 @@ async function generateLiveAnalyticsPdf({
       }
       if (themeVal === 'light') {
         localStorage.setItem('theme', 'light');
-        document.documentElement.classList.remove('dark');
-        document.documentElement.classList.add('light');
+        if (document && document.documentElement) {
+          document.documentElement.classList.remove('dark');
+          document.documentElement.classList.add('light');
+        }
       } else {
         localStorage.setItem('theme', 'dark');
-        document.documentElement.classList.add('dark');
-        document.documentElement.classList.remove('light');
+        if (document && document.documentElement) {
+          document.documentElement.classList.add('dark');
+          document.documentElement.classList.remove('light');
+        }
       }
     }, token, orgSlug, orgId, user, chartViews, theme);
 
@@ -233,6 +237,23 @@ async function generateLiveAnalyticsPdf({
       waitUntil: 'domcontentloaded',
       timeout: 30000,
     });
+
+    // Apply theme class safely after DOM is loaded
+    try {
+      await page.evaluate((themeVal) => {
+        if (document && document.documentElement) {
+          if (themeVal === 'light') {
+            document.documentElement.classList.remove('dark');
+            document.documentElement.classList.add('light');
+          } else {
+            document.documentElement.classList.add('dark');
+            document.documentElement.classList.remove('light');
+          }
+        }
+      }, theme);
+    } catch (e) {
+      // non-fatal
+    }
 
     // Wait until the report signals that all API data & charts have rendered
     try {
