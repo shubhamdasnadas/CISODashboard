@@ -380,48 +380,94 @@ export function withinRange(rows, dateOf, days = 30, refDate) {
 // Donut chart with its legend split left/right of the ring (rather than
 // below it). Each entry needs { name, value, fill }. onSliceClick receives
 // the clicked entry's data, same as recharts' native Pie onClick.
-function LegendItem({ color, name, value }) {
-  return (
-    <div className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--foreground)' }}>
-      <span
-        className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
-        style={{ backgroundColor: color }}
-      />
-      <span className="font-semibold whitespace-nowrap">{name}</span>
-      <span className="text-[var(--muted)]">({value})</span>
-    </div>
-  );
-}
-
 export function SideLegendDonut({ data, onSliceClick, donutProps = DONUT_PROPS }) {
-  const midpoint = Math.ceil(data.length / 2);
-  const leftItems = data.slice(0, midpoint);
-  const rightItems = data.slice(midpoint);
+  if (!data || data.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full min-h-[220px]">
+        <p className="text-sm text-[var(--muted)]">No data available</p>
+      </div>
+    );
+  }
+
+  const total = data.reduce((s, d) => s + (Number(d.value) || 0), 0);
+  const isPie = donutProps.innerRadius === 0 || donutProps.innerRadius === '0%' || donutProps.innerRadius === '0';
 
   return (
-    <div className="flex items-center h-full px-2 gap-2">
-      <div className="flex flex-col gap-4 shrink-0">
-        {leftItems.map((d) => (
-          <LegendItem key={d.name} color={d.fill} name={d.name} value={d.value} />
-        ))}
-      </div>
-      <div className="flex-1 min-w-0 h-full">
+    <div className="flex items-center justify-between h-full min-h-[220px] w-full px-3 gap-3">
+      {/* Donut / Pie Chart with dedicated square container */}
+      <div className="relative shrink-0 w-40 h-40 sm:w-44 sm:h-44 flex items-center justify-center">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
-            <Pie data={data} dataKey="value" {...donutProps} cursor="pointer" onClick={onSliceClick}>
-              {data.map((entry, i) => <Cell key={i} fill={entry.fill} stroke="none" />)}
+            <Pie
+              data={data}
+              dataKey="value"
+              nameKey="name"
+              cx="50%"
+              cy="50%"
+              {...donutProps}
+              cursor="pointer"
+              onClick={onSliceClick}
+            >
+              {data.map((entry, i) => (
+                <Cell key={i} fill={entry.fill} stroke="var(--card-bg)" strokeWidth={1.5} />
+              ))}
             </Pie>
-            <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
+            <Tooltip
+              contentStyle={tooltipStyle}
+              itemStyle={tooltipItemStyle}
+              labelStyle={tooltipLabelStyle}
+              formatter={(v) => {
+                const n = Number(v);
+                return [`${n.toLocaleString()} (${total ? Math.round((n / total) * 100) : 0}%)`, ''];
+              }}
+            />
           </PieChart>
         </ResponsiveContainer>
+        {!isPie && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none">
+            <span className="text-sm font-extrabold text-[var(--foreground)] leading-none tracking-tight">
+              {total.toLocaleString()}
+            </span>
+            <span className="text-[9px] font-semibold text-[var(--muted)] uppercase tracking-wider mt-0.5">
+              Total
+            </span>
+          </div>
+        )}
       </div>
-      {rightItems.length > 0 && (
-        <div className="flex flex-col gap-4 shrink-0">
-          {rightItems.map((d) => (
-            <LegendItem key={d.name} color={d.fill} name={d.name} value={d.value} />
-          ))}
-        </div>
-      )}
+
+      {/* Legend Column on Right */}
+      <div className="flex-1 min-w-0 flex flex-col justify-center gap-1.5 max-h-60 overflow-y-auto pr-1">
+        {data.map((d, idx) => {
+          const val = Number(d.value) || 0;
+          const pct = total > 0 ? Math.round((val / total) * 100) : 0;
+          return (
+            <div
+              key={d.name || idx}
+              onClick={() => onSliceClick && onSliceClick(d)}
+              title={`${d.name}: ${val.toLocaleString()} (${pct}%)`}
+              className="group flex items-center justify-between gap-2 px-2 py-1 rounded-md hover:bg-[var(--muted-bg)]/60 transition-colors cursor-pointer min-w-0"
+            >
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                <span
+                  className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm"
+                  style={{ backgroundColor: d.fill }}
+                />
+                <span className="text-[11px] font-medium text-[var(--foreground)] truncate group-hover:text-indigo-400 transition-colors">
+                  {d.name}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0 text-right">
+                <span className="text-[11px] font-bold text-[var(--foreground)]">
+                  {val.toLocaleString()}
+                </span>
+                <span className="text-[10px] font-semibold text-[var(--muted)] min-w-[32px] text-right">
+                  {pct}%
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

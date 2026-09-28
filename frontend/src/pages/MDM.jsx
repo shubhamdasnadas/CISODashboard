@@ -143,29 +143,8 @@ function Empty({ msg }) {
 }
 
 // Legend item component (side-by-side legend for improved donuts)
-function LegendItem({ color, name, value, onClick }) {
-  return (
-    <div
-      onClick={onClick}
-      className="flex items-center gap-2 px-1.5 py-1.5 rounded-md hover:bg-[var(--muted-bg)]/40 transition-colors cursor-pointer group"
-    >
-      <span
-        className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 shadow-sm"
-        style={{ backgroundColor: color }}
-      />
-      <span className="text-[11px] font-semibold text-[var(--foreground)] group-hover:text-indigo-400 transition-colors">
-        {name}
-      </span>
-      <span className="text-[10px] text-[var(--muted)] group-hover:text-[var(--foreground)] transition-colors">
-        ({value})
-      </span>
-    </div>
-  );
-}
-
-// Improved Donut chart with side-by-side legends (left + right)
 function ImprovedDonut({ data, onSliceClick }) {
-  if (data.length === 0) {
+  if (!data || data.length === 0) {
     return (
       <div className="flex items-center justify-center h-full min-h-[260px]">
         <p className="text-sm text-[var(--muted)]">No data available</p>
@@ -173,71 +152,85 @@ function ImprovedDonut({ data, onSliceClick }) {
     );
   }
 
-  const midpoint = Math.ceil(data.length / 2);
-  const leftItems = data.slice(0, midpoint);
-  const rightItems = data.slice(midpoint);
+  const total = data.reduce((s, d) => s + (Number(d.value) || 0), 0);
 
   return (
-    <div className="flex items-center h-full min-h-[260px] w-full px-2 gap-3">
-      {/* Left Legend */}
-      <div className="flex flex-col gap-3 justify-center shrink-0">
-        {leftItems.map((item) => (
-          <LegendItem
-            key={item.name}
-            color={item.fill}
-            name={item.name}
-            value={item.value}
-            onClick={() => onSliceClick && onSliceClick(item)}
-          />
-        ))}
-      </div>
-
-      {/* Center Chart */}
-      <div className="flex-1 min-w-0 h-full min-h-[240px]">
+    <div className="flex items-center justify-between h-full min-h-[260px] w-full px-3 gap-3">
+      {/* Donut Chart with dedicated dimensions so it never overflows */}
+      <div className="relative shrink-0 w-40 h-40 sm:w-44 sm:h-44 flex items-center justify-center">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
               data={data}
               dataKey="value"
-              innerRadius="50%"
-              outerRadius="80%"
-              cornerRadius={10}
+              nameKey="name"
+              cx="50%"
+              cy="50%"
+              innerRadius="52%"
+              outerRadius="82%"
               paddingAngle={2}
+              cornerRadius={6}
               cursor="pointer"
               onClick={onSliceClick}
               animationBegin={0}
               animationDuration={400}
             >
               {data.map((entry, i) => (
-                <Cell key={`cell-${i}`} fill={entry.fill} stroke="var(--card-bg)" strokeWidth={2} />
+                <Cell key={`cell-${i}`} fill={entry.fill || CHART_COLORS[i % CHART_COLORS.length]} stroke="var(--card-bg)" strokeWidth={2} />
               ))}
             </Pie>
             <Tooltip
               contentStyle={tooltipStyle}
               formatter={(value) => {
                 const n = Number(value);
-                const total = data.reduce((s, d) => s + d.value, 0);
-                return [`${n} (${Math.round((n / total) * 100)}%)`, ''];
+                return [`${n.toLocaleString()} (${total ? Math.round((n / total) * 100) : 0}%)`, ''];
               }}
             />
           </PieChart>
         </ResponsiveContainer>
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none">
+          <span className="text-sm font-extrabold text-[var(--foreground)] leading-none tracking-tight">
+            {total.toLocaleString()}
+          </span>
+          <span className="text-[9px] font-semibold text-[var(--muted)] uppercase tracking-wider mt-0.5">
+            Total
+          </span>
+        </div>
       </div>
 
-      {/* Right Legend */}
-      {rightItems.length > 0 && (
-        <div className="flex flex-col gap-3 justify-center shrink-0">
-          {rightItems.map((item) => (
-            <LegendItem
-              key={item.name}
-              color={item.fill}
-              name={item.name}
-              value={item.value}
+      {/* Legend List on Right - clean, structured, non-overlapping */}
+      <div className="flex-1 min-w-0 flex flex-col justify-center gap-1.5 max-h-60 overflow-y-auto pr-1">
+        {data.map((item, idx) => {
+          const val = Number(item.value) || 0;
+          const pct = total > 0 ? Math.round((val / total) * 100) : 0;
+          return (
+            <div
+              key={item.name || idx}
               onClick={() => onSliceClick && onSliceClick(item)}
-            />
-          ))}
-        </div>
-      )}
+              title={`${item.name}: ${val.toLocaleString()} (${pct}%)`}
+              className="group flex items-center justify-between gap-2 px-2 py-1 rounded-md hover:bg-[var(--muted-bg)]/60 transition-colors cursor-pointer min-w-0"
+            >
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                <span
+                  className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm"
+                  style={{ backgroundColor: item.fill || CHART_COLORS[idx % CHART_COLORS.length] }}
+                />
+                <span className="text-[11px] font-medium text-[var(--foreground)] truncate group-hover:text-indigo-400 transition-colors">
+                  {item.name}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0 text-right">
+                <span className="text-[11px] font-bold text-[var(--foreground)]">
+                  {val.toLocaleString()}
+                </span>
+                <span className="text-[10px] font-semibold text-[var(--muted)] min-w-[32px] text-right">
+                  {pct}%
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

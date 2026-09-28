@@ -193,9 +193,49 @@ router.post('/live-pdf', async (req, res) => {
       try {
         console.log('[reports/live-pdf] Falling back to server-side vector PDF renderer...');
         const fallbackPdfBuffer = await renderAnalyticsPdf(req.body.data);
+
+        // 1. Build the per-organisation sub-folder path: reportList/<orgSlug>/
+        const orgFolderName = safeName(req.orgSlug);
+        const orgDir = path.join(REPORT_LIST_ROOT, orgFolderName);
+        fs.mkdirSync(orgDir, { recursive: true });
+
+        // 2. Filename: <username>_<orgSlug>_YYYY-MM-DD_HH-MM-SS.pdf
+        const now = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const stamp =
+          `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` +
+          `_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+        const userName = safeName(req.user?.username || req.user?.userId || 'user');
+        const fileName = `Analytics_${userName}_${orgFolderName}_${stamp}.pdf`;
+        const filePath = path.join(orgDir, fileName);
+
+        // 3. Save to disk
+        fs.writeFileSync(filePath, fallbackPdfBuffer);
+
+        // 4. Save to reports DB table
+        const dbTitle = `Live Analytics Report — ${req.body.orgName || req.orgSlug} — ${req.body.periodLabel || 'All Time'}`;
+        const dbDesc = `Real-time vector Analytics PDF report. File: ${fileName}.`;
+        try {
+          await req.orgPool.query(
+            `INSERT INTO reports
+               (title, description, type, status, file_path, org_slug, created_by, generated_at)
+             VALUES ($1, $2, 'analytics', 'published', $3, $4, $5, NOW())`,
+            [
+              dbTitle,
+              dbDesc,
+              filePath,
+              req.orgSlug,
+              req.user?.username || req.user?.userId || 'system',
+            ]
+          );
+        } catch (dbErr) {
+          console.warn('[reports/live-pdf] DB insert warning:', dbErr.message);
+        }
+
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', 'attachment; filename="Analytics_Report.pdf"');
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
         res.setHeader('Content-Length', fallbackPdfBuffer.length);
+        res.setHeader('X-Saved-Path', encodeURIComponent(filePath));
         return res.end(fallbackPdfBuffer);
       } catch (fallbackErr) {
         console.error('[reports/live-pdf] Server-side fallback also failed:', fallbackErr.message);

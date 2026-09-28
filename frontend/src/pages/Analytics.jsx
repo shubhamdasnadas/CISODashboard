@@ -324,7 +324,6 @@ export { };
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
 const SEVERITY_COLORS = { CRITICAL: '#a855f7', HIGH: '#ef4444', MEDIUM: '#eab308', LOW: '#3b82f6', UNKNOWN: '#64748b' };
 const TOOLTIP_STYLE = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12, color: 'var(--foreground)' };
-const DONUT_PROPS = { innerRadius: '50%', outerRadius: '80%', cornerRadius: 10, paddingAngle: 2 };
 const fmtNum = (v) => Number(v || 0).toLocaleString('en-IN');
 
 const parseDate = (v) => {
@@ -532,60 +531,99 @@ function ChartCard({
   );
 }
 
-function LegendItem({ color, name, value, onClick }) {
-  return (
-    <div
-      onClick={onClick}
-      className="flex items-center gap-2 px-1.5 py-1.5 rounded-md hover:bg-[var(--muted-bg)]/40 transition-colors cursor-pointer group"
-    >
-      <span className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 shadow-sm" style={{ backgroundColor: color }} />
-      <span className="text-[11px] font-semibold text-[var(--foreground)] group-hover:text-indigo-400 transition-colors">{name}</span>
-      <span className="text-[10px] text-[var(--muted)] group-hover:text-[var(--foreground)] transition-colors">({value})</span>
-    </div>
-  );
-}
-
-function ImprovedDonut({ data, onSliceClick }) {
-  if (data.length === 0) {
+function ImprovedDonut({ data, onSliceClick, isPie = false }) {
+  if (!data || data.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
         <p className="text-sm text-[var(--muted)]">No data available</p>
       </div>
     );
   }
-  const midpoint = Math.ceil(data.length / 2);
-  const leftItems = data.slice(0, midpoint);
-  const rightItems = data.slice(midpoint);
-  const total = data.reduce((s, d) => s + d.value, 0);
+  const total = data.reduce((s, d) => s + (Number(d.value) || 0), 0);
   return (
-    <div className="flex items-center h-72 px-2 gap-3">
-      <div className="flex flex-col gap-3 justify-center shrink-0">
-        {leftItems.map((item) => (
-          <LegendItem key={item.name} color={item.fill} name={item.name} value={item.value}
-            onClick={() => onSliceClick && onSliceClick(item)} />
-        ))}
-      </div>
-      <div className="flex-1 min-w-0 h-full">
+    <div className="flex items-center justify-between h-72 w-full px-2 gap-3">
+      {/* Donut Chart with dedicated dimensions so it never overflows */}
+      <div className="relative flex-shrink-0 w-40 h-40 sm:w-44 sm:h-44 flex items-center justify-center">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
-            <Pie data={data} dataKey="value" {...DONUT_PROPS} cursor="pointer" onClick={onSliceClick} animationBegin={0} animationDuration={400}>
-              {data.map((entry, i) => <Cell key={`cell-${i}`} fill={entry.fill} stroke="var(--card-bg)" strokeWidth={2} />)}
+            <Pie
+              data={data}
+              dataKey="value"
+              nameKey="name"
+              cx="50%"
+              cy="50%"
+              innerRadius={isPie ? '0%' : '52%'}
+              outerRadius="82%"
+              paddingAngle={isPie ? 1 : 2}
+              cornerRadius={isPie ? 0 : 6}
+              cursor="pointer"
+              onClick={onSliceClick}
+              animationBegin={0}
+              animationDuration={400}
+            >
+              {data.map((entry, i) => (
+                <Cell
+                  key={`cell-${i}`}
+                  fill={entry.fill || CHART_COLORS[i % CHART_COLORS.length]}
+                  stroke="var(--card-bg)"
+                  strokeWidth={2}
+                />
+              ))}
             </Pie>
-            <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => {
-              const n = Number(v);
-              return [`${fmtNum(n)} (${total ? Math.round((n / total) * 100) : 0}%)`, ''];
-            }} />
+            <Tooltip
+              contentStyle={TOOLTIP_STYLE}
+              formatter={(v) => {
+                const n = Number(v);
+                return [`${fmtNum(n)} (${total ? Math.round((n / total) * 100) : 0}%)`, ''];
+              }}
+            />
           </PieChart>
         </ResponsiveContainer>
+        {!isPie && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none">
+            <span className="text-sm font-extrabold text-[var(--foreground)] leading-none tracking-tight">
+              {fmtNum(total)}
+            </span>
+            <span className="text-[9px] font-semibold text-[var(--muted)] uppercase tracking-wider mt-0.5">
+              Total
+            </span>
+          </div>
+        )}
       </div>
-      {rightItems.length > 0 && (
-        <div className="flex flex-col gap-3 justify-center shrink-0">
-          {rightItems.map((item) => (
-            <LegendItem key={item.name} color={item.fill} name={item.name} value={item.value}
-              onClick={() => onSliceClick && onSliceClick(item)} />
-          ))}
-        </div>
-      )}
+
+      {/* Legend List on Right - clean, structured, non-overlapping */}
+      <div className="flex-1 min-w-0 flex flex-col justify-center gap-1.5 max-h-64 overflow-y-auto pr-1">
+        {data.map((item, idx) => {
+          const val = Number(item.value) || 0;
+          const pct = total > 0 ? Math.round((val / total) * 100) : 0;
+          return (
+            <div
+              key={item.name || idx}
+              onClick={() => onSliceClick && onSliceClick(item)}
+              title={`${item.name}: ${fmtNum(val)} (${pct}%)`}
+              className="group flex items-center justify-between gap-2 px-2 py-1 rounded-md hover:bg-[var(--muted-bg)]/60 transition-colors cursor-pointer min-w-0"
+            >
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                <span
+                  className="w-2.5 h-2.5 rounded-full flex-shrink-0 shadow-sm"
+                  style={{ backgroundColor: item.fill || CHART_COLORS[idx % CHART_COLORS.length] }}
+                />
+                <span className="text-[11px] font-medium text-[var(--foreground)] truncate group-hover:text-indigo-400 transition-colors">
+                  {item.name}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 flex-shrink-0 text-right">
+                <span className="text-[11px] font-bold text-[var(--foreground)]">
+                  {fmtNum(val)}
+                </span>
+                <span className="text-[10px] font-semibold text-[var(--muted)] min-w-[32px] text-right">
+                  {pct}%
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -778,19 +816,7 @@ function MultiViewChart({ data, chartType = 'donut', height = 288, nameKey = 'na
       return <div style={{ height }}><ImprovedDonut data={chartData} /></div>;
 
     case 'pie':
-      return (
-        <div style={{ height }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie data={chartData} dataKey="value" nameKey="name" outerRadius="80%" cornerRadius={4} paddingAngle={1} cursor="pointer" animationBegin={0} animationDuration={400}>
-                {chartData.map((entry, i) => <Cell key={i} fill={entry.fill || colors[i % colors.length]} stroke="var(--card-bg)" strokeWidth={2} />)}
-              </Pie>
-              <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => [`${fmtNum(Number(v))} (${total ? Math.round((Number(v) / total) * 100) : 0}%)`, '']} />
-              <Legend wrapperStyle={{ fontSize: 10 }} />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-      );
+      return <div style={{ height }}><ImprovedDonut data={chartData} isPie={true} /></div>;
 
     case 'bar':
       return (
@@ -3082,7 +3108,112 @@ export default function Analytics({ printMode: printModeProp = false }) {
         console.warn('[PDF] Failed to read chartViews from localStorage:', e);
       }
 
-      // 2. Attempt real-time headless Chrome generation on backend
+      // 2. Pre-fetch and assemble structured telemetry payload for fallback
+      let data = null;
+      try {
+        data = await fetchReportData(currentOrgName, null, section, isFiltered && (from || to) ? { from, to } : undefined);
+
+        // Prioritize active component state
+        if (agents.length > 0) data.s1Agents = agents;
+        if (cves.length > 0) data.s1Cves = cves;
+        if (threats.length > 0) data.s1Threats = threats;
+        if (devices.length > 0) data.mdmDevices = devices;
+        if (apps.length > 0) data.mdmApps = apps;
+        if (nvdStats) data.nvdStats = nvdStats;
+        if (nvdRows.length > 0) data.nvdRows = nvdRows;
+        if (cpEvents.length > 0) data.harmonyEvents = cpEvents;
+        if (fwReports.length > 0) data.fwReports = fwReports;
+        if (zohoTickets.length > 0) data.zohoTickets = zohoTickets;
+        if (msData && Object.keys(msData).length > 0) data.msData = msData;
+
+        // Pass active date filter context and selected theme into PDF template
+        data.isFiltered = isFiltered;
+        data.dayPreset = curDayPreset;
+        data.periodLabel = isFiltered ? periodLabel : null;
+        data.prevPeriodLabel = isFiltered ? prevPeriodLabel : null;
+        data.from = from;
+        data.to = to;
+        data.theme = theme || 'dark';
+
+        if (isFiltered && (from || to)) {
+          if (Array.isArray(data.s1Agents) && data.s1Agents.length > 0) {
+            const split = splitByWindow(data.s1Agents, (a) => a.installTime || a.lastSeen || a.createdAt || a.registeredAt || a.registered_at || a.created_at || a.updatedAt, from, to);
+            data.s1Agents = split.current;
+            data.s1AgentsPrev = split.previous;
+          }
+          if (Array.isArray(data.s1Cves) && data.s1Cves.length > 0) {
+            const split = splitByWindow(data.s1Cves, (r) => r.publishedDate || r.lastModified || r.detectionDate || r.detectedAt || r.firstDetectedAt || r.createdAt || r.created_at, from, to);
+            data.s1Cves = split.current;
+            data.s1CvesPrev = split.previous;
+          }
+          if (Array.isArray(data.s1Threats) && data.s1Threats.length > 0) {
+            const split = splitByWindow(data.s1Threats, (t) => t.threatInfo?.createdAt || t.threatInfo?.identifiedAt || t.createdAt || t.created_at, from, to);
+            data.s1Threats = split.current;
+            data.s1ThreatsPrev = split.previous;
+          }
+          if (Array.isArray(data.mdmDevices) && data.mdmDevices.length > 0) {
+            const split = splitByWindow(data.mdmDevices, (d) => d.last_reported || d.enrolled_at || d.registered_at || d.createdAt || d.created_at, from, to);
+            data.mdmDevices = split.current;
+            data.mdmDevicesPrev = split.previous;
+          }
+          if (Array.isArray(data.harmonyEvents) && data.harmonyEvents.length > 0) {
+            const split = splitByWindow(data.harmonyEvents, (e) => e.eventCreated || e.event_created || e.created_at || e.createdAt, from, to);
+            data.harmonyEvents = split.current;
+            data.harmonyEventsPrev = split.previous;
+          }
+          if (Array.isArray(data.zohoTickets) && data.zohoTickets.length > 0) {
+            const split = splitByWindow(data.zohoTickets, (t) => t.created_at || t.createdTime || t.createdAt || t.created_time || t.createdDate, from, to);
+            data.zohoTickets = split.current;
+            data.zohoTicketsPrev = split.previous;
+          }
+          if (Array.isArray(data.nvdRows) && data.nvdRows.length > 0) {
+            const split = splitByWindow(data.nvdRows, (v) => v.published || v.last_modified || v.synced_at, from, to);
+            data.nvdRows = split.current;
+            data.nvdRowsPrev = split.previous;
+          }
+          if (Array.isArray(data.fwReports) && data.fwReports.length > 0) {
+            data.fwReportsPrev = data.fwReports.map((r) => ({
+              ...r,
+              rows: splitByWindow(r.rows, (row) => row.date || row.day || row.time || row.receive_time || row['slabbed-receive_time'], from, to).previous,
+            }));
+            data.fwReports = data.fwReports.map((r) => ({
+              ...r,
+              rows: splitByWindow(r.rows, (row) => row.date || row.day || row.time || row.receive_time || row['slabbed-receive_time'], from, to).current,
+            }));
+          }
+          if (data.msData && typeof data.msData === 'object') {
+            const msDateFn = (item) => item?.createdDateTime || item?.activityDateTime || item?.detectedDateTime || item?.signInDateTime || item?.created_at;
+            const filteredMsData = { ...data.msData };
+            const prevMsData = { ...data.msData };
+            ['auditSignIns', 'riskyUsers', 'riskDetections', 'securityAlerts', 'managedDevices', 'serviceIssues'].forEach((key) => {
+              const val = filteredMsData[key]?.data?.value;
+              if (Array.isArray(val)) {
+                const split = splitByWindow(val, msDateFn, from, to);
+                filteredMsData[key] = {
+                  ...filteredMsData[key],
+                  data: {
+                    ...filteredMsData[key].data,
+                    value: split.current,
+                  },
+                };
+                prevMsData[key] = {
+                  ...prevMsData[key],
+                  data: {
+                    ...prevMsData[key].data,
+                    value: split.previous,
+                  },
+                };
+              }
+            });
+            data.msData = filteredMsData;
+            data.msDataPrev = prevMsData;
+          }
+        }
+      } catch (prepErr) {
+        console.warn('[PDF] Pre-fetching telemetry data error:', prepErr);
+      }
+
+      // 3. Attempt real-time headless Chrome generation on backend (with fallback payload)
       try {
         console.log('[PDF] Requesting real-time Puppeteer PDF generation with theme:', theme, 'dayPreset:', curDayPreset, 'isCustom:', curIsCustom, 'period:', periodLabel);
         const response = await api.post(
@@ -3097,6 +3228,7 @@ export default function Analytics({ printMode: printModeProp = false }) {
             chartViews,
             orgName: currentOrgName,
             theme: theme || 'dark',
+            data: data || undefined,
           },
           {
             responseType: 'blob',
@@ -3131,104 +3263,10 @@ export default function Analytics({ printMode: printModeProp = false }) {
         console.warn('[PDF] Live Puppeteer PDF endpoint failed, falling back to client-side vector generator:', serverErr);
       }
 
-      // 3. Client-side vector fallback via @react-pdf/renderer
-      const data = await fetchReportData(currentOrgName, null, section, isFiltered && (from || to) ? { from, to } : undefined);
-
-      // Prioritize active component state
-      if (agents.length > 0) data.s1Agents = agents;
-      if (cves.length > 0) data.s1Cves = cves;
-      if (threats.length > 0) data.s1Threats = threats;
-      if (devices.length > 0) data.mdmDevices = devices;
-      if (apps.length > 0) data.mdmApps = apps;
-      if (nvdStats) data.nvdStats = nvdStats;
-      if (nvdRows.length > 0) data.nvdRows = nvdRows;
-      if (cpEvents.length > 0) data.harmonyEvents = cpEvents;
-      if (fwReports.length > 0) data.fwReports = fwReports;
-      if (zohoTickets.length > 0) data.zohoTickets = zohoTickets;
-      if (msData && Object.keys(msData).length > 0) data.msData = msData;
-
-      // Pass active date filter context and selected theme into PDF template
-      data.isFiltered = isFiltered;
-      data.dayPreset = curDayPreset;
-      data.periodLabel = isFiltered ? periodLabel : null;
-      data.prevPeriodLabel = isFiltered ? prevPeriodLabel : null;
-      data.from = from;
-      data.to = to;
-      data.theme = theme || 'dark';
-
-      if (isFiltered && (from || to)) {
-        if (Array.isArray(data.s1Agents) && data.s1Agents.length > 0) {
-          const split = splitByWindow(data.s1Agents, (a) => a.installTime || a.lastSeen || a.createdAt || a.registeredAt || a.registered_at || a.created_at || a.updatedAt, from, to);
-          data.s1Agents = split.current;
-          data.s1AgentsPrev = split.previous;
-        }
-        if (Array.isArray(data.s1Cves) && data.s1Cves.length > 0) {
-          const split = splitByWindow(data.s1Cves, (r) => r.publishedDate || r.lastModified || r.detectionDate || r.detectedAt || r.firstDetectedAt || r.createdAt || r.created_at, from, to);
-          data.s1Cves = split.current;
-          data.s1CvesPrev = split.previous;
-        }
-        if (Array.isArray(data.s1Threats) && data.s1Threats.length > 0) {
-          const split = splitByWindow(data.s1Threats, (t) => t.threatInfo?.createdAt || t.threatInfo?.identifiedAt || t.createdAt || t.created_at, from, to);
-          data.s1Threats = split.current;
-          data.s1ThreatsPrev = split.previous;
-        }
-        if (Array.isArray(data.mdmDevices) && data.mdmDevices.length > 0) {
-          const split = splitByWindow(data.mdmDevices, (d) => d.last_reported || d.enrolled_at || d.registered_at || d.createdAt || d.created_at, from, to);
-          data.mdmDevices = split.current;
-          data.mdmDevicesPrev = split.previous;
-        }
-        if (Array.isArray(data.harmonyEvents) && data.harmonyEvents.length > 0) {
-          const split = splitByWindow(data.harmonyEvents, (e) => e.eventCreated || e.event_created || e.created_at || e.createdAt, from, to);
-          data.harmonyEvents = split.current;
-          data.harmonyEventsPrev = split.previous;
-        }
-        if (Array.isArray(data.zohoTickets) && data.zohoTickets.length > 0) {
-          const split = splitByWindow(data.zohoTickets, (t) => t.created_at || t.createdTime || t.createdAt || t.created_time || t.createdDate, from, to);
-          data.zohoTickets = split.current;
-          data.zohoTicketsPrev = split.previous;
-        }
-        if (Array.isArray(data.nvdRows) && data.nvdRows.length > 0) {
-          const split = splitByWindow(data.nvdRows, (v) => v.published || v.last_modified || v.synced_at, from, to);
-          data.nvdRows = split.current;
-          data.nvdRowsPrev = split.previous;
-        }
-        if (Array.isArray(data.fwReports) && data.fwReports.length > 0) {
-          data.fwReportsPrev = data.fwReports.map((r) => ({
-            ...r,
-            rows: splitByWindow(r.rows, (row) => row.date || row.day || row.time || row.receive_time || row['slabbed-receive_time'], from, to).previous,
-          }));
-          data.fwReports = data.fwReports.map((r) => ({
-            ...r,
-            rows: splitByWindow(r.rows, (row) => row.date || row.day || row.time || row.receive_time || row['slabbed-receive_time'], from, to).current,
-          }));
-        }
-        if (data.msData && typeof data.msData === 'object') {
-          const msDateFn = (item) => item?.createdDateTime || item?.activityDateTime || item?.detectedDateTime || item?.signInDateTime || item?.created_at;
-          const filteredMsData = { ...data.msData };
-          const prevMsData = { ...data.msData };
-          ['auditSignIns', 'riskyUsers', 'riskDetections', 'securityAlerts', 'managedDevices', 'serviceIssues'].forEach((key) => {
-            const val = filteredMsData[key]?.data?.value;
-            if (Array.isArray(val)) {
-              const split = splitByWindow(val, msDateFn, from, to);
-              filteredMsData[key] = {
-                ...filteredMsData[key],
-                data: {
-                  ...filteredMsData[key].data,
-                  value: split.current,
-                },
-              };
-              prevMsData[key] = {
-                ...prevMsData[key],
-                data: {
-                  ...prevMsData[key].data,
-                  value: split.previous,
-                },
-              };
-            }
-          });
-          data.msData = filteredMsData;
-          data.msDataPrev = prevMsData;
-        }
+      // 4. Client-side vector fallback via @react-pdf/renderer
+      if (!data) {
+        data = await fetchReportData(currentOrgName, null, section, isFiltered && (from || to) ? { from, to } : undefined);
+        data.theme = theme || 'dark';
       }
 
       const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
