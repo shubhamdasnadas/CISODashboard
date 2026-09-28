@@ -123,6 +123,7 @@ async function launchBrowserSafely() {
  * @returns {Promise<Buffer>} PDF Buffer
  */
 async function generateLiveAnalyticsPdf({
+  baseUrl,
   token,
   orgSlug,
   orgId,
@@ -137,7 +138,7 @@ async function generateLiveAnalyticsPdf({
   chartViews = {},
   theme = 'dark',
 }) {
-  const baseUrl = process.env.APP_URL || 'http://localhost:5173';
+  const resolvedBaseUrl = (baseUrl || process.env.APP_URL || 'http://localhost:5173').replace(/\/+$/, '');
   const query = new URLSearchParams();
   if (token) query.set('token', token);
   if (orgSlug) query.set('orgSlug', orgSlug);
@@ -155,7 +156,7 @@ async function generateLiveAnalyticsPdf({
   }
   query.set('print', 'true');
 
-  const targetUrl = `${baseUrl}/analytics-print?${query.toString()}`;
+  const targetUrl = `${resolvedBaseUrl}/analytics-print?${query.toString()}`;
   console.log('[Puppeteer] Target print URL:', targetUrl);
 
   const browser = await launchBrowserSafely();

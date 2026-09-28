@@ -3216,9 +3216,14 @@ export default function Analytics({ printMode: printModeProp = false }) {
       // 3. Attempt real-time headless Chrome generation on backend (with fallback payload)
       try {
         console.log('[PDF] Requesting real-time Puppeteer PDF generation with theme:', theme, 'dayPreset:', curDayPreset, 'isCustom:', curIsCustom, 'period:', periodLabel);
+        const currentOrigin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : undefined;
+        const currentToken = localStorage.getItem('token') || localStorage.getItem('ciso_token') || undefined;
+
         const response = await api.post(
           '/reports/live-pdf',
           {
+            baseUrl: currentOrigin,
+            token: currentToken,
             section: section || 'all',
             from: curIsCustom ? from : (isFiltered ? from : undefined),
             to: curIsCustom ? to : (isFiltered ? to : undefined),

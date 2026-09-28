@@ -121,11 +121,38 @@ router.post('/live-pdf', async (req, res) => {
     }
 
     const authHeader = req.headers.authorization || '';
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+    const token = req.body?.token || (authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader);
 
-    console.log('[reports/live-pdf] Generating real-time PDF via Puppeteer for org:', req.orgSlug, 'orgId:', req.currentOrgId, 'theme:', theme || 'dark', 'dayPreset:', dayPreset, 'isCustom:', isCustom);
+    // Resolve dynamic Base URL for print rendering:
+    // 1. Explicit baseUrl passed from frontend window.location.origin
+    // 2. Origin request header
+    // 3. Referer request header
+    // 4. X-Forwarded-Proto / Host headers
+    // 5. process.env.APP_URL
+    let dynamicBaseUrl = req.body?.baseUrl || req.body?.appUrl;
+    if (!dynamicBaseUrl && req.headers.origin) {
+      dynamicBaseUrl = req.headers.origin;
+    }
+    if (!dynamicBaseUrl && req.headers.referer) {
+      try {
+        const parsed = new URL(req.headers.referer);
+        dynamicBaseUrl = `${parsed.protocol}//${parsed.host}`;
+      } catch (e) {
+        // non-fatal
+      }
+    }
+    if (!dynamicBaseUrl && req.headers.host) {
+      const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+      dynamicBaseUrl = `${proto}://${req.headers.host}`;
+    }
+    if (!dynamicBaseUrl) {
+      dynamicBaseUrl = process.env.APP_URL || 'http://localhost:5173';
+    }
+
+    console.log('[reports/live-pdf] Generating real-time PDF via Puppeteer for org:', req.orgSlug, 'orgId:', req.currentOrgId, 'theme:', theme || 'dark', 'baseUrl:', dynamicBaseUrl, 'dayPreset:', dayPreset, 'isCustom:', isCustom);
 
     const pdfBuffer = await generateLiveAnalyticsPdf({
+      baseUrl: dynamicBaseUrl,
       token,
       orgSlug: req.orgSlug,
       orgId: req.currentOrgId,
