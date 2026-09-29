@@ -47,6 +47,51 @@ export const parseDuration = (v) => {
   return null;
 };
 
+// ── Robust Microsoft 365 Data Extraction Helpers ─────────────────────────────
+export const extractMsArray = (msData, key) => {
+  if (!msData || !msData[key]) return [];
+  const entry = msData[key];
+  if (Array.isArray(entry)) return entry;
+  if (Array.isArray(entry.value)) return entry.value;
+  if (Array.isArray(entry.data)) return entry.data;
+  if (entry.data && Array.isArray(entry.data.value)) return entry.data.value;
+  if (typeof entry.data === 'string') {
+    try {
+      const parsed = JSON.parse(entry.data);
+      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed.value)) return parsed.value;
+      if (Array.isArray(parsed.data)) return parsed.data;
+    } catch (e) {}
+  }
+  if (typeof entry === 'string') {
+    try {
+      const parsed = JSON.parse(entry);
+      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed.value)) return parsed.value;
+      if (Array.isArray(parsed.data)) return parsed.data;
+    } catch (e) {}
+  }
+  return [];
+};
+
+export const extractMsSecureScore = (msData) => {
+  if (!msData) return null;
+  const list = extractMsArray(msData, 'secureScores');
+  if (list && list.length > 0 && list[0]) return list[0];
+  const entry = msData.secureScores;
+  if (entry?.data?.currentScore != null) return entry.data;
+  if (entry?.currentScore != null) return entry;
+  if (typeof entry?.data === 'string') {
+    try {
+      const parsed = JSON.parse(entry.data);
+      if (Array.isArray(parsed) && parsed[0]) return parsed[0];
+      if (parsed?.currentScore != null) return parsed;
+      if (parsed?.value?.[0]) return parsed.value[0];
+    } catch (e) {}
+  }
+  return null;
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ANALYTICS REPORT CONFIGURATION REGISTRY
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -806,26 +851,32 @@ export const ANALYTICS_CONFIG = [
     title: 'Microsoft 365 · Cloud Posture',
     subtitle: 'Identity security, license utilization, MFA adoption & cloud apps',
     color: '#6366f1',
-    hasData: (data) => data.msData && typeof data.msData === 'object' && Object.keys(data.msData).length > 0,
+    hasData: (data) => Boolean(
+      data.msData &&
+      typeof data.msData === 'object' &&
+      (
+        Object.keys(data.msData).length > 0 ||
+        extractMsArray(data.msData, 'users').length > 0 ||
+        extractMsArray(data.msData, 'auditSignIns').length > 0
+      )
+    ),
     getLead: (data) => {
-      const arr = (key) => data.msData?.[key]?.data?.value ?? [];
-      const users = arr('users');
-      const signIns = arr('auditSignIns');
+      const users = extractMsArray(data.msData, 'users');
+      const signIns = extractMsArray(data.msData, 'auditSignIns');
       const failed = signIns.filter((s) => s.status?.errorCode !== 0).length;
       const failedPct = signIns.length ? Math.round((failed / signIns.length) * 100) : 0;
       return `${fmtNum(users.length)} total users | ${fmtNum(signIns.length)} sign-ins (${failedPct}% failed).`;
     },
     getKpis: (data) => {
       const computeMs = (dataObj) => {
-        const arr = (key) => dataObj?.[key]?.data?.value ?? [];
-        const riskyUsers = arr('riskyUsers');
-        const users = arr('users');
-        const signIns = arr('auditSignIns');
-        const securityAlerts = arr('securityAlerts');
-        const secureScore = arr('secureScores')[0] || null;
-        const managedDevices = arr('managedDevices');
-        const serviceIssues = arr('serviceIssues');
-        const subscribedSkus = arr('subscribedSkus');
+        const riskyUsers = extractMsArray(dataObj, 'riskyUsers');
+        const users = extractMsArray(dataObj, 'users');
+        const signIns = extractMsArray(dataObj, 'auditSignIns');
+        const securityAlerts = extractMsArray(dataObj, 'securityAlerts');
+        const secureScore = extractMsSecureScore(dataObj);
+        const managedDevices = extractMsArray(dataObj, 'managedDevices');
+        const serviceIssues = extractMsArray(dataObj, 'serviceIssues');
+        const subscribedSkus = extractMsArray(dataObj, 'subscribedSkus');
 
         const assignedLicenses = subscribedSkus.reduce((s, sku) => s + (sku.consumedUnits || 0), 0);
         const totalLicenses = subscribedSkus.reduce((s, sku) => s + (sku.prepaidUnits?.enabled || 0), 0);
@@ -863,8 +914,7 @@ export const ANALYTICS_CONFIG = [
       ];
     },
     getProgress: (data) => {
-      const arr = (key) => data.msData?.[key]?.data?.value ?? [];
-      const subscribedSkus = arr('subscribedSkus');
+      const subscribedSkus = extractMsArray(data.msData, 'subscribedSkus');
       const assignedLicenses = subscribedSkus.reduce((s, sku) => s + (sku.consumedUnits || 0), 0);
       const totalLicenses = subscribedSkus.reduce((s, sku) => s + (sku.prepaidUnits?.enabled || 0), 0);
       const unassignedLicenses = Math.max(0, totalLicenses - assignedLicenses);
@@ -879,11 +929,10 @@ export const ANALYTICS_CONFIG = [
       };
     },
     getWidgets: (data) => {
-      const arr = (key) => data.msData?.[key]?.data?.value ?? [];
-      const riskDetections = arr('riskDetections');
-      const riskyUsers = arr('riskyUsers');
-      const securityAlerts = arr('securityAlerts');
-      const managedDevices = arr('managedDevices');
+      const riskDetections = extractMsArray(data.msData, 'riskDetections');
+      const riskyUsers = extractMsArray(data.msData, 'riskyUsers');
+      const securityAlerts = extractMsArray(data.msData, 'securityAlerts');
+      const managedDevices = extractMsArray(data.msData, 'managedDevices');
 
       const riskTypeData = bucket(riskDetections, (r) => r.riskEventType, 'unknown');
       const riskyUsersLevel = bucket(riskyUsers, (u) => u.riskLevel || 'unknown');

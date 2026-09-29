@@ -10,11 +10,13 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [userStatus, setUserStatus] = useState({ checked: false, exists: false, organisations: [] });
+  const [passwordStatus, setPasswordStatus] = useState({ checked: false, valid: false });
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [receivedOtp, setReceivedOtp] = useState('');
   const debounceRef = useRef(null);
+  const pwdDebounceRef = useRef(null);
 
   useEffect(() => {
     // A fresh visit to /login starts a NEW session for this tab — otherwise
@@ -25,12 +27,29 @@ export default function Login() {
 
   useEffect(() => {
     const trimmed = email.trim();
+    setPassword('');
+    setPasswordStatus({ checked: false, valid: false });
     if (!trimmed) {
       setUserStatus({ checked: false, exists: false, organisations: [] });
       setShowPassword(false);
       setError('');
       return;
     }
+
+    // Require valid email structure — do not check user availability on username
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmed)) {
+      setUserStatus({ checked: false, exists: false, organisations: [] });
+      setShowPassword(false);
+      if (trimmed.length > 2 && !trimmed.includes('@')) {
+        setError('Please enter a valid registered email address');
+      } else {
+        setError('');
+      }
+      return;
+    }
+
+    setError('');
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
       try {
@@ -47,9 +66,39 @@ export default function Login() {
         else if (err.code === 'ERR_NETWORK') setError('Network error: is the backend running?');
         else setError(`Cannot reach server (${err.code || err.message || 'unknown error'})`);
       }
-    }, 500);
+    }, 400);
     return () => clearTimeout(debounceRef.current);
   }, [email]);
+
+  useEffect(() => {
+    if (!password) {
+      setPasswordStatus({ checked: false, valid: false });
+      return;
+    }
+    if (!userStatus.exists || !email.trim()) {
+      setPasswordStatus({ checked: false, valid: false });
+      return;
+    }
+
+    if (pwdDebounceRef.current) clearTimeout(pwdDebounceRef.current);
+    pwdDebounceRef.current = setTimeout(async () => {
+      try {
+        const { data } = await api.post('/auth/check-password', {
+          email: email.trim(),
+          password,
+        });
+        if (data && data.valid) {
+          setPasswordStatus({ checked: true, valid: true });
+          setError('');
+        } else {
+          setPasswordStatus({ checked: true, valid: false });
+        }
+      } catch (err) {
+        setPasswordStatus({ checked: false, valid: false });
+      }
+    }, 300);
+    return () => clearTimeout(pwdDebounceRef.current);
+  }, [password, email, userStatus.exists]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -124,23 +173,14 @@ export default function Login() {
           {/* Email Address */}
           <div>
             <label className="block text-sm font-medium text-[var(--foreground)] mb-1.5">Email Address</label>
-            <div className="relative">
-              <input
-                type="email"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                placeholder="Enter your email address"
-                className="w-full px-4 py-2.5 pr-10 rounded-xl bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-colors"
-                autoFocus
-              />
-              {userStatus.checked && userStatus.exists && (
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-500">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                  </svg>
-                </span>
-              )}
-            </div>
+            <input
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="Enter your email address"
+              className="w-full px-4 py-2.5 rounded-xl bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-colors"
+              autoFocus
+            />
           </div>
 
           {/* Orgs preview */}
@@ -161,13 +201,25 @@ export default function Login() {
           {showPassword && (
             <div>
               <label className="block text-sm font-medium text-[var(--foreground)] mb-1.5">Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="Enter your password"
-                className="w-full px-4 py-2.5 rounded-xl bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-colors"
-              />
+              <div className="relative">
+                <input
+                  type="password"
+                  value={password}
+                  onChange={e => {
+                    setPassword(e.target.value);
+                    setPasswordStatus({ checked: false, valid: false });
+                  }}
+                  placeholder="Enter your password"
+                  className="w-full px-4 py-2.5 pr-10 rounded-xl bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-colors"
+                />
+                {passwordStatus.checked && passwordStatus.valid && (
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-500">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                    </svg>
+                  </span>
+                )}
+              </div>
             </div>
           )}
 

@@ -60,8 +60,8 @@ app.use(cors());
 // Large JSON bodies: the report `data` object (Zoho/SentinelOne/Checkpoint/Palo
 // Alto aggregates, especially raw Zoho ticket payloads) can be many MB, far past
 // Express's 100KB default — so raise the cap well above any realistic report.
-app.use(express.json({ limit: '200mb' }));
-app.use(express.urlencoded({ extended: true, limit: '200mb' }));
+app.use(express.json({ limit: '1gb' }));
+app.use(express.urlencoded({ extended: true, limit: '1gb' }));
 
 app.get('/', (req, res) => {
   res.json({ name: 'CISO Dashboard API', status: 'running' });
@@ -109,6 +109,22 @@ app.use('/api/cache', withOrg, cacheRoutes);
 
 // Admin routes (superAdmin only — orgMiddleware not needed, uses centralPool directly)
 app.use('/api/admin', [authMiddleware], adminOrgsRoutes);
+
+// Global error handler for body-parser and route errors
+app.use((err, req, res, next) => {
+  if (err && (err.type === 'entity.too.large' || err.status === 413)) {
+    console.error('[server] Payload too large error:', err.message);
+    return res.status(413).json({
+      error: 'PAYLOAD_TOO_LARGE',
+      message: 'Request payload exceeded server limits. Telemetry data is automatically sanitized before submission.',
+    });
+  }
+  if (err) {
+    console.error('[server] Unhandled request error:', err.message);
+    return res.status(err.status || 500).json({ error: err.name || 'ERROR', message: err.message || 'Internal server error' });
+  }
+  next();
+});
 
 /**
  * Legacy background job — every 1 minute, refresh generic api_tokens responses

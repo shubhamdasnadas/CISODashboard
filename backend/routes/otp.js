@@ -80,9 +80,9 @@ function sendOtpEmail(user, otp) {
 
 router.post('/send', async (req, res) => {
   const identifier = (req.body.email || req.body.username || req.body.identifier || '').trim();
-  if (!identifier) return res.status(400).json({ error: 'Email or username is required' });
+  if (!identifier) return res.status(400).json({ error: 'Email is required' });
   const userResult = await centralPool.query(
-    'SELECT id, username, email FROM users WHERE LOWER(email) = LOWER($1) OR username = $1',
+    'SELECT id, username, email FROM users WHERE LOWER(email) = LOWER($1)',
     [identifier]
   );
   if (userResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
@@ -119,9 +119,9 @@ router.post('/send', async (req, res) => {
 router.post('/verify', async (req, res) => {
   const identifier = (req.body.email || req.body.username || req.body.identifier || '').trim();
   const { otp } = req.body;
-  if (!identifier || !otp) return res.status(400).json({ error: 'Email/username and OTP are required' });
+  if (!identifier || !otp) return res.status(400).json({ error: 'Email and OTP are required' });
   const userRes = await centralPool.query(
-    'SELECT id, username, email, role, org_ids FROM users WHERE LOWER(email) = LOWER($1) OR username = $1',
+    'SELECT id, username, email, role, org_ids FROM users WHERE LOWER(email) = LOWER($1)',
     [identifier]
   );
   if (userRes.rows.length === 0) return res.status(404).json({ error: 'User not found' });

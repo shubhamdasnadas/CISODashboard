@@ -1162,9 +1162,9 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
   // Secondary tabs inside the SentinelOne section (mirrors the module page).
   const [activeSubTab, setActiveSubTab] = useState('agents');
   const SUB_TABS = [
+    { id: 'threats', label: 'Threat Analytics', icon: '⚠️' },
     { id: 'agents', label: 'Agent Analytics', icon: '🖥️' },
     { id: 'cves', label: 'Application CVEs', icon: '🔍' },
-    { id: 'threats', label: 'Threat Analytics', icon: '⚠️' },
   ];
 
   // Compute agent chart data from an array
@@ -2768,13 +2768,30 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
 }
 
 function MicrosoftSection({ msData, syncing, onSync }) {
-  const arr = (key) => msData[key]?.data?.value ?? [];
+  const arr = (key) => {
+    if (!msData || !msData[key]) return [];
+    const entry = msData[key];
+    if (Array.isArray(entry)) return entry;
+    if (Array.isArray(entry.value)) return entry.value;
+    if (Array.isArray(entry.data)) return entry.data;
+    if (entry.data && Array.isArray(entry.data.value)) return entry.data.value;
+    if (typeof entry.data === 'string') {
+      try {
+        const parsed = JSON.parse(entry.data);
+        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed.value)) return parsed.value;
+        if (Array.isArray(parsed.data)) return parsed.data;
+      } catch (e) {}
+    }
+    return [];
+  };
   const riskyUsers = arr('riskyUsers');
   const users = arr('users');
   const riskDetections = arr('riskDetections');
   const signIns = arr('auditSignIns');
   const securityAlerts = arr('securityAlerts');
-  const secureScore = arr('secureScores')[0] || null;
+  const secureScoresList = arr('secureScores');
+  const secureScore = secureScoresList[0] || (msData?.secureScores?.data?.currentScore ? msData.secureScores.data : null) || (msData?.secureScores?.currentScore ? msData.secureScores : null);
   const managedDevices = arr('managedDevices');
   const serviceIssues = arr('serviceIssues');
   const subscribedSkus = arr('subscribedSkus');
@@ -2784,7 +2801,7 @@ function MicrosoftSection({ msData, syncing, onSync }) {
   const unassignedLicenses = Math.max(0, totalLicenses - assignedLicenses);
   const licenseUtil = totalLicenses ? Math.round((assignedLicenses / totalLicenses) * 100) : 0;
 
-  const msDateFn = (item) => item?.createdDateTime;
+  const msDateFn = (item) => item?.createdDateTime || item?.detectedDateTime || item?.riskLastUpdatedDateTime || item?.lastSyncDateTime || item?.activityDateTime || item?.startDateTime || item?.enrolledDateTime || item?.eventDateTime;
 
   return (
     <WizardSection id="microsoft" kicker="Cloud Identity & Security" title="Microsoft 365" icon="🟦" accent="#3b82f6"
@@ -3126,7 +3143,181 @@ export default function Analytics({ printMode: printModeProp = false }) {
         console.warn('[PDF] Failed to read chartViews from localStorage:', e);
       }
 
-      // 2. Request real-time Puppeteer PDF generation on backend
+      // 2. Prepare lightweight, sanitized live telemetry snapshot from current component state
+      const mapZohoTicket = (t) => {
+        if (!t) return t;
+        return {
+          id: t.id,
+          ticketNumber: t.ticketNumber || t.ticket_number,
+          subject: t.subject,
+          status: t.status,
+          priority: t.priority,
+          created_time: t.created_time || t.createdTime || t.createdAt,
+          closed_time: t.closed_time || t.closedTime || t.closedAt || t.closeTime,
+          customerResponseTime: t.customerResponseTime || t.customer_response_time || t.responseTime,
+          department: t.department ? { id: t.department.id, name: t.department.name } : (t.departmentName ? { name: t.departmentName } : null),
+          departmentName: t.departmentName || t.department?.name,
+          assignee: t.assignee ? { firstName: t.assignee.firstName, lastName: t.assignee.lastName, email: t.assignee.email } : null,
+          contact: t.contact ? { firstName: t.contact.firstName, lastName: t.contact.lastName, email: t.contact.email } : null,
+        };
+      };
+
+      const pruneAgent = (a) => a ? ({
+        id: a.id,
+        computerName: a.computerName || a.computer_name,
+        osType: a.osType || a.os_type,
+        osName: a.osName || a.os_name,
+        networkStatus: a.networkStatus || a.network_status,
+        infected: a.infected,
+        isUpToDate: a.isUpToDate || a.is_up_to_date,
+        scanStatus: a.scanStatus || a.scan_status,
+        appsCount: a.appsCount || a.apps_count,
+        createdAt: a.createdAt || a.created_at,
+        updatedAt: a.updatedAt || a.updated_at,
+        machineType: a.machineType || a.machine_type,
+      }) : a;
+
+      const pruneCve = (c) => c ? ({
+        id: c.id,
+        cveId: c.cveId || c.cve_id || c.name,
+        severity: c.severity,
+        cvssScore: c.cvssScore || c.cvss_score || c.score,
+        cvssBaseScore: c.cvssBaseScore || c.cvss_base_score,
+        softwareName: c.softwareName || c.software_name || c.applicationName || c.application_name,
+        applicationName: c.applicationName || c.application_name || c.softwareName || c.software_name,
+        status: c.status,
+        createdAt: c.createdAt || c.created_at || c.publishedDate,
+        fixed: c.fixed,
+      }) : c;
+
+      const pruneThreat = (t) => t ? ({
+        id: t.id,
+        threatInfo: t.threatInfo ? {
+          threatName: t.threatInfo.threatName,
+          classification: t.threatInfo.classification,
+          incidentStatus: t.threatInfo.incidentStatus,
+          confidenceLevel: t.threatInfo.confidenceLevel,
+          severity: t.threatInfo.severity,
+          createdAt: t.threatInfo.createdAt,
+          mitigated: t.threatInfo.mitigated,
+          initiatedBy: t.threatInfo.initiatedBy,
+          filePath: t.threatInfo.filePath,
+        } : {
+          threatName: t.threat_name || t.threatName,
+          classification: t.classification,
+          incidentStatus: t.incident_status || t.incidentStatus,
+          confidenceLevel: t.confidence_level || t.confidenceLevel,
+          severity: t.severity,
+          createdAt: t.created_at || t.createdAt,
+          mitigated: t.mitigated,
+        },
+      }) : t;
+
+      const pruneNvdRow = (v) => v ? ({
+        cve_id: v.cve_id || v.id,
+        cvss_base_severity: v.cvss_base_severity,
+        cvss_base_score: v.cvss_base_score,
+        vuln_status: v.vuln_status,
+        published_date: v.published_date,
+        last_modified_date: v.last_modified_date,
+        weaknesses: Boolean(v.weaknesses),
+      }) : v;
+
+      const pruneMdmDevice = (d) => d ? ({
+        device_id: d.device_id || d.id,
+        device_name: d.device_name || d.name,
+        os_name: d.os_name || d.platform,
+        os_version: d.os_version,
+        compliance_status: d.compliance_status,
+        is_compromised: d.is_compromised,
+        last_reported: d.last_reported,
+        model_name: d.model_name,
+        user_name: d.user_name,
+      }) : d;
+
+      const pruneMdmApp = (a) => a ? ({
+        app_id: a.app_id || a.id,
+        app_name: a.app_name || a.name,
+        app_version: a.app_version || a.version,
+        bundle_id: a.bundle_id || a.identifier,
+        platform: a.platform,
+      }) : a;
+
+      const pruneHarmonyEvent = (e) => e ? ({
+        eventId: e.eventId || e.event_id || e.id,
+        type: e.type,
+        state: e.state,
+        severity: e.severity,
+        senderAddress: e.senderAddress || e.sender_address,
+        receiverAddress: e.receiverAddress || e.receiver_address,
+        subject: e.subject,
+        threatType: e.threatType || e.threat_type,
+        mitigation: e.mitigation || e.mitigation_action,
+        platform: e.platform || e.saas,
+        eventCreated: e.eventCreated || e.event_created || e.createdAt,
+        saas: e.saas,
+      }) : e;
+
+      const pruneMsData = (ms) => {
+        if (!ms || typeof ms !== 'object') return {};
+        const out = {};
+        Object.entries(ms).forEach(([key, val]) => {
+          if (!val) { out[key] = val; return; }
+          let rawData = val?.data !== undefined ? val.data : val;
+          if (typeof rawData === 'string') {
+            try { rawData = JSON.parse(rawData); } catch (e) {}
+          }
+          const list = Array.isArray(rawData) ? rawData : (Array.isArray(rawData?.value) ? rawData.value : null);
+          if (list) {
+            out[key] = {
+              data: list.slice(0, 500).map((item) => {
+                if (!item || typeof item !== 'object') return item;
+                const clean = {};
+                for (const [k, v] of Object.entries(item)) {
+                  if (typeof v === 'string' && v.length > 500) continue;
+                  if (typeof v === 'object' && v !== null && Object.keys(v).length > 20) continue;
+                  clean[k] = v;
+                }
+                return clean;
+              }),
+              syncedAt: val?.syncedAt || null,
+            };
+          } else {
+            out[key] = val;
+          }
+        });
+        return out;
+      };
+
+      const prunedAgents = Array.isArray(agents) ? agents.map(pruneAgent) : [];
+      const prunedCves = Array.isArray(cves) ? cves.map(pruneCve) : [];
+      const prunedThreats = Array.isArray(threats) ? threats.map(pruneThreat) : [];
+      const prunedDevices = Array.isArray(devices) ? devices.map(pruneMdmDevice) : [];
+      const prunedApps = Array.isArray(apps) ? apps.map(pruneMdmApp) : [];
+      const prunedNvdRows = Array.isArray(nvdRows) ? nvdRows.map(pruneNvdRow) : [];
+      const prunedHarmonyEvents = Array.isArray(cpEvents) ? cpEvents.map(pruneHarmonyEvent) : [];
+      const prunedZohoTickets = Array.isArray(zohoTickets) ? zohoTickets.map(mapZohoTicket) : [];
+      const prunedFwReports = (fwReports || []).map(r => ({ report: r.report, rows: (r.rows || []).slice(0, 50), columns: r.columns || [] }));
+      const prunedMsData = pruneMsData(msData);
+
+      const liveDataSnapshot = {
+        s1Agents: prunedAgents,
+        s1Cves: prunedCves,
+        s1Threats: prunedThreats,
+        mdmDevices: prunedDevices,
+        mdmApps: prunedApps,
+        nvdStats: nvdStats || null,
+        nvdRows: prunedNvdRows,
+        harmonyEvents: prunedHarmonyEvents,
+        fwReports: prunedFwReports,
+        zohoTickets: prunedZohoTickets,
+        msData: prunedMsData,
+        chartViews,
+        theme: theme || 'dark',
+        orgName: currentOrgName,
+      };
+
+      // 3. Request real-time Puppeteer PDF generation on backend
       try {
         console.log('[PDF] Requesting real-time Puppeteer PDF generation with theme:', theme, 'dayPreset:', curDayPreset, 'isCustom:', curIsCustom, 'period:', periodLabel);
         const currentOrigin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : undefined;
@@ -3161,6 +3352,7 @@ export default function Analytics({ printMode: printModeProp = false }) {
             chartViews,
             orgName: currentOrgName,
             theme: theme || 'dark',
+            data: liveDataSnapshot,
           },
           {
             responseType: 'blob',
@@ -3662,7 +3854,7 @@ export default function Analytics({ printMode: printModeProp = false }) {
         title: 'Microsoft 365 · Cloud Posture',
         subtitle: 'Identity security, license utilization, MFA adoption & cloud apps',
         icon: '🟦',
-        badge: 'Cloud Telemetry',
+        badge: msData?.users?.data?.value?.length ? `${msData.users.data.value.length} Users` : 'Cloud Telemetry',
         color: '#6366f1',
       },
     ];
@@ -3673,7 +3865,8 @@ export default function Analytics({ printMode: printModeProp = false }) {
         sec.id === printSection ||
         sec.id === `sec-${printSection}` ||
         sec.sectionKey === printSection ||
-        sec.integrationId === printSection
+        sec.integrationId === printSection ||
+        (printSection === 'microsoft365' && (sec.sectionKey === 'microsoft' || sec.integrationId === 'microsoft'))
       );
     });
 
@@ -3846,7 +4039,7 @@ export default function Analytics({ printMode: printModeProp = false }) {
             </div>
           )}
 
-          {(printSection === 'all' || printSection === 'microsoft') && (
+          {(printSection === 'all' || printSection === 'microsoft' || printSection === 'microsoft365') && (
             <div id="sec-microsoft" className="pdf-print-section pdf-print-subpage">
               <MicrosoftSection msData={msData} syncing={false} />
             </div>

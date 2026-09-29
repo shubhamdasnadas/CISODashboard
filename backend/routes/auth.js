@@ -7,17 +7,18 @@ const { authMiddleware } = require('../middleware/authMiddleware');
 const router = express.Router();
 
 /**
- * POST /api/auth/check-username (also accepts email)
- * Body: { username } or { email } or { identifier }
+ * POST /api/auth/check-username (or /check-email)
+ * Body: { email } or { identifier }
  * Returns { exists, organisations?, email, username }
+ * Strictly looks up user by email address (case-insensitive)
  */
-router.post('/check-username', async (req, res) => {
+async function handleCheckEmail(req, res) {
   try {
     const identifier = (req.body.email || req.body.username || req.body.identifier || '').trim();
-    if (!identifier) return res.status(400).json({ error: 'Email or username is required' });
+    if (!identifier) return res.status(400).json({ error: 'Email is required' });
 
     const userResult = await centralPool.query(
-      'SELECT id, username, email, org_ids FROM users WHERE LOWER(email) = LOWER($1) OR username = $1',
+      'SELECT id, username, email, org_ids FROM users WHERE LOWER(email) = LOWER($1)',
       [identifier]
     );
     if (userResult.rows.length === 0) {
@@ -42,30 +43,64 @@ router.post('/check-username', async (req, res) => {
       username: matchedUser.username,
     });
   } catch (err) {
-    console.error('check-username error:', err.message, err.code || '');
+    console.error('check-email error:', err.message, err.code || '');
     return res.status(500).json({
       error: 'Server error',
       detail: err.message,
       code: err.code || null,
     });
   }
+}
+
+router.post('/check-username', handleCheckEmail);
+router.post('/check-email', handleCheckEmail);
+
+/**
+ * POST /api/auth/check-password
+ * Body: { email, password }
+ * Returns { valid: boolean }
+ * Checks if the entered password matches the account password
+ */
+router.post('/check-password', async (req, res) => {
+  try {
+    const identifier = (req.body.email || req.body.username || req.body.identifier || '').trim();
+    const { password } = req.body;
+    if (!identifier || !password) {
+      return res.status(400).json({ valid: false, error: 'Email and password are required' });
+    }
+
+    const result = await centralPool.query(
+      'SELECT password FROM users WHERE LOWER(email) = LOWER($1)',
+      [identifier]
+    );
+    if (result.rows.length === 0) {
+      return res.json({ valid: false });
+    }
+
+    const valid = await bcrypt.compare(password, result.rows[0].password);
+    return res.json({ valid: Boolean(valid) });
+  } catch (err) {
+    console.error('check-password error:', err);
+    return res.status(500).json({ valid: false, error: 'Server error' });
+  }
 });
 
 /**
  * POST /api/auth/login
- * Body: { email, password } or { username, password }
+ * Body: { email, password }
  * Returns { token, user } or { otpRequested: true, username, email }
+ * Strictly authenticates by registered email address
  */
 router.post('/login', async (req, res) => {
   try {
     const identifier = (req.body.email || req.body.username || req.body.identifier || '').trim();
     const { password } = req.body;
     if (!identifier || !password) {
-      return res.status(400).json({ error: 'Email/Username and password are required' });
+      return res.status(400).json({ error: 'Email and password are required' });
     }
 
     const result = await centralPool.query(
-      'SELECT * FROM users WHERE LOWER(email) = LOWER($1) OR username = $1',
+      'SELECT * FROM users WHERE LOWER(email) = LOWER($1)',
       [identifier]
     );
     if (result.rows.length === 0) {

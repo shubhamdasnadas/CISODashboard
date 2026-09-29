@@ -236,10 +236,14 @@ router.get('/data', async (req, res) => {
     const out = {};
     await Promise.all(
       ENDPOINTS.map(async (ep) => {
-        const { rows } = await req.orgPool.query(
-          `SELECT data, synced_at FROM ${ep.table} ORDER BY synced_at DESC LIMIT 1`
-        );
-        out[ep.key] = rows[0] ? { data: rows[0].data, syncedAt: rows[0].synced_at } : null;
+        try {
+          const { rows } = await req.orgPool.query(
+            `SELECT data, synced_at FROM ${ep.table} ORDER BY synced_at DESC LIMIT 1`
+          );
+          out[ep.key] = rows[0] ? { data: rows[0].data, syncedAt: rows[0].synced_at } : null;
+        } catch (tableErr) {
+          out[ep.key] = null;
+        }
       })
     );
     res.json(out);

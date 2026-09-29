@@ -109,15 +109,15 @@ function deltaPct(cur, prev) {
   if (cur == null || prev == null) return null;
   const c = Number(cur);
   const p = Number(prev);
-  if (isNaN(c) || isNaN(p)) return null;
+  if (!isFinite(c) || !isFinite(p)) return null;
   if (p === 0) {
     if (c === 0) return { pct: 0, diff: 0, dir: 'flat' };
-    return { pct: 100, diff: c, dir: 'up' };
+    return { pct: 100, diff: c, dir: c > 0 ? 'up' : 'down' };
   }
   const diff = c - p;
-  const pct = Math.round((Math.abs(diff) / p) * 100);
+  const pct = Math.round((Math.abs(diff) / Math.abs(p)) * 100);
   return {
-    pct,
+    pct: isFinite(pct) ? pct : 0,
     diff,
     dir: diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat',
   };

@@ -4,8 +4,8 @@ const path = require('path');
 const router = express.Router();
 
 // Allow large JSON payloads for report data
-router.use(express.json({ limit: '200mb' }));
-router.use(express.urlencoded({ extended: true, limit: '200mb' }));
+router.use(express.json({ limit: '1gb' }));
+router.use(express.urlencoded({ extended: true, limit: '1gb' }));
 
 // Render + save a security-report PDF to the active organisation's folder.
 //
