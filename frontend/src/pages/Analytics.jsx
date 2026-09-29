@@ -39,7 +39,6 @@ export const MODULE_PAsTHS = {
 export const MODULE_ICONS = {
   security: '🛡️',
   mdm: '📱',
-  nvd: '🛡️',
   checkpoint: '📧',
   'zoho-one': '🎫',
   paloalto: '🔥',
@@ -1636,228 +1635,6 @@ function MdmSection({ devices: fullDevices, apps: fullApps, syncing, onSync }) {
   );
 }
 
-function NvdSection({ stats, rows: propRows, syncing, onSync }) {
-  // Full lightweight row set (no descriptions/raw JSONB) fetched once — each widget
-  // below filters it independently with its own FilterByDays, like the other sections.
-  const [internalRows, setInternalRows] = useState([]);
-  const isPrint = typeof window !== 'undefined' && (window.location.search.includes('print=true') || window.location.pathname.includes('print'));
-  const [loadingRows, setLoadingRows] = useState(!isPrint && (!propRows || propRows.length === 0));
-
-  useEffect(() => {
-    if (propRows && propRows.length > 0) {
-      setInternalRows(propRows);
-      setLoadingRows(false);
-      return;
-    }
-    if (isPrint) {
-      setLoadingRows(false);
-      return;
-    }
-    let alive = true;
-    api.get('/nvd/analytics-rows')
-      .then((r) => { if (alive) setInternalRows(r.data?.rows || []); })
-      .catch(() => { if (alive) setInternalRows([]); })
-      .finally(() => { if (alive) setLoadingRows(false); });
-    return () => { alive = false; };
-  }, [propRows, isPrint]);
-
-  const rows = propRows && propRows.length > 0 ? propRows : internalRows;
-
-  // Date used by each widget's independent day filter.
-  const nvdDateFn = (v) => v.published || v.last_modified || v.synced_at;
-
-  const severityOf = (v) => {
-    const s = String(v.cvss_base_severity || '').toUpperCase();
-    if (s) return s;
-    const sc = Number(v.cvss_base_score);
-    if (sc >= 9) return 'CRITICAL';
-    if (sc >= 7) return 'HIGH';
-    if (sc >= 4) return 'MEDIUM';
-    if (sc > 0) return 'LOW';
-    return 'UNKNOWN';
-  };
-
-  // Severity breaks by proper severity colors.
-  const severityData = (arr) => {
-    const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 };
-    arr.forEach((v) => {
-      const s = severityOf(v);
-      counts[s] = (counts[s] || 0) + 1;
-    });
-    return ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN']
-      .filter((s) => counts[s] > 0)
-      .map((s) => ({ name: s, value: counts[s], fill: SEVERITY_COLORS[s] || '#64748b' }));
-  };
-
-  // CVSS score buckets (critical/high/medium/low by numeric range).
-  const scoreRangeData = (arr) => {
-    const buckets = { 'Critical (9.0-10)': 0, 'High (7.0-8.9)': 0, 'Medium (4.0-6.9)': 0, 'Low (0.1-3.9)': 0, 'None': 0 };
-    arr.forEach((v) => {
-      const sc = Number(v.cvss_base_score);
-      if (isNaN(sc) || sc === 0) { buckets['None']++; return; }
-      if (sc >= 9) buckets['Critical (9.0-10)']++;
-      else if (sc >= 7) buckets['High (7.0-8.9)']++;
-      else if (sc >= 4) buckets['Medium (4.0-6.9)']++;
-      else buckets['Low (0.1-3.9)']++;
-    });
-    return Object.entries(buckets)
-      .filter(([, value]) => value > 0)
-      .map(([name, value], i) => ({ name, value, fill: ['#a855f7', '#ef4444', '#eab308', '#3b82f6', '#94a3b8'][i % 5] }));
-  };
-
-  const totalAll = stats?.total ?? rows.length;
-
-  return (
-    <WizardSection id="nvd" kicker="National Vulnerability Database" title="NVD CVEs" icon="🌐" accent="#8b5cf6"
-      meta={loadingRows ? 'Loading CVE records…' : `${fmtNum(totalAll)} CVEs stored`}
-      syncing={syncing} onSync={onSync}>
-
-      {loadingRows && rows.length === 0 ? (
-        <div className="flex items-center justify-center py-16">
-          <span className="animate-spin w-6 h-6 border-2 border-[var(--foreground)] border-t-transparent rounded-full" />
-        </div>
-      ) : (
-        <>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-            <FilterByDays key="nvd-total" data={rows} dateFn={nvdDateFn}>
-              {({ current, previous, isFiltered }) => {
-                const curVal = current.length;
-                const prevVal = isFiltered ? previous.length : null;
-                return (
-                  <StatCard
-                    title="Total CVEs"
-                    value={fmtNum(curVal)}
-                    cur={curVal}
-                    prev={prevVal}
-                    color="default"
-                    subtitle={totalAll ? `${Math.round((curVal / totalAll) * 100)}% of all-time` : ''}
-                    goodWhenUp={false}
-                  />
-                );
-              }}
-            </FilterByDays>
-            {['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map((s) => (
-              <FilterByDays key={`nvd-${s}`} data={rows} dateFn={nvdDateFn}>
-                {({ current, previous, isFiltered }) => {
-                  const curVal = current.filter((v) => severityOf(v) === s).length;
-                  const prevVal = isFiltered ? previous.filter((v) => severityOf(v) === s).length : null;
-                  return (
-                    <StatCard
-                      title={s}
-                      value={fmtNum(curVal)}
-                      cur={curVal}
-                      prev={prevVal}
-                      color={{ CRITICAL: 'purple', HIGH: 'red', MEDIUM: 'yellow', LOW: 'blue' }[s]}
-                      goodWhenUp={false}
-                    />
-                  );
-                }}
-              </FilterByDays>
-            ))}
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <FilterByDays key="nvd-hi" data={rows} dateFn={nvdDateFn}>
-              {({ current, previous, isFiltered }) => {
-                const n = current.length;
-                const curCritHigh = current.filter((v) => ['CRITICAL', 'HIGH'].includes(severityOf(v))).length;
-                const prevCritHigh = isFiltered ? previous.filter((v) => ['CRITICAL', 'HIGH'].includes(severityOf(v))).length : null;
-                return (
-                  <StatCard
-                    title="Critical + High"
-                    value={fmtNum(curCritHigh)}
-                    cur={curCritHigh}
-                    prev={prevCritHigh}
-                    color="red"
-                    subtitle={n ? `${Math.round((curCritHigh / n) * 100)}% of window` : ''}
-                    goodWhenUp={false}
-                  />
-                );
-              }}
-            </FilterByDays>
-            <FilterByDays key="nvd-avg" data={rows} dateFn={nvdDateFn}>
-              {({ current, previous, isFiltered }) => {
-                const curScs = current.map((v) => Number(v.cvss_base_score)).filter((s) => !isNaN(s));
-                const curAvg = curScs.length ? Number((curScs.reduce((a, b) => a + b, 0) / curScs.length).toFixed(1)) : null;
-                const prevScs = isFiltered ? previous.map((v) => Number(v.cvss_base_score)).filter((s) => !isNaN(s)) : [];
-                const prevAvg = prevScs.length ? Number((prevScs.reduce((a, b) => a + b, 0) / prevScs.length).toFixed(1)) : null;
-                return (
-                  <StatCard
-                    title="Avg CVSS Score"
-                    value={curAvg != null ? curAvg.toFixed(1) : '—'}
-                    cur={curAvg}
-                    prev={prevAvg}
-                    color="default"
-                    subtitle={`${curScs.length} scored CVEs`}
-                    goodWhenUp={false}
-                  />
-                );
-              }}
-            </FilterByDays>
-            <FilterByDays key="nvd-weak" data={rows} dateFn={nvdDateFn}>
-              {({ current, previous, isFiltered }) => {
-                const curVal = current.filter((v) => v.weaknesses).length;
-                const prevVal = isFiltered ? previous.filter((v) => v.weaknesses).length : null;
-                return (
-                  <StatCard
-                    title="With Weakness"
-                    value={fmtNum(curVal)}
-                    cur={curVal}
-                    prev={prevVal}
-                    color="green"
-                    subtitle={current.length ? `${Math.round((curVal / current.length) * 100)}% of window` : ''}
-                    goodWhenUp={false}
-                  />
-                );
-              }}
-            </FilterByDays>
-            <FilterByDays key="nvd-unknown" data={rows} dateFn={nvdDateFn}>
-              {({ current, previous, isFiltered }) => {
-                const curVal = current.filter((v) => severityOf(v) === 'UNKNOWN').length;
-                const prevVal = isFiltered ? previous.filter((v) => severityOf(v) === 'UNKNOWN').length : null;
-                return (
-                  <StatCard
-                    title="UNKNOWN Severity"
-                    value={fmtNum(curVal)}
-                    cur={curVal}
-                    prev={prevVal}
-                    color="default"
-                    subtitle="no CVSS mapping"
-                    goodWhenUp={false}
-                  />
-                );
-              }}
-            </FilterByDays>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FilterByDays data={rows} dateFn={nvdDateFn}>
-              {({ filtered }) => (
-                <ChartCard title="CVEs by Severity" viewOptions={VIEW_OPTIONS}>
-                  {(chartType) => <MultiViewChart data={severityData(filtered)} chartType={chartType} />}
-                </ChartCard>
-              )}
-            </FilterByDays>
-            <FilterByDays data={rows} dateFn={nvdDateFn}>
-              {({ filtered }) => (
-                <ChartCard title="CVEs by Status" viewOptions={VIEW_OPTIONS}>
-                  {(chartType) => <MultiViewChart data={bucket(filtered, (v) => v.vuln_status || 'Analyzed')} chartType={chartType} />}
-                </ChartCard>
-              )}
-            </FilterByDays>
-            <FilterByDays data={rows} dateFn={nvdDateFn}>
-              {({ filtered }) => (
-                <ChartCard title="CVEs by CVSS Score Range" subtitle="critical · high · medium · low buckets" viewOptions={VIEW_OPTIONS}>
-                  {(chartType) => <MultiViewChart data={scoreRangeData(filtered)} chartType={chartType} />}
-                </ChartCard>
-              )}
-            </FilterByDays>
-          </div>
-        </>
-      )}
-    </WizardSection>
-  );
-}
-
 // ─── Checkpoint per-widget recompute helpers ──────────────────────────────────
 const CP_SEV_LABELS = { 0: 'Informational', 1: 'Low', 2: 'Medium', 3: 'High', 4: 'Critical' };
 const CP_SEV_COLORS = ['#22c55e', '#84cc16', '#f59e0b', '#f97316', '#ef4444'];
@@ -2954,7 +2731,6 @@ function MicrosoftSection({ msData, syncing, onSync }) {
 const NAV_ITEMS = [
   { id: 'security', label: 'SentinelOne', icon: '🛡️' },
   { id: 'mdm', label: 'MDM', icon: '📱' },
-  { id: 'nvd', label: 'NVD', icon: '🌐' },
   { id: 'checkpoint', label: 'Checkpoint', icon: '📧' },
   { id: 'firewall', label: 'Palo Alto', icon: '🔥' },
   { id: 'zoho', label: 'Zoho', icon: '🎫' },
@@ -3094,7 +2870,6 @@ export default function Analytics({ printMode: printModeProp = false }) {
     switch (tabId) {
       case 'security': return 'SentinelOne';
       case 'mdm': return 'Hexnode MDM';
-      case 'nvd': return 'NVD CVEs';
       case 'checkpoint': return 'Harmony Email';
       case 'firewall': return 'Palo Alto';
       case 'zoho': return 'Zoho Desk';
@@ -3107,7 +2882,6 @@ export default function Analytics({ printMode: printModeProp = false }) {
     switch (tabId) {
       case 'security': return 'Fetching Endpoint Protection & Threat Analytics…';
       case 'mdm': return 'Fetching Device Fleet & MDM Posture Telemetry…';
-      case 'nvd': return 'Fetching National Vulnerability Database Telemetry…';
       case 'checkpoint': return 'Fetching Email Security & Threat Prevention Telemetry…';
       case 'firewall': return 'Fetching Firewall Traffic & Security Telemetry…';
       case 'zoho': return 'Fetching Service Desk & Incident Ticket Telemetry…';
@@ -3213,16 +2987,6 @@ export default function Analytics({ printMode: printModeProp = false }) {
         },
       }) : t;
 
-      const pruneNvdRow = (v) => v ? ({
-        cve_id: v.cve_id || v.id,
-        cvss_base_severity: v.cvss_base_severity,
-        cvss_base_score: v.cvss_base_score,
-        vuln_status: v.vuln_status,
-        published_date: v.published_date,
-        last_modified_date: v.last_modified_date,
-        weaknesses: Boolean(v.weaknesses),
-      }) : v;
-
       const pruneMdmDevice = (d) => d ? ({
         device_id: d.device_id || d.id,
         device_name: d.device_name || d.name,
@@ -3294,7 +3058,6 @@ export default function Analytics({ printMode: printModeProp = false }) {
       const prunedThreats = Array.isArray(threats) ? threats.map(pruneThreat) : [];
       const prunedDevices = Array.isArray(devices) ? devices.map(pruneMdmDevice) : [];
       const prunedApps = Array.isArray(apps) ? apps.map(pruneMdmApp) : [];
-      const prunedNvdRows = Array.isArray(nvdRows) ? nvdRows.map(pruneNvdRow) : [];
       const prunedHarmonyEvents = Array.isArray(cpEvents) ? cpEvents.map(pruneHarmonyEvent) : [];
       const prunedZohoTickets = Array.isArray(zohoTickets) ? zohoTickets.map(mapZohoTicket) : [];
       const prunedFwReports = (fwReports || []).map(r => ({ report: r.report, rows: (r.rows || []).slice(0, 50), columns: r.columns || [] }));
@@ -3306,8 +3069,6 @@ export default function Analytics({ printMode: printModeProp = false }) {
         s1Threats: prunedThreats,
         mdmDevices: prunedDevices,
         mdmApps: prunedApps,
-        nvdStats: nvdStats || null,
-        nvdRows: prunedNvdRows,
         harmonyEvents: prunedHarmonyEvents,
         fwReports: prunedFwReports,
         zohoTickets: prunedZohoTickets,
@@ -3403,8 +3164,6 @@ export default function Analytics({ printMode: printModeProp = false }) {
         s1Threats: (threats && threats.length > 0) ? threats : (rawData?.s1Threats || []),
         mdmDevices: (devices && devices.length > 0) ? devices : (rawData?.mdmDevices || []),
         mdmApps: (apps && apps.length > 0) ? apps : (rawData?.mdmApps || []),
-        nvdStats: nvdStats || rawData?.nvdStats || null,
-        nvdRows: (nvdRows && nvdRows.length > 0) ? nvdRows : (rawData?.nvdRows || []),
         harmonyEvents: (cpEvents && cpEvents.length > 0) ? cpEvents : (rawData?.harmonyEvents || []),
         fwReports: (fwReports && fwReports.length > 0) ? fwReports : (rawData?.fwReports || []),
         zohoTickets: (zohoTickets && zohoTickets.length > 0) ? zohoTickets : (rawData?.zohoTickets || []),
@@ -3458,8 +3217,6 @@ export default function Analytics({ printMode: printModeProp = false }) {
   const [threats, setThreats] = useState(() => (initialReportData?.threats && initialReportData.threats.length > 0) ? initialReportData.threats : (initialReportData?.s1Threats || []));
   const [devices, setDevices] = useState(() => (initialReportData?.devices && initialReportData.devices.length > 0) ? initialReportData.devices : (initialReportData?.mdmDevices || []));
   const [apps, setApps] = useState(() => (initialReportData?.apps && initialReportData.apps.length > 0) ? initialReportData.apps : (initialReportData?.mdmApps || []));
-  const [nvdStats, setNvdStats] = useState(() => initialReportData?.nvdStats || null);
-  const [nvdRows, setNvdRows] = useState(() => initialReportData?.nvdRows || []);
   const [cpEvents, setCpEvents] = useState(() => (initialReportData?.cpEvents && initialReportData.cpEvents.length > 0) ? initialReportData.cpEvents : (initialReportData?.harmonyEvents || []));
   const [fwReports, setFwReports] = useState(() => initialReportData?.fwReports || []);
   const [zohoTickets, setZohoTickets] = useState(() => initialReportData?.zohoTickets || []);
@@ -3484,12 +3241,6 @@ export default function Analytics({ printMode: printModeProp = false }) {
       if (initialReportData.apps?.length || initialReportData.mdmApps?.length) {
         setApps(initialReportData.apps?.length ? initialReportData.apps : initialReportData.mdmApps);
       }
-      if (initialReportData.nvdStats) {
-        setNvdStats(initialReportData.nvdStats);
-      }
-      if (initialReportData.nvdRows?.length) {
-        setNvdRows(initialReportData.nvdRows);
-      }
       if (initialReportData.cpEvents?.length || initialReportData.harmonyEvents?.length) {
         setCpEvents(initialReportData.cpEvents?.length ? initialReportData.cpEvents : initialReportData.harmonyEvents);
       }
@@ -3507,7 +3258,7 @@ export default function Analytics({ printMode: printModeProp = false }) {
   }, [isPrint, initialReportData]);
 
   // Per-module syncing flags
-  const [syncing, setSyncing] = useState({ security: false, mdm: false, nvd: false, checkpoint: false, firewall: false, zoho: false, microsoft: false });
+  const [syncing, setSyncing] = useState({ security: false, mdm: false, checkpoint: false, firewall: false, zoho: false, microsoft: false });
 
   const markSyncing = (key, val) => setSyncing((prev) => ({ ...prev, [key]: val }));
 
@@ -3557,22 +3308,6 @@ export default function Analytics({ printMode: printModeProp = false }) {
     }).catch(() => {
       if (!initialReportData?.apps && !initialReportData?.mdmApps && !isPrint) setApps([]);
     });
-  };
-  const loadNvd = () => {
-    if (isPrint && (initialReportData?.nvdStats || initialReportData?.nvdRows?.length || nvdRows.length > 0)) return Promise.resolve();
-    return Promise.allSettled([
-      api.get('/nvd/stats', { timeout: apiTimeout }).then((r) => {
-        if (r.data || !isPrint) setNvdStats(r.data);
-      }).catch(() => {
-        if (!initialReportData?.nvdStats && !isPrint) setNvdStats(null);
-      }),
-      api.get('/nvd/analytics-rows', { timeout: apiTimeout }).then((r) => {
-        const arr = r.data?.rows || [];
-        if (arr.length > 0 || !isPrint) setNvdRows(arr);
-      }).catch(() => {
-        if (!initialReportData?.nvdRows && !isPrint) setNvdRows([]);
-      }),
-    ]);
   };
   const loadCheckpoint = () => {
     if (isPrint && (initialReportData?.cpEvents?.length || initialReportData?.harmonyEvents?.length || cpEvents.length > 0)) return Promise.resolve();
@@ -3669,7 +3404,6 @@ export default function Analytics({ printMode: printModeProp = false }) {
       loadThreats(),
       loadDevices(),
       loadApps(),
-      loadNvd(),
       loadCheckpoint(),
       loadFirewall(),
       loadZoho(),
@@ -3704,11 +3438,6 @@ export default function Analytics({ printMode: printModeProp = false }) {
     markSyncing('mdm', true);
     try { await api.post('/hexnode/sync'); await Promise.all([loadDevices(), loadApps()]); } catch { /* ignore */ }
     finally { markSyncing('mdm', false); }
-  };
-  const syncNvd = async () => {
-    markSyncing('nvd', true);
-    try { await api.post('/nvd/sync'); await loadNvd(); } catch { /* ignore */ }
-    finally { markSyncing('nvd', false); }
   };
   const syncCheckpoint = async () => {
     markSyncing('checkpoint', true);
@@ -3747,7 +3476,7 @@ export default function Analytics({ printMode: printModeProp = false }) {
   // When arriving via "View in Analytics" (?module=...), switch to the tab for that module
   useEffect(() => {
     if (!loaded || !launchModule) return;
-    const map = { security: 'security', mdm: 'mdm', nvd: 'nvd', checkpoint: 'checkpoint', paloalto: 'firewall', microsoft365: 'microsoft', 'zoho-one': 'zoho' };
+    const map = { security: 'security', mdm: 'mdm', checkpoint: 'checkpoint', paloalto: 'firewall', microsoft365: 'microsoft', 'zoho-one': 'zoho' };
     const tab = map[launchModule];
     if (tab) setActiveTab(tab);
   }, [loaded, launchModule]);
@@ -3803,21 +3532,10 @@ export default function Analytics({ printMode: printModeProp = false }) {
         color: '#3b82f6',
       },
       {
-        id: 'sec-nvd',
-        sectionKey: 'nvd',
-        integrationId: 'nvd',
-        number: '04',
-        title: 'National Vulnerability Database (NVD)',
-        subtitle: 'Global vulnerability ingestion, CVSS base score trends & CPE impact',
-        icon: '🛡️',
-        badge: 'NVD Intel',
-        color: '#8b5cf6',
-      },
-      {
         id: 'sec-checkpoint',
         sectionKey: 'checkpoint',
         integrationId: 'checkpoint',
-        number: '05',
+        number: '04',
         title: 'Check Point · Harmony Email Security',
         subtitle: 'Phishing prevention, malicious attachment detection & remediation telemetry',
         icon: '📧',
@@ -3828,7 +3546,7 @@ export default function Analytics({ printMode: printModeProp = false }) {
         id: 'sec-firewall',
         sectionKey: 'firewall',
         integrationId: 'firewall',
-        number: '06',
+        number: '05',
         title: 'Palo Alto · Next-Gen Firewall',
         subtitle: 'Network traffic patterns, blocked URL categories & high-risk application sessions',
         icon: '🔥',
@@ -3839,7 +3557,7 @@ export default function Analytics({ printMode: printModeProp = false }) {
         id: 'sec-zoho',
         sectionKey: 'zoho',
         integrationId: 'zoho',
-        number: '07',
+        number: '06',
         title: 'Zoho Desk · Incident & Support Tickets',
         subtitle: 'Ticket volume trends, resolution aging & departmental service performance',
         icon: '🎫',
@@ -3850,7 +3568,7 @@ export default function Analytics({ printMode: printModeProp = false }) {
         id: 'sec-microsoft',
         sectionKey: 'microsoft',
         integrationId: 'microsoft',
-        number: '08',
+        number: '07',
         title: 'Microsoft 365 · Cloud Posture',
         subtitle: 'Identity security, license utilization, MFA adoption & cloud apps',
         icon: '🟦',
@@ -4015,12 +3733,6 @@ export default function Analytics({ printMode: printModeProp = false }) {
             </div>
           )}
 
-          {(printSection === 'all' || printSection === 'nvd') && (
-            <div id="sec-nvd" className="pdf-print-section pdf-print-subpage">
-              <NvdSection stats={nvdStats} rows={nvdRows} syncing={false} />
-            </div>
-          )}
-
           {(printSection === 'all' || printSection === 'checkpoint' || printSection === 'harmony') && (
             <div id="sec-checkpoint" className="pdf-print-section pdf-print-subpage">
               <CheckpointSection events={cpEvents} syncing={false} />
@@ -4127,9 +3839,6 @@ export default function Analytics({ printMode: printModeProp = false }) {
             )}
             {activeTab === 'mdm' && (
               <MdmSection devices={devices} apps={apps} syncing={syncing.mdm} onSync={syncMdm} />
-            )}
-            {activeTab === 'nvd' && (
-              <NvdSection stats={nvdStats} rows={nvdRows} syncing={syncing.nvd} onSync={syncNvd} />
             )}
             {activeTab === 'checkpoint' && (
               <CheckpointSection events={cpEvents} syncing={syncing.checkpoint} onSync={syncCheckpoint} />

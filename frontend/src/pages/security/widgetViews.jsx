@@ -481,11 +481,11 @@ export const VIEW_GROUPS = [
     label: 'Column & Bar',
     options: [
       { value: 'column', label: 'Column Chart' },
-      { value: 'bar', label: 'Bar Chart' },
+      // { value: 'bar', label: 'Bar Chart' },
       { value: 'stacked', label: 'Stacked Bar Chart' },
-      { value: 'histogram', label: 'Histogram' },
+      // { value: 'histogram', label: 'Histogram' },
       { value: 'waterfall', label: 'Waterfall Chart' },
-      { value: 'pareto', label: 'Pareto Chart' },
+      // { value: 'pareto', label: 'Pareto Chart' },
       { value: 'lollipop', label: 'Lollipop Chart' },
       { value: 'hbar', label: 'Labeled Bar Chart' },
       { value: 'stacked-bar', label: 'Grouped Bar Chart' },
@@ -509,17 +509,17 @@ export const VIEW_GROUPS = [
   {
     label: 'Scatter & Distribution',
     options: [
-      { value: 'scatter', label: 'Scatter Plot' },
-      { value: 'bubble', label: 'Bubble Chart' },
+      // { value: 'scatter', label: 'Scatter Plot' },
+      // { value: 'bubble', label: 'Bubble Chart' },
       { value: 'heatmap', label: 'Heat Map' },
-      { value: 'box', label: 'Box Plot' },
+      // { value: 'box', label: 'Box Plot' },
     ],
   },
   {
     label: 'Other',
     options: [
       { value: 'radial', label: 'Gauge / Radial Chart' },
-      { value: 'radar', label: 'Radar Chart' },
+      // { value: 'radar', label: 'Radar Chart' },
       { value: 'funnel', label: 'Funnel Chart' },
       { value: 'treemap', label: 'Treemap Chart' },
       { value: 'list', label: 'Comparison List' },

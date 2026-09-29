@@ -5,8 +5,8 @@ import { useProviders } from '../../context/ProviderContext.jsx';
 import AnalyticsLaunchButton from '../../components/AnalyticsLaunchButton.jsx';
 import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
-  ComposedChart, Line, AreaChart, Area, Legend,
+  Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  ComposedChart, Line,
 } from 'recharts';
 import {
   DaysFilter,
@@ -228,26 +228,20 @@ const makeRiskDistribution = (rows) => {
     .sort((a, b) => parseNumber(a.risk) - parseNumber(b.risk));
 };
 
-const getSecurityScoreStatus = (score) => {
-  if (score >= 90) return { label: 'Excellent', color: '#22c55e' };
-  if (score >= 70) return { label: 'Warning', color: '#f59e0b' };
-  return { label: 'Critical', color: '#ef4444' };
-};
-
 // ── Reusable Components ───────────────────────────────────────────────────────
 
 function KpiCard({ title, value, subtitle, icon, color, onClick }) {
   return (
     <div
       onClick={onClick}
-      className={`relative flex min-h-[140px] w-full overflow-hidden rounded-2xl border p-4 transition-all duration-200 hover:-translate-y-1 bg-[var(--card-bg)] border-[var(--card-border)] ${
+      className={`relative flex min-h-[140px] w-full overflow-hidden rounded-2xl border p-5 transition-all duration-200 hover:-translate-y-1 bg-[var(--card-bg)] border-[var(--card-border)] shadow-sm ${
         onClick ? 'cursor-pointer' : ''
       }`}
     >
       <div className="absolute right-0 top-0 h-20 w-20 rounded-bl-[40px]" style={{ backgroundColor: color, opacity: 0.15 }} />
       <div className="flex w-full flex-col justify-between pr-12">
         <div>
-          <p className="max-w-[135px] text-[11px] font-black uppercase leading-4 tracking-wide text-[var(--muted)]">{title}</p>
+          <p className="text-[11px] font-black uppercase leading-4 tracking-wide text-[var(--muted)]">{title}</p>
           <h2 className="mt-2 max-w-full break-words text-[24px] font-black leading-[1.15] text-[var(--foreground)]" title={String(value)}>
             {value}
           </h2>
@@ -674,8 +668,6 @@ export default function PaloAltoPage() {
     });
   }, [dashboard.topConnectionsRows, topConnectionsDays]);
 
-  const scoreStatus = getSecurityScoreStatus(dashboard.securityScore);
-
   return (
     <div className="min-h-screen p-4 sm:p-6 lg:p-8 bg-[var(--background)] space-y-6">
       {/* Header */}
@@ -704,8 +696,8 @@ export default function PaloAltoPage() {
       {/* Loader */}
       {loading && (
         <div className="space-y-6">
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(230px,1fr))] gap-4">
-            {[0, 1, 2, 3, 4].map((i) => (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {[0, 1, 2, 3].map((i) => (
               <div key={i} className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-4 shadow-sm h-[140px]">
                 <div className="h-3 w-2/5 bg-[var(--muted-bg)] rounded animate-pulse mb-4" />
                 <div className="h-8 w-1/3 bg-[var(--muted-bg)] rounded animate-pulse" />
@@ -739,8 +731,8 @@ export default function PaloAltoPage() {
             onKpiDaysChange={setKpiDays}
           />
 
-          {/* 5 KPI Metric Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+          {/* 4 KPI Metric Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <KpiCard
               title="Total Sessions"
               value={formatNumber(dashboard.totalSessions)}
@@ -779,13 +771,6 @@ export default function PaloAltoPage() {
                       )
                   : undefined
               }
-            />
-            <KpiCard
-              title="Security Score"
-              value={`${dashboard.securityScore}/100`}
-              subtitle={scoreStatus.label}
-              icon="🛡️"
-              color={scoreStatus.color}
             />
           </div>
 

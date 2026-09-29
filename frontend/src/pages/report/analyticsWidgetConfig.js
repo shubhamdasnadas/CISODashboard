@@ -888,9 +888,8 @@ export const SECTION_META = {
   s1cves: { number: 1, title: '1.2 — Application CVEs', subtitle: 'SentinelOne Application Vulnerabilities', color: '#10b981' },
   s1threats: { number: 1, title: '1.3 — Threat Analytics', subtitle: 'SentinelOne Threat Intelligence', color: '#10b981' },
   mdm: { number: 2, title: 'MDM / Hexnode', subtitle: 'Mobile Device Management', color: '#06b6d4' },
-  nvd: { number: 3, title: 'NVD CVEs', subtitle: 'National Vulnerability Database', color: '#8b5cf6' },
-  checkpoint: { number: 4, title: 'Checkpoint Harmony', subtitle: 'Email Security', color: '#6366f1' },
-  firewall: { number: 5, title: 'Palo Alto Firewall', subtitle: 'Network Security', color: '#f59e0b' },
-  zoho: { number: 6, title: 'Zoho Desk', subtitle: 'Ticketing System', color: '#3b82f6' },
-  microsoft: { number: 7, title: 'Microsoft 365', subtitle: 'Identity & Access', color: '#8b5cf6' },
+  checkpoint: { number: 3, title: 'Checkpoint Harmony', subtitle: 'Email Security', color: '#6366f1' },
+  firewall: { number: 4, title: 'Palo Alto Firewall', subtitle: 'Network Security', color: '#f59e0b' },
+  zoho: { number: 5, title: 'Zoho Desk', subtitle: 'Ticketing System', color: '#3b82f6' },
+  microsoft: { number: 6, title: 'Microsoft 365', subtitle: 'Identity & Access', color: '#8b5cf6' },
 };

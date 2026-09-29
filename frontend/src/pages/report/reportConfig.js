@@ -359,129 +359,11 @@ export const ANALYTICS_CONFIG = [
     },
   },
 
-  // ── 3. NVD ──────────────────────────────────────────────────────────────────
-  {
-    id: 'nvd',
-    sectionKey: 'nvd',
-    number: '04',
-    title: 'National Vulnerability Database (NVD)',
-    subtitle: 'Global vulnerability ingestion, CVSS base score trends & CPE impact',
-    color: '#8b5cf6',
-    hasData: (data) => (Array.isArray(data.nvdRows) && data.nvdRows.length > 0) || Boolean(data.nvdStats),
-    getLead: (data) => {
-      const rows = data.nvdRows || [];
-      const total = rows.length;
-      let highRisk = 0;
-      rows.forEach((v) => {
-        const s = String(v.cvss_base_severity || '').toUpperCase();
-        const sc = Number(v.cvss_base_score);
-        if (s === 'CRITICAL' || s === 'HIGH' || sc >= 7) highRisk++;
-      });
-      const highRiskPct = total ? Math.round((highRisk / total) * 100) : 0;
-      return `${fmtNum(total)} CVEs in scope | ${fmtNum(highRisk)} Critical/High (${highRiskPct}%).`;
-    },
-    getKpis: (data) => {
-      const computeNvd = (arr) => {
-        let total = 0;
-        let sevCounts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 };
-        let withWeakness = 0;
-        let scoreSum = 0;
-        let scoreCount = 0;
-        if (Array.isArray(arr) && arr.length > 0) {
-          total = arr.length;
-          arr.forEach((v) => {
-            let s = String(v.cvss_base_severity || '').toUpperCase();
-            const sc = Number(v.cvss_base_score);
-            if (!s) {
-              if (sc >= 9) s = 'CRITICAL';
-              else if (sc >= 7) s = 'HIGH';
-              else if (sc >= 4) s = 'MEDIUM';
-              else if (sc > 0) s = 'LOW';
-              else s = 'UNKNOWN';
-            }
-            sevCounts[s] = (sevCounts[s] || 0) + 1;
-            if (v.weaknesses) withWeakness++;
-            if (!isNaN(sc) && sc > 0) { scoreSum += sc; scoreCount++; }
-          });
-        }
-        const avgCvss = scoreCount > 0 ? (scoreSum / scoreCount).toFixed(1) : null;
-        const highRisk = (sevCounts['CRITICAL'] || 0) + (sevCounts['HIGH'] || 0);
-        const highRiskPct = total ? Math.round((highRisk / total) * 100) : 0;
-        return { total, sevCounts, withWeakness, scoreCount, avgCvss, highRisk, highRiskPct };
-      };
-
-      const cur = computeNvd(data.nvdRows);
-      const prev = data.nvdRowsPrev ? computeNvd(data.nvdRowsPrev) : null;
-      const totalAll = data.nvdStats?.total ?? cur.total;
-
-      return [
-        [
-          { label: 'Total CVEs', value: fmtNum(cur.total), cur: cur.total, prev: prev?.total, color: '#3b82f6', sub: totalAll ? `${Math.round((cur.total / totalAll) * 100)}% of all-time` : '', goodWhenUp: false },
-          { label: 'Critical', value: fmtNum(cur.sevCounts.CRITICAL), cur: cur.sevCounts.CRITICAL, prev: prev?.sevCounts?.CRITICAL, color: '#a855f7', goodWhenUp: false },
-          { label: 'High', value: fmtNum(cur.sevCounts.HIGH), cur: cur.sevCounts.HIGH, prev: prev?.sevCounts?.HIGH, color: '#ef4444', goodWhenUp: false },
-          { label: 'Medium', value: fmtNum(cur.sevCounts.MEDIUM), cur: cur.sevCounts.MEDIUM, prev: prev?.sevCounts?.MEDIUM, color: '#f59e0b', goodWhenUp: false },
-          { label: 'Low', value: fmtNum(cur.sevCounts.LOW), cur: cur.sevCounts.LOW, prev: prev?.sevCounts?.LOW, color: '#3b82f6', goodWhenUp: false },
-        ],
-        [
-          { label: 'Critical + High', value: fmtNum(cur.highRisk), cur: cur.highRisk, prev: prev?.highRisk, color: '#ef4444', sub: `${cur.highRiskPct}% of window`, goodWhenUp: false },
-          { label: 'Avg CVSS Score', value: cur.avgCvss || '-', cur: cur.avgCvss ? parseFloat(cur.avgCvss) : null, prev: prev && prev.avgCvss ? parseFloat(prev.avgCvss) : null, color: '#f1f5f9', sub: `${cur.scoreCount} scored CVEs`, goodWhenUp: false },
-          { label: 'With Weakness', value: fmtNum(cur.withWeakness), cur: cur.withWeakness, prev: prev?.withWeakness, color: '#10b981', sub: cur.total ? `${Math.round((cur.withWeakness / cur.total) * 100)}% of window` : '', goodWhenUp: false },
-          { label: 'UNKNOWN Severity', value: fmtNum(cur.sevCounts.UNKNOWN), cur: cur.sevCounts.UNKNOWN, prev: prev?.sevCounts?.UNKNOWN, color: '#94a3b8', sub: 'no CVSS mapping', goodWhenUp: false },
-        ],
-      ];
-    },
-    getWidgets: (data) => {
-      const arr = data.nvdRows || [];
-      const sevCounts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 };
-      const statusCounts = {};
-      const buckets = { 'Critical (9.0-10)': 0, 'High (7.0-8.9)': 0, 'Medium (4.0-6.9)': 0, 'Low (0.1-3.9)': 0, 'None': 0 };
-
-      arr.forEach((v) => {
-        let s = String(v.cvss_base_severity || '').toUpperCase();
-        const sc = Number(v.cvss_base_score);
-        if (!s) {
-          if (sc >= 9) s = 'CRITICAL';
-          else if (sc >= 7) s = 'HIGH';
-          else if (sc >= 4) s = 'MEDIUM';
-          else if (sc > 0) s = 'LOW';
-          else s = 'UNKNOWN';
-        }
-        sevCounts[s] = (sevCounts[s] || 0) + 1;
-        const st = v.vuln_status || 'Unknown';
-        statusCounts[st] = (statusCounts[st] || 0) + 1;
-        if (!isNaN(sc) && sc > 0) {
-          if (sc >= 9) buckets['Critical (9.0-10)']++;
-          else if (sc >= 7) buckets['High (7.0-8.9)']++;
-          else if (sc >= 4) buckets['Medium (4.0-6.9)']++;
-          else buckets['Low (0.1-3.9)']++;
-        } else {
-          buckets['None']++;
-        }
-      });
-
-      const severityData = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN']
-        .filter((s) => sevCounts[s] > 0)
-        .map((s, i) => ({ name: s, value: sevCounts[s], fill: ['#a855f7', '#ef4444', '#eab308', '#3b82f6', '#64748b'][i] }));
-      const statusData = Object.entries(statusCounts)
-        .sort((a, b) => b[1] - a[1])
-        .map(([name, value], i) => ({ name, value, fill: COLORS[i % COLORS.length] }));
-      const scoreBuckets = Object.entries(buckets)
-        .filter(([, val]) => val > 0)
-        .map(([name, value], i) => ({ name, value, fill: ['#a855f7', '#ef4444', '#eab308', '#3b82f6', '#94a3b8'][i % 5] }));
-
-      return [
-        { id: 'nvd_sev', title: 'CVEs by Severity', type: 'donut', data: severityData, half: true },
-        { id: 'nvd_status', title: 'CVEs by Status', type: 'donut', data: statusData, half: true },
-        { id: 'nvd_score_range', title: 'CVEs by CVSS Score Range', type: 'donut', data: scoreBuckets, half: true },
-      ];
-    },
-  },
-
   // ── 4. Checkpoint Harmony ───────────────────────────────────────────────────
   {
     id: 'checkpoint',
     sectionKey: 'checkpoint',
-    number: '05',
+    number: '04',
     title: 'Check Point · Harmony Email Security',
     subtitle: 'Phishing prevention, malicious attachment detection & remediation telemetry',
     color: '#ec4899',
@@ -596,7 +478,7 @@ export const ANALYTICS_CONFIG = [
   {
     id: 'firewall',
     sectionKey: 'firewall',
-    number: '06',
+    number: '05',
     title: 'Palo Alto · Next-Gen Firewall',
     subtitle: 'Network traffic patterns, blocked URL categories & high-risk application sessions',
     color: '#f97316',
@@ -722,7 +604,7 @@ export const ANALYTICS_CONFIG = [
   {
     id: 'zoho',
     sectionKey: 'zoho',
-    number: '07',
+    number: '06',
     title: 'Zoho Desk · Incident & Support Tickets',
     subtitle: 'Ticket volume trends, resolution aging & departmental service performance',
     color: '#06b6d4',
@@ -847,7 +729,7 @@ export const ANALYTICS_CONFIG = [
   {
     id: 'microsoft',
     sectionKey: 'microsoft',
-    number: '08',
+    number: '07',
     title: 'Microsoft 365 · Cloud Posture',
     subtitle: 'Identity security, license utilization, MFA adoption & cloud apps',
     color: '#6366f1',
