@@ -852,6 +852,7 @@ export default function PaloAltoPage() {
                       fill: RISK_COLORS[String(entry.risk)] || COLORS[0],
                     }))}
                     timeSeriesData={riskDistTimeSeries}
+                    days={riskDistDays}
                     viewType={riskDistView}
                     view={riskDistView}
                     storageKey="firewall-risk-dist"
@@ -893,6 +894,7 @@ export default function PaloAltoPage() {
                       fill: COLORS[i % COLORS.length],
                     }))}
                     timeSeriesData={topAttacksTimeSeries}
+                    days={topAttacksDays}
                     viewType={topAttacksView}
                     view={topAttacksView}
                     storageKey="firewall-top-attacks"
@@ -932,6 +934,7 @@ export default function PaloAltoPage() {
                       fill: ['#f97316', '#3b82f6', '#10b981', '#8b5cf6', '#ec4899', '#f59e0b', '#06b6d4', '#84cc16'][i % 8],
                     }))}
                     timeSeriesData={topSourcesTimeSeries}
+                    days={topSourcesDays}
                     viewType={topSourcesView}
                     view={topSourcesView}
                     storageKey="firewall-top-sources"
@@ -971,6 +974,7 @@ export default function PaloAltoPage() {
                       fill: ['#ef4444', '#f59e0b', '#8b5cf6', '#3b82f6', '#06b6d4', '#10b981', '#ec4899', '#84cc16'][i % 8],
                     }))}
                     timeSeriesData={topDeniedTimeSeries}
+                    days={topDeniedDays}
                     viewType={topDeniedView}
                     view={topDeniedView}
                     storageKey="firewall-top-denied"
@@ -1010,6 +1014,7 @@ export default function PaloAltoPage() {
                       fill: ['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b', '#06b6d4', '#ec4899', '#f97316', '#84cc16'][i % 8],
                     }))}
                     timeSeriesData={topConnectionsTimeSeries}
+                    days={topConnectionsDays}
                     viewType={topConnectionsView}
                     view={topConnectionsView}
                     storageKey="firewall-top-connections"

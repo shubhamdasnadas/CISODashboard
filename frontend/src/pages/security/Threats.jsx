@@ -942,7 +942,8 @@ export default function Threats() {
             <MultiViewChart
               data={classificationData}
               viewType={classView}
-              monthlyData={classView === 'comparison' ? classRange : undefined}
+              monthlyData={classRange}
+              days={classDays}
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'classification', value: data.name, title: `${data.name} Threats` } })}
             />
           )}
@@ -960,7 +961,8 @@ export default function Threats() {
             <MultiViewChart
               data={filelessData}
               viewType={filelessView}
-              monthlyData={filelessView === 'comparison' ? filelessRange : undefined}
+              monthlyData={filelessRange}
+              days={filelessDays}
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: data.name === 'Fileless' ? 'fileless' : 'fileless_type', value: data.name === 'Fileless' ? 'true' : 'false', title: `${data.name} Threats` } })}
             />
           )}
@@ -978,7 +980,8 @@ export default function Threats() {
             <MultiViewChart
               data={mitigationRateData}
               viewType={mitigView}
-              monthlyData={mitigView === 'comparison' ? mitigRange : undefined}
+              monthlyData={mitigRange}
+              days={mitigDays}
               emptyLabel="No mitigation data"
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mitigationStatusArray', value: data.name, title: `Threats with ${data.name} status` } })}
             />
@@ -1001,7 +1004,8 @@ export default function Threats() {
             <MultiViewChart
               data={topUsersData}
               viewType={usersView}
-              monthlyData={usersView === 'comparison' ? usersRange : undefined}
+              monthlyData={usersRange}
+              days={usersDays}
               barColor="#f59e0b"
               emptyLabel="No user data"
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'processUser', value: data.name, title: `Threats by user ${data.name}` } })}
@@ -1021,7 +1025,8 @@ export default function Threats() {
             <MultiViewChart
               data={severityData}
               viewType={severityView}
-              monthlyData={severityView === 'comparison' ? severityRange : undefined}
+              monthlyData={severityRange}
+              days={severityDays}
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'confidenceLevel', value: data.name, title: `Threats with ${data.name} confidence` } })}
             />
           )}
@@ -1042,7 +1047,8 @@ export default function Threats() {
             <MultiViewChart
               data={bySiteData}
               viewType={siteView}
-              monthlyData={siteView === 'comparison' ? siteRange : undefined}
+              monthlyData={siteRange}
+              days={siteDays}
               barColor="#10b981"
               emptyLabel="No site data"
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'site', value: data.name, title: `Threats in site ${data.name}` } })}
@@ -1062,7 +1068,8 @@ export default function Threats() {
             <MultiViewChart
               data={byGroupData}
               viewType={groupView}
-              monthlyData={groupView === 'comparison' ? groupRange : undefined}
+              monthlyData={groupRange}
+              days={groupDays}
               barColor="#ec4899"
               emptyLabel="No group data"
               onItemClick={(data) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'group', value: data.name, title: `Threats in group ${data.name}` } })}

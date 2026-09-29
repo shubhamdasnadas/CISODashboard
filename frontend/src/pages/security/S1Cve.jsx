@@ -564,7 +564,8 @@ export default function S1Cve() {
             <MultiViewChart
               data={severityPieData}
               viewType={severityView}
-              monthlyData={severityView === 'comparison' ? severityRange : undefined}
+              monthlyData={severityRange}
+              days={severityDays}
               timeSeriesData={severityTimeSeries}
               storageKey="cveSeverity"
               emptyLabel="No severity data"
@@ -579,7 +580,8 @@ export default function S1Cve() {
             <MultiViewChart
               data={scoreRangePieData}
               viewType={scoreView}
-              monthlyData={scoreView === 'comparison' ? scoreBucketRange : undefined}
+              monthlyData={scoreBucketRange}
+              days={scoreDays}
               timeSeriesData={scoreTimeSeries}
               storageKey="cveScore"
               emptyLabel="No score data"
@@ -594,7 +596,8 @@ export default function S1Cve() {
             <MultiViewChart
               data={topRiskyApps.map((a) => ({ name: a.name, fullName: a.fullName, value: a.cves, fill: '#ef4444' }))}
               viewType={riskyView}
-              monthlyData={riskyView === 'comparison' ? riskyRange : undefined}
+              monthlyData={riskyRange}
+              days={riskyDays}
               timeSeriesData={riskyTimeSeries}
               storageKey="cveRisky"
               barColor="#ef4444"
@@ -610,7 +613,8 @@ export default function S1Cve() {
             <MultiViewChart
               data={cveAging.map((a, i) => ({ name: a.name, value: a.count, fill: CHART_COLORS[i % CHART_COLORS.length] }))}
               viewType={agingView}
-              monthlyData={agingView === 'comparison' ? agingRange : undefined}
+              monthlyData={agingRange}
+              days={agingDays}
               timeSeriesData={agingTimeSeries}
               storageKey="cveAging"
               barColor="#38bdf8"
@@ -626,7 +630,8 @@ export default function S1Cve() {
             <MultiViewChart
               data={endpointImpact.map((a) => ({ name: a.name, fullName: a.fullName, value: a.endpoints, fill: '#22c55e' }))}
               viewType={impactView}
-              monthlyData={impactView === 'comparison' ? impactRange : undefined}
+              monthlyData={impactRange}
+              days={impactDays}
               timeSeriesData={impactTimeSeries}
               storageKey="cveImpact"
               barColor="#22c55e"
@@ -642,7 +647,8 @@ export default function S1Cve() {
             <MultiViewChart
               data={vendorRisk.map((v) => ({ name: v.name, fullName: v.fullName, value: v.cves, fill: v.fill }))}
               viewType={vendorView}
-              monthlyData={vendorView === 'comparison' ? vendorRange : undefined}
+              monthlyData={vendorRange}
+              days={vendorDays}
               timeSeriesData={vendorTimeSeries}
               storageKey="cveVendor"
               barColor="#f97316"
