@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
+import { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area,
@@ -288,27 +288,6 @@ function GlobalDateFilterBar() {
   );
 }
 
-// ─── Multi-view chart type options (grouped) ──────────────────────────────
-const VIEW_OPTIONS = [
-  { label: 'Donut Chart', icon: '🍩', type: 'donut', group: 'Pie & Donut' },
-  { label: 'Pie Chart', icon: '🥧', type: 'pie', group: 'Pie & Donut' },
-  { label: 'Column Chart', icon: '📊', type: 'bar', group: 'Column & Bar' },
-  { label: 'Bar Chart', icon: '📊', type: 'hbar', group: 'Column & Bar' },
-  { label: 'Stacked Bar Chart', icon: '📊', type: 'stacked-bar', group: 'Column & Bar' },
-  { label: 'Grouped Bar Chart', icon: '📊', type: 'grouped-bar', group: 'Column & Bar' },
-  { label: 'Histogram', icon: '📊', type: 'histogram', group: 'Column & Bar' },
-  { label: 'Waterfall Chart', icon: '📊', type: 'waterfall', group: 'Column & Bar' },
-  { label: 'Pareto Chart', icon: '📊', type: 'pareto', group: 'Column & Bar' },
-  { label: 'Lollipop Chart', icon: '📊', type: 'lollipop', group: 'Column & Bar' },
-  { label: 'Labeled Bar Chart', icon: '📊', type: 'labeled-bar', group: 'Column & Bar' },
-  { label: 'Line Chart', icon: '📈', type: 'line', group: 'Line & Area' },
-  { label: 'Area Chart', icon: '📉', type: 'area', group: 'Line & Area' },
-  { label: 'Comparison Chart', icon: '📈', type: 'comparison', group: 'Line & Area' },
-  { label: 'Scatter Plot', icon: '🔵', type: 'scatter', group: 'Scatter & Distribution' },
-  { label: 'Bubble Chart', icon: '🫧', type: 'bubble', group: 'Scatter & Distribution' },
-  { label: 'Heat Map', icon: '🟧', type: 'heatmap', group: 'Scatter & Distribution' },
-];
-
 export function openInAnalytics(navigate, moduleKey, days = 7) {
   const to = todayStr();
   const fromDt = new Date();
@@ -423,54 +402,9 @@ function ChartCard({
   subtitle,
   children,
   className = '',
-  viewOptions,
   defaultChartType = 'donut',
-  onViewTypeChange,
   extraControls,
-  storageKey,
 }) {
-  const resolvedStorageKey = storageKey || (title ? `ciso_analytics_chart_${String(title).toLowerCase().replace(/[^a-z0-9]+/g, '_')}` : null);
-
-  const [localChartType, setLocalChartType] = useState(() => {
-    if (typeof window !== 'undefined' && resolvedStorageKey) {
-      try {
-        const saved = localStorage.getItem(resolvedStorageKey);
-        if (saved && (!viewOptions || viewOptions.some((v) => v.type === saved))) {
-          return saved;
-        }
-      } catch {
-        // ignore
-      }
-    }
-    return defaultChartType;
-  });
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const dropdownRef = useRef(null);
-
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setDropdownOpen(false);
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  const handleChartTypeChange = (type) => {
-    setLocalChartType(type);
-    if (typeof window !== 'undefined' && resolvedStorageKey) {
-      try {
-        localStorage.setItem(resolvedStorageKey, type);
-      } catch {
-        // ignore
-      }
-    }
-    setDropdownOpen(false);
-    onViewTypeChange?.(type);
-  };
-
-  const currentLabel = viewOptions?.find((v) => v.type === localChartType)?.label || 'Donut Chart';
-  const groups = viewOptions ? [...new Set(viewOptions.map((v) => v.group))] : [];
-
   return (
     <div className={`card-surface pdf-card-avoid-break bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl overflow-hidden shadow-sm ${className}`}>
       <div className="flex items-center justify-between px-4 pt-4 pb-2 gap-2 flex-wrap">
@@ -478,54 +412,13 @@ function ChartCard({
           <p className="text-sm font-bold text-[var(--foreground)]">{title}</p>
           {subtitle && <p className="text-[11px] text-[var(--muted)] mt-0.5">{subtitle}</p>}
         </div>
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          {extraControls}
-          {/* Chart type grouped dropdown (independent per widget) */}
-          {viewOptions && (
-            <div className="relative" ref={dropdownRef}>
-              <button
-                type="button"
-                onClick={() => setDropdownOpen(!dropdownOpen)}
-                className="flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1 rounded-md border border-[var(--card-border)] bg-[var(--muted-bg)] text-[var(--foreground)] hover:bg-[var(--muted-bg)]/80 transition-colors"
-              >
-                {currentLabel}
-                <svg className={`w-3 h-3 text-[var(--muted)] transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-              {dropdownOpen && (
-                <div className="absolute right-0 top-full mt-1 w-52 max-h-72 overflow-y-auto bg-[var(--card-bg)] border border-[var(--card-border)] rounded-xl shadow-xl z-50">
-                  {groups.map((group) => (
-                    <div key={group}>
-                      <div className="px-3 py-1.5 text-[9px] font-bold uppercase tracking-wider text-[var(--muted)] bg-[var(--muted-bg)]/50 sticky top-0">{group}</div>
-                      {viewOptions.filter((v) => v.group === group).map((opt) => (
-                        <button
-                          key={opt.type}
-                          type="button"
-                          onClick={() => handleChartTypeChange(opt.type)}
-                          className={`w-full flex items-center gap-2 px-3 py-1.5 text-[11px] font-medium transition-colors text-left ${localChartType === opt.type
-                            ? 'bg-indigo-500/10 text-indigo-500 font-bold'
-                            : 'text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
-                            }`}
-                        >
-                          <span>{opt.icon}</span>
-                          <span>{opt.label}</span>
-                          {localChartType === opt.type && (
-                            <svg className="w-3.5 h-3.5 ml-auto text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                            </svg>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        {extraControls && (
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {extraControls}
+          </div>
+        )}
       </div>
-      {typeof children === 'function' ? children(localChartType) : children}
+      {typeof children === 'function' ? children(defaultChartType) : children}
     </div>
   );
 }
@@ -1159,7 +1052,7 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
   // Each widget filters independently via FilterByDays — no global from/to
 
   // Secondary tabs inside the SentinelOne section (mirrors the module page).
-  const [activeSubTab, setActiveSubTab] = useState('agents');
+  const [activeSubTab, setActiveSubTab] = useState('threats');
   const SUB_TABS = [
     { id: 'threats', label: 'Threat Analytics', icon: '⚠️' },
     { id: 'agents', label: 'Agent Analytics', icon: '🖥️' },
@@ -1295,7 +1188,7 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
   const hasThreats = fullThreats.length > 0;
 
   return (
-    <WizardSection id="security" kicker="Endpoint Protection" title="SentinelOne" icon="🛡️" accent="#10b981"
+    <WizardSection id="security" kicker="Endpoint Protection" title="EDR" icon="🛡️" accent="#10b981"
       meta={`${fullAgents.length} agents · ${fullCves.length} CVEs · ${fullThreats.length} threats`} syncing={syncing} onSync={onSync}>
 
       {/* Nested tabs for the three SentinelOne areas (hidden in allSubTabs print mode) */}
@@ -1366,7 +1259,7 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
             ].map((w) => (
               <FilterByDays key={w.title} data={fullAgents} dateFn={(a) => a.installTime || a.lastSeen || a.createdAt}>
                 {({ filtered }) => (
-                  <ChartCard title={w.title} viewOptions={VIEW_OPTIONS}>
+                  <ChartCard title={w.title}>
                     {(chartType) => <MultiViewChart data={w.fn(filtered)} chartType={chartType} />}
                   </ChartCard>
                 )}
@@ -1376,7 +1269,7 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
           {!allSubTabs && (
             <FilterByDays data={fullAgents} dateFn={(a) => a.installTime || a.lastSeen || a.createdAt}>
               {({ filtered }) => (
-                <ChartCard title="Scan Status" viewOptions={VIEW_OPTIONS}>
+                <ChartCard title="Scan Status">
                   {(chartType) => {
                     const scanData = computeAgentCharts(filtered).scanStatus;
                     return scanData.length === 0 ? <Empty /> : <MultiViewChart data={scanData} chartType={chartType} />;
@@ -1429,7 +1322,7 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
             ].map((w) => (
               <FilterByDays key={w.title} data={fullCves} dateFn={(r) => r.publishedDate || r.lastModified || r.detectionDate}>
                 {({ filtered }) => (
-                  <ChartCard title={w.title} viewOptions={VIEW_OPTIONS}>
+                  <ChartCard title={w.title}>
                     {(chartType) => <MultiViewChart data={w.fn(filtered)} chartType={chartType} />}
                   </ChartCard>
                 )}
@@ -1509,7 +1402,7 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
             ].map((w) => (
               <FilterByDays key={w.title} data={fullThreats} dateFn={(t) => t.threatInfo?.createdAt}>
                 {({ filtered }) => (
-                  <ChartCard title={w.title} viewOptions={VIEW_OPTIONS} defaultChartType={w.defaultType || 'donut'}>
+                  <ChartCard title={w.title} defaultChartType={w.defaultType || 'donut'}>
                     {(ct) => (
                       <MultiViewChart
                         data={w.fn(filtered)}
@@ -1533,7 +1426,7 @@ function SecuritySection({ agents: fullAgents, cves: fullCves, threats: fullThre
                 topN: 10,
               });
               return (
-                <ChartCard title="Threats by Site" subtitle="daily trend by site" viewOptions={VIEW_OPTIONS}>
+                <ChartCard title="Threats by Site" subtitle="daily trend by site">
                   {(chartType) => (
                     <div style={{ height: 288 }}>
                       {(chartType === 'line' || chartType === 'area') ? (
@@ -1624,7 +1517,7 @@ function MdmSection({ devices: fullDevices, apps: fullApps, syncing, onSync }) {
         ].map((w) => (
           <FilterByDays key={w.title} data={w.title === 'App Platform Breakdown' ? fullApps : fullDevices} dateFn={(d) => w.title === 'App Platform Breakdown' ? null : (d.last_reported || d.enrolled_at)}>
             {({ filtered }) => (
-              <ChartCard title={w.title} viewOptions={VIEW_OPTIONS}>
+              <ChartCard title={w.title}>
                 {(chartType) => <MultiViewChart data={w.fn(filtered)} chartType={chartType} />}
               </ChartCard>
             )}
@@ -1780,7 +1673,7 @@ function CheckpointSection({ events: fullEvents, syncing, onSync }) {
       {/* Interactive Events Per Day chart */}
       <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
         {({ filtered }) => (
-          <ChartCard viewOptions={VIEW_OPTIONS} title="Security Events Over Time" subtitle={cpTypeFilter ? `filtered: ${cpTypeFilter}` : 'all event types'}>
+          <ChartCard title="Security Events Over Time" subtitle={cpTypeFilter ? `filtered: ${cpTypeFilter}` : 'all event types'}>
             <div className="flex flex-wrap items-center gap-1.5 mb-3 px-1">
               <button onClick={() => setCpTypeFilter('')}
                 className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${!cpTypeFilter ? 'border-indigo-400 bg-indigo-500/10 text-indigo-500 font-semibold' : 'border-[var(--card-border)] text-[var(--muted)] hover:text-[var(--foreground)]'}`}>
@@ -1831,21 +1724,21 @@ function CheckpointSection({ events: fullEvents, syncing, onSync }) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
           {({ filtered }) => (
-            <ChartCard title="Severity Distribution" viewOptions={VIEW_OPTIONS}>
+            <ChartCard title="Severity Distribution">
               {(chartType) => <MultiViewChart data={cpSeverity(filtered)} chartType={chartType} />}
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
           {({ filtered }) => (
-            <ChartCard title="Event Type" viewOptions={VIEW_OPTIONS}>
+            <ChartCard title="Event Type">
               {(chartType) => <MultiViewChart data={cpTypes(filtered)} chartType={chartType} />}
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
           {({ filtered }) => (
-            <ChartCard title="Event State" viewOptions={VIEW_OPTIONS}>
+            <ChartCard title="Event State">
               {(chartType) => <MultiViewChart data={cpState(filtered)} chartType={chartType} />}
             </ChartCard>
           )}
@@ -1857,7 +1750,7 @@ function CheckpointSection({ events: fullEvents, syncing, onSync }) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
             {({ filtered }) => (
-              <ChartCard title="Confidence Indicator" viewOptions={VIEW_OPTIONS}>
+              <ChartCard title="Confidence Indicator">
                 {(chartType) => <MultiViewChart data={cpConfidence(filtered)} chartType={chartType} />}
               </ChartCard>
             )}
@@ -1865,7 +1758,7 @@ function CheckpointSection({ events: fullEvents, syncing, onSync }) {
           {cpSaas(events).length > 0 && (
             <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
               {({ filtered }) => (
-                <ChartCard title="SaaS Platform Distribution" viewOptions={VIEW_OPTIONS}>
+                <ChartCard title="SaaS Platform Distribution">
                   {(chartType) => <MultiViewChart data={cpSaas(filtered)} chartType={chartType} />}
                 </ChartCard>
               )}
@@ -1877,7 +1770,7 @@ function CheckpointSection({ events: fullEvents, syncing, onSync }) {
       {/* Event Type × Severity */}
       <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
         {({ filtered }) => (
-          <ChartCard title="Event Type × Severity" subtitle="severity mix within each event type" viewOptions={VIEW_OPTIONS}>
+          <ChartCard title="Event Type × Severity" subtitle="severity mix within each event type">
             <div style={{ height: 288 }}>
               {cpTypeSev(filtered).length === 0 ? <Empty /> : (
                 <ResponsiveContainer width="100%" height="100%">
@@ -1902,7 +1795,7 @@ function CheckpointSection({ events: fullEvents, syncing, onSync }) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
           {({ filtered }) => (
-            <ChartCard title="Cumulative Events Over Time" subtitle="running total of security events" viewOptions={VIEW_OPTIONS}>
+            <ChartCard title="Cumulative Events Over Time" subtitle="running total of security events">
               <div style={{ height: 260 }}>
                 {cpCumulative(filtered).length === 0 ? <Empty /> : (
                   <ResponsiveContainer width="100%" height="100%">
@@ -1921,7 +1814,7 @@ function CheckpointSection({ events: fullEvents, syncing, onSync }) {
         </FilterByDays>
         <FilterByDays data={events} dateFn={(e) => e.eventCreated}>
           {({ filtered }) => (
-            <ChartCard title="Remediation Rate Over Time" subtitle="% events remediated per day" viewOptions={VIEW_OPTIONS}>
+            <ChartCard title="Remediation Rate Over Time" subtitle="% events remediated per day">
               <div style={{ height: 260 }}>
                 {cpRemediation(filtered).length === 0 ? <Empty /> : (
                   <ResponsiveContainer width="100%" height="100%">
@@ -2108,14 +2001,14 @@ function FirewallSection({ reports, syncing, onSync }) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
           {({ filtered }) => (
-            <ChartCard title="Risk-wise Distribution" viewOptions={VIEW_OPTIONS} defaultChartType="donut">
+            <ChartCard title="Risk-wise Distribution" defaultChartType="donut">
               {(chartType) => <MultiViewChart data={fwRiskDistribution(filtered)} chartType={chartType} />}
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
           {({ filtered }) => (
-            <ChartCard title="Top Attacks" viewOptions={VIEW_OPTIONS} defaultChartType="hbar">
+            <ChartCard title="Top Attacks" defaultChartType="hbar">
               {(chartType) => (
                 <MultiViewChart
                   data={fwTopChart(filtered, ['threatid', 'threat', 'name', 'category'])}
@@ -2128,7 +2021,7 @@ function FirewallSection({ reports, syncing, onSync }) {
         </FilterByDays>
         <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
           {({ filtered }) => (
-            <ChartCard title="Top Sources" viewOptions={VIEW_OPTIONS} defaultChartType="hbar">
+            <ChartCard title="Top Sources" defaultChartType="hbar">
               {(chartType) => (
                 <MultiViewChart
                   data={fwTopChart(filtered, ['src', 'source', 'source_ip', 'name'])}
@@ -2141,7 +2034,7 @@ function FirewallSection({ reports, syncing, onSync }) {
         </FilterByDays>
         <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
           {({ filtered }) => (
-            <ChartCard title="Top Denied Destinations" viewOptions={VIEW_OPTIONS} defaultChartType="hbar">
+            <ChartCard title="Top Denied Destinations" defaultChartType="hbar">
               {(chartType) => (
                 <MultiViewChart
                   data={fwTopChart(filtered, ['dst', 'destination', 'destination_ip', 'name'])}
@@ -2154,7 +2047,7 @@ function FirewallSection({ reports, syncing, onSync }) {
         </FilterByDays>
         <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
           {({ filtered }) => (
-            <ChartCard title="Top Denied Sources" viewOptions={VIEW_OPTIONS} defaultChartType="hbar">
+            <ChartCard title="Top Denied Sources" defaultChartType="hbar">
               {(chartType) => (
                 <MultiViewChart
                   data={fwTopChart(filtered, ['src', 'source', 'source_ip', 'name'])}
@@ -2167,7 +2060,7 @@ function FirewallSection({ reports, syncing, onSync }) {
         </FilterByDays>
         <FilterByDays data={allRows} dateFn={(row) => { const v = fwFirst(row, ['date', 'day', 'time'], null); return v && v !== '-' ? v : null; }}>
           {({ filtered }) => (
-            <ChartCard title="Top Connections" viewOptions={VIEW_OPTIONS} defaultChartType="hbar">
+            <ChartCard title="Top Connections" defaultChartType="hbar">
               {(chartType) => (
                 <MultiViewChart
                   data={fwTopChart(filtered, ['source', 'destination', 'name', 'src', 'dst'])}
@@ -2180,7 +2073,7 @@ function FirewallSection({ reports, syncing, onSync }) {
         </FilterByDays>
       </div>
       {dashboard.riskTrend.length > 0 && (
-        <ChartCard viewOptions={VIEW_OPTIONS} defaultChartType="line" title="Risk Trend Over Time" subtitle="bars = traffic · line = sessions">
+        <ChartCard defaultChartType="line" title="Risk Trend Over Time" subtitle="bars = traffic · line = sessions">
           {(chartType) => (
             <div style={{ height: 260 }}>
               <ResponsiveContainer width="100%" height="100%">
@@ -2396,7 +2289,7 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
             filtered.forEach((t) => { const d = getCreated(t); if (!d) return; const k = d.toISOString().slice(0, 10); trendCounts[k] = (trendCounts[k] || 0) + 1; });
             const trend = Object.entries(trendCounts).sort(([a], [b]) => a.localeCompare(b)).slice(-20).map(([date, count]) => ({ date, count }));
             return (
-              <ChartCard title="Ticket Volume Trend" subtitle="Daily new tickets" viewOptions={VIEW_OPTIONS}>
+              <ChartCard title="Ticket Volume Trend" subtitle="Daily new tickets">
                 <div style={{ height: 260 }}>
                   {trend.length === 0 ? <Empty /> : (
                     <ResponsiveContainer width="100%" height="100%">
@@ -2431,7 +2324,7 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
             });
             const openAging = Object.entries(buckets).filter(([, v]) => v > 0).map(([name, value], i) => ({ name, value, fill: CHART_COLORS[i % CHART_COLORS.length] }));
             return (
-              <ChartCard title="Open Ticket Aging" subtitle="how long open tickets have been open" viewOptions={VIEW_OPTIONS}>
+              <ChartCard title="Open Ticket Aging" subtitle="how long open tickets have been open">
                 {(chartType) => <div style={{ height: 260 }}>{openAging.length === 0 ? <Empty /> : <MultiViewChart data={openAging} chartType={chartType} height={260} />}</div>}
               </ChartCard>
             );
@@ -2443,7 +2336,7 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
           {({ filtered }) => (
-            <ChartCard title="By Status" viewOptions={VIEW_OPTIONS}>
+            <ChartCard title="By Status">
               {(chartType) => {
                 const statusArr = Object.entries(filtered.reduce((acc, t) => { const s = t.status || 'Unknown'; acc[s] = (acc[s] || 0) + 1; return acc; }, {}))
                   .map(([name, value]) => ({ name, value, fill: STATUS_COLORS[name] || '#6366f1' })).sort((a, b) => b.value - a.value);
@@ -2454,7 +2347,7 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
         </FilterByDays>
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
           {({ filtered }) => (
-            <ChartCard title="By Priority" viewOptions={VIEW_OPTIONS} defaultChartType="bar">
+            <ChartCard title="By Priority" defaultChartType="bar">
               {(chartType) => {
                 const pArr = Object.entries(filtered.reduce((acc, t) => { const p = t.priority || 'Unknown'; acc[p] = (acc[p] || 0) + 1; return acc; }, {}))
                   .map(([name, value]) => ({ name, value, fill: PRIORITY_COLORS[name] || '#6b7280' })).sort((a, b) => b.value - a.value);
@@ -2465,7 +2358,7 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
         </FilterByDays>
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
           {({ filtered }) => (
-            <ChartCard title="By Department" viewOptions={VIEW_OPTIONS} defaultChartType="hbar">
+            <ChartCard title="By Department" defaultChartType="hbar">
               {(chartType) => {
                 const dArr = Object.entries(filtered.reduce((acc, t) => { const d = getDept(t); acc[d] = (acc[d] || 0) + 1; return acc; }, {}))
                   .map(([name, value]) => ({ name: truncateLabel(name), fullName: name, value })).sort((a, b) => b.value - a.value).slice(0, 8);
@@ -2480,7 +2373,7 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
           {({ filtered }) => (
-            <ChartCard title="Top Assignees" subtitle="tickets per agent" viewOptions={VIEW_OPTIONS} defaultChartType="hbar">
+            <ChartCard title="Top Assignees" subtitle="tickets per agent" defaultChartType="hbar">
               {(chartType) => {
                 const c = {}; filtered.forEach((t) => { const a = `${normText(t.assignee?.firstName)} ${normText(t.assignee?.lastName)}`.trim() || 'Unassigned'; c[a] = (c[a] || 0) + 1; });
                 const arr = Object.entries(c).map(([name, value]) => ({ name: truncateLabel(name), fullName: name, value })).sort((a, b) => b.value - a.value).slice(0, 8);
@@ -2491,7 +2384,7 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
         </FilterByDays>
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
           {({ filtered }) => (
-            <ChartCard title="Top Contacts" subtitle="tickets per reporter" viewOptions={VIEW_OPTIONS} defaultChartType="hbar">
+            <ChartCard title="Top Contacts" subtitle="tickets per reporter" defaultChartType="hbar">
               {(chartType) => {
                 const c = {}; filtered.forEach((t) => { const x = `${normText(t.contact?.firstName)} ${normText(t.contact?.lastName)}`.trim() || normText(t.contact?.email) || 'Unknown'; c[x] = (c[x] || 0) + 1; });
                 const arr = Object.entries(c).map(([name, value]) => ({ name: truncateLabel(name), fullName: name, value })).sort((a, b) => b.value - a.value).slice(0, 8);
@@ -2502,7 +2395,7 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
         </FilterByDays>
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
           {({ filtered }) => (
-            <ChartCard title="Avg Resolution by Department" subtitle="hours to close (open → closed)" viewOptions={VIEW_OPTIONS} defaultChartType="hbar">
+            <ChartCard title="Avg Resolution by Department" subtitle="hours to close (open → closed)" defaultChartType="hbar">
               {(chartType) => {
                 const m = {}; filtered.forEach((t) => { const c = getCreated(t); const cl = getClosed(t); if (!c || !cl || !isClosed(t)) return; const d = getDept(t); m[d] = m[d] || { sum: 0, count: 0 }; m[d].sum += (cl.getTime() - c.getTime()) / 60000; m[d].count++; });
                 const arr = Object.entries(m).map(([name, { sum, count }]) => ({ name: truncateLabel(name), fullName: name, value: Math.round((sum / count) / 60) })).sort((a, b) => b.value - a.value).slice(0, 8);
@@ -2513,7 +2406,7 @@ function ZohoSection({ tickets: fullTickets, syncing, onSync }) {
         </FilterByDays>
         <FilterByDays data={tickets} dateFn={(t) => t.created_at || t.createdTime || t.createdAt}>
           {({ filtered }) => (
-            <ChartCard title="Status × Priority" subtitle="ticket mix by status stacked by priority" viewOptions={VIEW_OPTIONS}>
+            <ChartCard title="Status × Priority" subtitle="ticket mix by status stacked by priority">
               <div style={{ height: 288 }}>
                 {(() => {
                   const states = [...new Set(filtered.map((t) => normText(t.status) || 'Unknown'))].slice(0, 6);
@@ -2639,21 +2532,21 @@ function MicrosoftSection({ msData, syncing, onSync }) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <FilterByDays data={riskDetections} dateFn={msDateFn}>
           {({ filtered }) => (
-            <ChartCard title="Risk Detections by Type" viewOptions={VIEW_OPTIONS}>
+            <ChartCard title="Risk Detections by Type">
               {(chartType) => <MultiViewChart data={bucket(filtered, (r) => r.riskEventType, 'unknown')} chartType={chartType} />}
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={riskyUsers} dateFn={msDateFn}>
           {({ filtered }) => (
-            <ChartCard title="Risky Users by Level" viewOptions={VIEW_OPTIONS}>
+            <ChartCard title="Risky Users by Level">
               {(chartType) => <MultiViewChart data={bucket(filtered, (u) => u.riskLevel || 'unknown')} chartType={chartType} />}
             </ChartCard>
           )}
         </FilterByDays>
         <FilterByDays data={securityAlerts} dateFn={msDateFn}>
           {({ filtered }) => (
-            <ChartCard title="Alerts by Severity" viewOptions={VIEW_OPTIONS}>
+            <ChartCard title="Alerts by Severity">
               {(chartType) => <MultiViewChart data={bucket(filtered, (a) => a.severity, 'unknown')} chartType={chartType} />}
             </ChartCard>
           )}
@@ -2661,7 +2554,7 @@ function MicrosoftSection({ msData, syncing, onSync }) {
         {managedDevices.length > 0 && (
           <FilterByDays data={managedDevices} dateFn={msDateFn}>
             {({ filtered }) => (
-              <ChartCard title="Device Compliance State" viewOptions={VIEW_OPTIONS}>
+              <ChartCard title="Device Compliance State">
                 {(chartType) => <MultiViewChart data={bucket(filtered, (d) => d.complianceState || 'unknown')} chartType={chartType} />}
               </ChartCard>
             )}
@@ -2681,7 +2574,7 @@ function MicrosoftSection({ msData, syncing, onSync }) {
             });
             const trend = Object.values(map).sort((a, b) => a.date.localeCompare(b.date)).slice(-15);
             return (
-              <ChartCard title="Sign-in Trend" subtitle="last 15 days — success vs failure" viewOptions={VIEW_OPTIONS}>
+              <ChartCard title="Sign-in Trend" subtitle="last 15 days — success vs failure">
                 <div style={{ height: 288 }}>
                   {trend.length === 0 ? <Empty /> : (
                     <ResponsiveContainer width="100%" height="100%">
@@ -2701,7 +2594,7 @@ function MicrosoftSection({ msData, syncing, onSync }) {
             );
           }}
         </FilterByDays>
-        <ChartCard viewOptions={VIEW_OPTIONS} title="Assigned vs Unassigned Licenses">
+        <ChartCard title="Assigned vs Unassigned Licenses">
           <div style={{ height: 288 }}>
             <div className="flex h-full items-center justify-center flex-col gap-4 px-6">
               <div className="w-full">
@@ -2729,7 +2622,7 @@ function MicrosoftSection({ msData, syncing, onSync }) {
 
 // ─── Module navigation pills ───────────────────────────────────────────────────
 const NAV_ITEMS = [
-  { id: 'security', label: 'SentinelOne', icon: '🛡️' },
+  { id: 'security', label: 'EDR', icon: '🛡️' },
   { id: 'mdm', label: 'MDM', icon: '📱' },
   { id: 'checkpoint', label: 'Checkpoint', icon: '📧' },
   { id: 'firewall', label: 'Palo Alto', icon: '🔥' },
