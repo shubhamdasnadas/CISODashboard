@@ -468,8 +468,9 @@ export function SideLegendDonut({
         prevVal = Number(comparisonMap.get(d.name)) || 0;
       } else if (d.fullName && comparisonMap.has(d.fullName)) {
         prevVal = Number(comparisonMap.get(d.fullName)) || 0;
-      } else if (numDays) {
-        const ratio = numDays <= 7 ? 0.88 : numDays <= 14 ? 0.82 : numDays <= 30 ? 0.76 : 0.70;
+      } else {
+        const effectiveDays = numDays || 30;
+        const ratio = effectiveDays <= 7 ? 0.88 : effectiveDays <= 14 ? 0.82 : effectiveDays <= 30 ? 0.76 : 0.70;
         const variance = 1 + ((idx % 5) - 2) * 0.08;
         prevVal = Math.max(0, Math.round(val * ratio * variance));
       }
@@ -954,6 +955,7 @@ export function MultiViewChart({
   data,
   viewType,
   view,
+  chartType,
   onItemClick,
   onSliceClick,
   barColor = '#3b82f6',
@@ -965,7 +967,7 @@ export function MultiViewChart({
   days,
   donutProps,
 }) {
-  const currentView = viewType || view || 'donut';
+  const currentView = viewType || view || chartType || 'donut';
   const handleClick = (item) => {
     if (onItemClick) onItemClick(item);
     else if (onSliceClick) onSliceClick(item);
@@ -1001,7 +1003,7 @@ export function MultiViewChart({
   if (currentView === 'column') {
     return (
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={coloredData} margin={{ top: 8, right: 16, left: 0, bottom: 40 }}>
+        <BarChart data={coloredData} margin={{ top: 16, right: 16, left: 0, bottom: 40 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
           <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={0} angle={-25} textAnchor="end" height={50} />
           <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
@@ -1009,6 +1011,7 @@ export function MultiViewChart({
           <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={36} name="Count" cursor="pointer"
             onClick={(d) => handleClick(d)}>
             {coloredData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+            <LabelList dataKey="value" position="top" style={{ fontSize: 10, fill: 'var(--foreground)', fontWeight: 600 }} />
           </Bar>
         </BarChart>
       </ResponsiveContainer>
@@ -1018,7 +1021,7 @@ export function MultiViewChart({
   if (currentView === 'bar') {
     return (
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={coloredData} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
+        <BarChart data={coloredData} layout="vertical" margin={{ top: 8, right: 24, left: 8, bottom: 8 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
           <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted)' }} width={dynamicYAxisWidth} interval={0} />
           <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
@@ -1026,6 +1029,7 @@ export function MultiViewChart({
           <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={18} name="Count" cursor="pointer"
             onClick={(d) => handleClick(d)}>
             {coloredData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+            <LabelList dataKey="value" position="right" style={{ fontSize: 10, fill: 'var(--foreground)', fontWeight: 600 }} />
           </Bar>
         </BarChart>
       </ResponsiveContainer>
@@ -1412,6 +1416,7 @@ export function MultiViewChart({
         </ComposedChart>
       </ResponsiveContainer>
     );
+
   }
 
   if (currentView === 'scatter') {
