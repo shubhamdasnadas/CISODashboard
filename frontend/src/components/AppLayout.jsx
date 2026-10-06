@@ -106,6 +106,12 @@ function Sidebar({ mobileOpen, onClose, allowedPages, collapsed = false, onToggl
 
   const logout = async () => {
     setLoggingOut(true);
+    try {
+      const logId = session.getLogId();
+      await api.post('/auth/logout', { logId, username: user.username });
+    } catch (err) {
+      console.warn('Error recording logout:', err);
+    }
     session.clearSession();
     setCurrentOrg(null);
     navigate('/login');

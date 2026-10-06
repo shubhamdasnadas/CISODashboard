@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import api from '../api';
 import * as session from '../utils/session.js';
 import { useOrg } from '../context/OrgContext.jsx';
 import PageTransitionLoader from '../components/PageTransitionLoader.jsx';
@@ -48,7 +49,14 @@ export default function SelectOrganisation() {
     navigate('/dashboard', { replace: true });
   }
 
-  function logout() {
+  async function logout() {
+    try {
+      const logId = session.getLogId();
+      const user = session.getUser();
+      await api.post('/auth/logout', { logId, username: user?.username });
+    } catch (err) {
+      console.warn('Error recording logout:', err);
+    }
     session.clearSession();
     setCurrentOrg(null);
     navigate('/login', { replace: true });

@@ -177,24 +177,26 @@ export default function OtpVerify() {
     }
     setLoading(true);
     try {
-      let token, user;
+      let token, user, logId;
 
       if (isTraditionalFlow && userIdentifier) {
         // Traditional flow: verify with email/username + otp
         const r = await api.post('/auth/otp/verify', { email: userIdentifier, username: userIdentifier, otp });
         token = r.data.token;
         user = r.data.user;
+        logId = r.data.logId;
       } else if (is2faFlow && sessionId) {
         // 2FA flow: verify with sessionId + otp — backend returns both token + user
         const r = await api.post('/auth/2fa/verify-otp', { sessionId, otp });
         token = r.data.accessToken;
         user = r.data.user;
+        logId = r.data.logId;
       } else {
         throw new Error('Invalid flow: missing username or sessionId');
       }
 
-      // Store token and user in this tab's own session
-      session.setAuth({ token, user });
+      // Store token, user, and logId in this tab's own session
+      session.setAuth({ token, user, logId });
       session.setOrgId(null);
       localStorage.removeItem('ciso_2fa_email');
       sessionStorage.removeItem('ciso_last_otp');

@@ -246,4 +246,43 @@ router.delete('/:id', authMiddleware, requireSuperAdmin, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/users/logs
+ * Returns user login/logout records from user_logs
+ */
+router.get('/logs', authMiddleware, async (req, res) => {
+  try {
+    const { username, role, date, limit = 100 } = req.query;
+    let query = 'SELECT id, username, role, date, login_time, logout_time, ip_address, user_agent, created_at FROM user_logs';
+    const conditions = [];
+    const params = [];
+
+    if (username) {
+      params.push(username);
+      conditions.push(`username = $${params.length}`);
+    }
+    if (role) {
+      params.push(role);
+      conditions.push(`role = $${params.length}`);
+    }
+    if (date) {
+      params.push(date);
+      conditions.push(`date = $${params.length}`);
+    }
+
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+
+    params.push(Math.min(parseInt(limit, 10) || 100, 500));
+    query += ` ORDER BY login_time DESC LIMIT $${params.length}`;
+
+    const { rows } = await centralPool.query(query, params);
+    return res.json({ logs: rows });
+  } catch (err) {
+    console.error('get user_logs error:', err);
+    return res.status(500).json({ error: 'Server error fetching user logs', detail: err.message });
+  }
+});
+
 module.exports = router;

@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api';
 import { useProviders } from '../../context/ProviderContext';
+import { getDeviceAddress } from '../MDMDetailView';
 
 export default function ScalefusionConfig() {
   const navigate = useNavigate();
@@ -582,6 +583,10 @@ export default function ScalefusionConfig() {
                 <div className="bg-[var(--muted-bg)] p-3 rounded-xl border border-[var(--card-border)]">
                   <span className="text-[var(--muted)] font-medium">Compliance State</span>
                   <p className="font-semibold text-[var(--foreground)] mt-0.5 capitalize">{selectedDevice.compliance_state || selectedDevice.compliance_status || (selectedDevice.compliant ? 'Compliant' : 'Non-compliant')}</p>
+                </div>
+                <div className="bg-[var(--muted-bg)] p-3 rounded-xl border border-[var(--card-border)] col-span-2">
+                  <span className="text-[var(--muted)] font-medium">Address</span>
+                  <p className="font-semibold text-[var(--foreground)] mt-0.5 break-words">{getDeviceAddress(selectedDevice)}</p>
                 </div>
               </div>
 

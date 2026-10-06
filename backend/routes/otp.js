@@ -148,9 +148,26 @@ router.post('/verify', async (req, res) => {
     expiresIn: process.env.JWT_EXPIRES_IN || '8h',
   });
 
+  // Record login in user_logs table (username, role, date, login_time)
+  let logId = null;
+  try {
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || null;
+    const userAgent = req.headers['user-agent'] || null;
+    const logRes = await centralPool.query(
+      `INSERT INTO user_logs (username, role, date, login_time, ip_address, user_agent)
+       VALUES ($1, $2, CURRENT_DATE, NOW(), $3, $4)
+       RETURNING id`,
+      [user.username, user.role, ip, userAgent]
+    );
+    logId = logRes.rows[0]?.id || null;
+  } catch (logErr) {
+    console.warn('[auth/otp] Failed to log user login:', logErr.message);
+  }
+
   return res.json({
     message: 'OTP verified',
     token,
+    logId,
     user: {
       id: user.id,
       username: user.username,

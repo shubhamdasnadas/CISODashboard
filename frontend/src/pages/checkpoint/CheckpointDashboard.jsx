@@ -5,9 +5,12 @@ import {
   MultiViewChart,
   useViewState,
   VIEW_GROUPS,
-  CompareRangeSelector,
+  DaysFilter,
+  DEFAULT_DAY_OPTIONS,
   withinRange,
-  tooltipStyle,
+  parseRecordDate,
+  categoryTimeSeries,
+  CategoryTimeSeriesChart,
 } from '../security/widgetViews.jsx';
 
 const CHART_COLORS = ['#6366f1', '#f97316', '#22c55e', '#ef4444', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6'];
@@ -53,72 +56,6 @@ function WidgetCard({ title, children, control, onClick }) {
   );
 }
 
-import {
-  LineChart, Line, AreaChart, Area,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-} from 'recharts';
-
-const CATEGORY_COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1', '#14b8a6', '#f97316'];
-
-function CategoryTimeSeriesChart({ timeSeriesData, type = 'line', storageKey = 'chart' }) {
-  const { data, categories, colors } = timeSeriesData;
-  if (!data || data.length === 0 || categories.length === 0) {
-    return <EmptyState />;
-  }
-  const isArea = type === 'area';
-  const Chart = isArea ? AreaChart : LineChart;
-
-  return (
-    <ResponsiveContainer width="100%" height="100%">
-      <Chart data={data} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-        <XAxis dataKey="date" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={Math.max(0, Math.floor(data.length / 7))} tickFormatter={(v) => v.slice(5)} />
-        <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-        <Tooltip contentStyle={tooltipStyle} />
-        <Legend wrapperStyle={{ fontSize: 10 }} />
-        {categories.map((cat, i) => {
-          const color = colors[i] || CATEGORY_COLORS[i % CATEGORY_COLORS.length];
-          if (isArea) {
-            const gradientId = `areaGrad-${storageKey}-${i}`;
-            return (
-              <Area
-                key={cat}
-                type="monotone"
-                dataKey={cat}
-                name={cat}
-                stroke={color}
-                strokeWidth={2}
-                fill={`url(#${gradientId})`}
-                dot={{ r: 2, fill: color }}
-                activeDot={{ r: 4, cursor: 'pointer' }}
-              >
-                <defs>
-                  <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={color} stopOpacity={0.4} />
-                    <stop offset="95%" stopColor={color} stopOpacity={0.05} />
-                  </linearGradient>
-                </defs>
-              </Area>
-            );
-          }
-          return (
-            <Line
-              key={cat}
-              type="monotone"
-              dataKey={cat}
-              name={cat}
-              stroke={color}
-              strokeWidth={2}
-              dot={{ r: 2, fill: color }}
-              activeDot={{ r: 4, cursor: 'pointer' }}
-            />
-          );
-        })}
-      </Chart>
-    </ResponsiveContainer>
-  );
-}
-
 function AnalyticsCard({ title, storageKey, data, onItemClick, defaultView = 'donut', summary, onClick, groups = VIEW_GROUPS, barColor, timeSeriesData, days, onDaysChange, yAxisWidth }) {
   const [view, setView] = useViewState(`checkpoint:${storageKey}`, defaultView);
   const showingSummary = view === 'summary';
@@ -131,7 +68,7 @@ function AnalyticsCard({ title, storageKey, data, onItemClick, defaultView = 'do
       control={
         <div className="flex items-center gap-1.5">
           <ChartViewDropdown value={view} onChange={setView} groups={groups} compact />
-          {onDaysChange && <CompareRangeSelector value={days} onChange={onDaysChange} />}
+          {onDaysChange && <DaysFilter value={days} onChange={onDaysChange} options={DEFAULT_DAY_OPTIONS} compact />}
         </div>
       }
     >
@@ -146,6 +83,7 @@ function AnalyticsCard({ title, storageKey, data, onItemClick, defaultView = 'do
               onItemClick={onItemClick}
               barColor={barColor}
               yAxisWidth={yAxisWidth}
+              days={days}
             />
           )}
         </div>
@@ -162,66 +100,6 @@ function countBy(events, keyOf, mapItem) {
     counts[key] = (counts[key] || 0) + 1;
   });
   return Object.entries(counts).map(([key, value], index) => mapItem(key, value, index));
-}
-
-// Builds per-category time series data for multi-line/area charts.
-// Returns { data: [{ date, ...categories }], categories: [name, ...], colors: [hex, ...] }
-// Each row has the date as x-axis and one key per category with its count.
-function categoryTimeSeries(events, { keyOf, dateOf, days = 30, refDate }) {
-  const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-
-  let ref = refDate || new Date();
-  let start = new Date(ref);
-  start.setDate(start.getDate() - days);
-
-  // Fall back to latest observed date if current window is empty
-  const dates = events
-    .map((e) => { const d = dateOf(e); return d && !isNaN(d.getTime()) ? d : null; })
-    .filter(Boolean);
-  if (dates.length > 0) {
-    const latest = new Date(Math.max(...dates.map((d) => d.getTime())));
-    const hasInWindow = dates.some((d) => d >= start && d <= ref);
-    if (!hasInWindow) {
-      ref = new Date(latest);
-      ref.setDate(ref.getDate() + 1);
-      start = new Date(ref);
-      start.setDate(start.getDate() - days);
-    }
-  }
-
-  // Collect all categories and build per-day buckets
-  const categories = new Set();
-  const dayBuckets = {};
-
-  events.forEach((event) => {
-    const k = keyOf(event);
-    if (!k) return;
-    const d = dateOf(event);
-    if (!d || isNaN(d.getTime())) return;
-    if (d < start || d > ref) return;
-
-    categories.add(k);
-    const dk = dayKey(d);
-    if (!dayBuckets[dk]) dayBuckets[dk] = {};
-    dayBuckets[dk][k] = (dayBuckets[dk][k] || 0) + 1;
-  });
-
-  const catList = [...categories];
-  const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1', '#14b8a6', '#f97316'];
-
-  // Build time series rows (one per day)
-  const data = [];
-  const cur = new Date(start);
-  cur.setDate(cur.getDate() + 1);
-  while (cur <= ref) {
-    const dk = dayKey(cur);
-    const row = { date: dk };
-    catList.forEach((cat) => { row[cat] = (dayBuckets[dk]?.[cat]) || 0; });
-    data.push(row);
-    cur.setDate(cur.getDate() + 1);
-  }
-
-  return { data, categories: catList, colors: colors.slice(0, catList.length) };
 }
 
 function SeverityDistribution({ events, goToDetail, timeSeriesData, days, onDaysChange }) {
@@ -334,7 +212,7 @@ function SaasPlatformDistribution({ events, timeSeriesData, days, onDaysChange }
     timeSeriesData={timeSeriesData} days={days} onDaysChange={onDaysChange} />;
 }
 
-function LastSevenDays({ events, goToDetail, dateFrom, dateTo }) {
+function LastSevenDays({ events, goToDetail }) {
   const { current, pct, data } = useMemo(() => {
     const now = new Date();
     const days = Array.from({ length: 7 }, (_, index) => {
@@ -366,11 +244,11 @@ function LastSevenDays({ events, goToDetail, dateFrom, dateTo }) {
   </div>;
 
   return <AnalyticsCard title="Last 7 Days" storageKey="last-seven-days" data={data} defaultView="summary" groups={KPI_VIEW_GROUPS} summary={summary}
-    onClick={() => goToDetail('checkpointDate', 'last7days', 'Events in Last 7 Days', dateFrom, dateTo)}
-    onItemClick={() => goToDetail('checkpointDate', 'last7days', 'Events in Last 7 Days', dateFrom, dateTo)} />;
+    onClick={() => goToDetail('checkpointDate', 'last7days', 'Events in Last 7 Days')}
+    onItemClick={() => goToDetail('checkpointDate', 'last7days', 'Events in Last 7 Days')} />;
 }
 
-function AverageSeverity({ events, goToDetail, dateFrom, dateTo }) {
+function AverageSeverity({ events, goToDetail }) {
   const { average, data } = useMemo(() => {
     const valid = events.filter((event) => event.severity !== '' && !Number.isNaN(Number(event.severity)));
     const average = valid.length ? (valid.reduce((total, event) => total + Number(event.severity), 0) / valid.length).toFixed(1) : null;
@@ -379,20 +257,20 @@ function AverageSeverity({ events, goToDetail, dateFrom, dateTo }) {
   }, [events]);
 
   const summary = <div className="flex flex-col items-center justify-center py-5 gap-1"><p className="text-5xl font-bold text-amber-500">{average ?? '—'}</p><p className="text-sm text-[var(--muted)]">out of 5</p></div>;
-  const openDetail = () => goToDetail('checkpointSeverity', 'high', 'High Severity Events', dateFrom, dateTo);
+  const openDetail = () => goToDetail('checkpointSeverity', 'high', 'High Severity Events');
 
   return <AnalyticsCard title="Average Severity" storageKey="average-severity" data={data} defaultView="summary" groups={KPI_VIEW_GROUPS} summary={summary}
     onClick={openDetail} onItemClick={openDetail} />;
 }
 
-function CriticalEvents({ events, goToDetail, dateFrom, dateTo }) {
+function CriticalEvents({ events, goToDetail }) {
   const data = useMemo(() => countBy(
     events.filter((event) => Number(event.severity) >= 4),
     (event) => String(event.severity),
     (code, value) => ({ name: SEVERITY_LABELS[code] ?? `Sev ${code}`, code, value, fill: SEVERITY_COLORS[Number(code) % SEVERITY_COLORS.length] ?? '#ef4444' }),
   ), [events]);
   const count = data.reduce((total, item) => total + item.value, 0);
-  const openDetail = () => goToDetail('criticalEvents', null, 'Critical Events', dateFrom, dateTo);
+  const openDetail = () => goToDetail('criticalEvents', null, 'Critical Events');
   const summary = <div className="flex flex-col items-center justify-center py-5 gap-1"><p className="text-5xl font-bold text-red-500">{count}</p><p className="text-sm text-[var(--muted)]">severity ≥ 4</p></div>;
 
   return <AnalyticsCard title="Critical Events" storageKey="critical-events" data={data} defaultView="summary" groups={KPI_VIEW_GROUPS} summary={summary}
@@ -401,9 +279,7 @@ function CriticalEvents({ events, goToDetail, dateFrom, dateTo }) {
 
 export default function CheckpointDashboard({ events }) {
   const navigate = useNavigate();
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-  const hasDateFilter = Boolean(dateFrom || dateTo);
+  const [selectedDays, setSelectedDays] = useState('all');
 
   // Rolling comparison window (days) for the Line/Area/Comparison views.
   const [severityDays, setSeverityDays] = useState(30);
@@ -414,30 +290,22 @@ export default function CheckpointDashboard({ events }) {
   const [mailboxDays, setMailboxDays] = useState(30);
   const [saasDays, setSaasDays] = useState(30);
 
-  const goToDetail = (filterId, value, title, overrideDateFrom, overrideDateTo) => navigate('/checkpoint/detail', {
+  const goToDetail = (filterId, value, title) => navigate('/checkpoint/detail', {
     state: {
       dataset: 'checkpoint',
       filterId,
       value,
       title,
-      dateFrom: overrideDateFrom ?? dateFrom,
-      dateTo: overrideDateTo ?? dateTo,
     },
   });
 
+  // Helper to extract date from event
+  const dateOfEvent = (event) => parseRecordDate(event.eventCreated);
+
   const filteredEvents = useMemo(() => {
     if (!events) return [];
-    if (!hasDateFilter) return events;
-    return events.filter((event) => {
-      const date = parseDate(event.eventCreated);
-      if (!date) return false;
-      const key = dateFmt(date);
-      return (!dateFrom || key >= dateFrom) && (!dateTo || key <= dateTo);
-    });
-  }, [events, dateFrom, dateTo, hasDateFilter]);
-
-  // Helper to extract date from event
-  const dateOfEvent = (event) => parseDate(event.eventCreated);
+    return withinRange(events, dateOfEvent, selectedDays);
+  }, [events, selectedDays]);
 
   // Category time series data for Line/Area views (each category as separate line)
   const severityTimeSeries = useMemo(() => categoryTimeSeries(filteredEvents, {
@@ -549,22 +417,14 @@ export default function CheckpointDashboard({ events }) {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h2 className="text-base font-semibold text-[var(--foreground)]">Analytics Overview</h2>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1.5">
-            <label className="text-[10px] text-[var(--muted)] font-medium">From</label>
-            <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(event) => setDateFrom(event.target.value)} className="text-[10px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
-          </div>
-          <div className="flex items-center gap-1.5">
-            <label className="text-[10px] text-[var(--muted)] font-medium">To</label>
-            <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(event) => setDateTo(event.target.value)} className="text-[10px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
-          </div>
-          {hasDateFilter && <button onClick={() => { setDateFrom(''); setDateTo(''); }} className="text-[10px] text-indigo-500 hover:text-indigo-700 font-semibold">Clear</button>}
+          <DaysFilter value={selectedDays} onChange={setSelectedDays} options={DEFAULT_DAY_OPTIONS} />
         </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <LastSevenDays events={filteredEvents} goToDetail={goToDetail} dateFrom={dateFrom} dateTo={dateTo} />
-        <AverageSeverity events={filteredEvents} goToDetail={goToDetail} dateFrom={dateFrom} dateTo={dateTo} />
-        <CriticalEvents events={filteredEvents} goToDetail={goToDetail} dateFrom={dateFrom} dateTo={dateTo} />
+        <LastSevenDays events={filteredEvents} goToDetail={goToDetail} />
+        <AverageSeverity events={filteredEvents} goToDetail={goToDetail} />
+        <CriticalEvents events={filteredEvents} goToDetail={goToDetail} />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

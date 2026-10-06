@@ -143,4 +143,90 @@ router.get('/me', authMiddleware, async (req, res) => {
   }
 });
 
+/**
+ * POST /api/auth/logout
+ * Body: { logId?, username?, sessionId? }
+ * Sets logout_time for the user's session in user_logs
+ */
+router.post('/logout', async (req, res) => {
+  try {
+    const { logId, username, sessionId } = req.body || {};
+    let targetUsername = username;
+
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
+        if (decoded?.username) targetUsername = decoded.username;
+      } catch {}
+    }
+
+    if (logId) {
+      await centralPool.query(
+        'UPDATE user_logs SET logout_time = NOW() WHERE id = $1',
+        [logId]
+      );
+    } else if (sessionId) {
+      await centralPool.query(
+        'UPDATE user_logs SET logout_time = NOW() WHERE session_id = $1 AND logout_time IS NULL',
+        [sessionId]
+      );
+    } else if (targetUsername) {
+      await centralPool.query(
+        `UPDATE user_logs SET logout_time = NOW()
+         WHERE id = (
+           SELECT id FROM user_logs
+           WHERE username = $1 AND logout_time IS NULL
+           ORDER BY login_time DESC LIMIT 1
+         )`,
+        [targetUsername]
+      );
+    }
+
+    return res.json({ success: true, message: 'Logout recorded' });
+  } catch (err) {
+    console.error('logout error:', err);
+    return res.status(500).json({ error: 'Server error on logout', detail: err.message });
+  }
+});
+
+/**
+ * GET /api/auth/user-logs
+ * Returns logs from user_logs
+ */
+router.get('/user-logs', authMiddleware, async (req, res) => {
+  try {
+    const { username, role, date, limit = 100 } = req.query;
+    let query = 'SELECT id, username, role, date, login_time, logout_time, ip_address, user_agent, created_at FROM user_logs';
+    const conditions = [];
+    const params = [];
+
+    if (username) {
+      params.push(username);
+      conditions.push(`username = $${params.length}`);
+    }
+    if (role) {
+      params.push(role);
+      conditions.push(`role = $${params.length}`);
+    }
+    if (date) {
+      params.push(date);
+      conditions.push(`date = $${params.length}`);
+    }
+
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+
+    params.push(Math.min(parseInt(limit, 10) || 100, 500));
+    query += ` ORDER BY login_time DESC LIMIT $${params.length}`;
+
+    const { rows } = await centralPool.query(query, params);
+    return res.json({ logs: rows });
+  } catch (err) {
+    console.error('get user_logs error:', err);
+    return res.status(500).json({ error: 'Server error fetching user logs', detail: err.message });
+  }
+});
+
 module.exports = router;

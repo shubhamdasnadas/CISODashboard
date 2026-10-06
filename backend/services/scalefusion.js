@@ -4,6 +4,72 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function extractAddressFromDevice(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  if (typeof obj.address === 'string' && obj.address.trim()) return obj.address.trim();
+  if (typeof obj.device_address === 'string' && obj.device_address.trim()) return obj.device_address.trim();
+  if (typeof obj.formatted_address === 'string' && obj.formatted_address.trim()) return obj.formatted_address.trim();
+  if (typeof obj.location_address === 'string' && obj.location_address.trim()) return obj.location_address.trim();
+
+  if (obj.address && typeof obj.address === 'object') {
+    const parts = [
+      obj.address.street || obj.address.street_address || obj.address.address_line1 || obj.address.line1,
+      obj.address.address_line2 || obj.address.line2,
+      obj.address.city,
+      obj.address.state || obj.address.province,
+      obj.address.postal_code || obj.address.zip || obj.address.zipcode,
+      obj.address.country,
+    ].filter(Boolean);
+    if (parts.length > 0) return parts.join(', ');
+    if (obj.address.formatted || obj.address.formatted_address) return obj.address.formatted || obj.address.formatted_address;
+  }
+
+  if (typeof obj.location === 'string' && obj.location.trim()) return obj.location.trim();
+  if (obj.location && typeof obj.location === 'object') {
+    if (obj.location.address && typeof obj.location.address === 'string') return obj.location.address;
+    if (obj.location.formatted_address) return obj.location.formatted_address;
+    if (obj.location.display_name) return obj.location.display_name;
+    if (obj.location.name) return obj.location.name;
+    const locParts = [
+      obj.location.street || obj.location.address_line1,
+      obj.location.city,
+      obj.location.state,
+      obj.location.country,
+    ].filter(Boolean);
+    if (locParts.length > 0) return locParts.join(', ');
+    if (obj.location.latitude && obj.location.longitude) {
+      return `${obj.location.latitude}, ${obj.location.longitude}`;
+    }
+  }
+
+  const geo = obj.last_known_location || obj.current_location || obj.geo_location;
+  if (geo && typeof geo === 'object') {
+    if (geo.address && typeof geo.address === 'string') return geo.address;
+    if (geo.formatted_address) return geo.formatted_address;
+    if (geo.latitude && geo.longitude) return `${geo.latitude}, ${geo.longitude}`;
+  }
+
+  const composed = [
+    obj.street_address || obj.street,
+    obj.city,
+    obj.state || obj.province,
+    obj.zip || obj.postal_code || obj.zipcode,
+    obj.country,
+  ].filter(Boolean);
+  if (composed.length > 0) return composed.join(', ');
+
+  if (Array.isArray(obj.custom_fields)) {
+    const addrField = obj.custom_fields.find((f) => /address|location/i.test(f.name || f.key || ''));
+    if (addrField && (addrField.value || addrField.val)) return addrField.value || addrField.val;
+  } else if (obj.custom_fields && typeof obj.custom_fields === 'object') {
+    for (const [k, v] of Object.entries(obj.custom_fields)) {
+      if (/address|location/i.test(k) && v) return typeof v === 'string' ? v : JSON.stringify(v);
+    }
+  }
+
+  return obj.ip_address || obj.ip || obj.wifi_mac || obj.mac_address || null;
+}
+
 function normalizeDevice(d, idx = 0) {
   if (!d || typeof d !== 'object') return {};
   const obj = (d.device && typeof d.device === 'object') ? { ...d.device, ...d } : { ...d };
@@ -14,6 +80,7 @@ function normalizeDevice(d, idx = 0) {
   const os = obj.os || obj.os_name || obj.platform || obj.os_type || 'Unknown';
   const os_version = obj.os_version || obj.os_version_name || obj.firmware_version || '—';
   const platform = obj.platform || obj.os_name || os;
+  const address = extractAddressFromDevice(obj);
 
   const last_reported = obj.last_connected_at || obj.last_seen || obj.last_reported || obj.updated_at || obj.created_at || null;
 
@@ -53,6 +120,7 @@ function normalizeDevice(d, idx = 0) {
     os_name: os,
     os_version,
     platform,
+    address: address || obj.address || obj.ip_address || obj.ip || obj.wifi_mac || '—',
     last_reported,
     last_connected_at: obj.last_connected_at || last_reported,
     compliant,

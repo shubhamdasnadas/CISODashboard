@@ -157,6 +157,22 @@ router.post('/2fa/verify-otp', async (req, res) => {
       { expiresIn: JWT_EXPIRES_IN }
     );
 
+    // Record login in user_logs table (username, role, date, login_time)
+    let logId = null;
+    try {
+      const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || null;
+      const userAgent = req.headers['user-agent'] || null;
+      const logRes = await centralPool.query(
+        `INSERT INTO user_logs (username, role, date, login_time, session_id, ip_address, user_agent)
+         VALUES ($1, $2, CURRENT_DATE, NOW(), $3, $4, $5)
+         RETURNING id`,
+        [user.username, user.role, sessionId, ip, userAgent]
+      );
+      logId = logRes.rows[0]?.id || null;
+    } catch (logErr) {
+      console.warn('[2fa] Failed to log user login:', logErr.message);
+    }
+
     await centralPool.query(
       `UPDATE login_sessions SET status = 'verified', access_token = $1, otp_code = NULL
        WHERE id = $2`,
@@ -165,6 +181,7 @@ router.post('/2fa/verify-otp', async (req, res) => {
 
     res.json({
       accessToken,
+      logId,
       user: {
         id: user.id,
         username: user.username,

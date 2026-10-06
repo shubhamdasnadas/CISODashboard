@@ -7,6 +7,12 @@ import { useProviders } from '../../context/ProviderContext.jsx';
 import Emailsecuritymttr from '../CyberHygen/Emailsecuritymttr.jsx';
 import AnalyticsLaunchButton from '../../components/AnalyticsLaunchButton.jsx';
 import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
+import {
+  DaysFilter,
+  DEFAULT_DAY_OPTIONS,
+  withinRange,
+  parseRecordDate,
+} from '../security/widgetViews.jsx';
 
 const ALL_EVENT_TYPES = ['phishing','malware','suspicious_malware','suspicious_phishing','dlp'];
 
@@ -244,17 +250,13 @@ export default function CheckpointPage() {
   const [malwareTypes, setMalwareTypes] = useState(['malware']);
   const [dlpTypes, setDlpTypes] = useState(['dlp']);
 
-  const [cardDateFrom, setCardDateFrom] = useState('');
-  const [cardDateTo, setCardDateTo]     = useState('');
+  const [cardDays, setCardDays] = useState('all');
 
   const [tableFilter, setTableFilter] = useState('all');
   const [tablePage, setTablePage] = useState(1);
   const [selectedEvent, setSelectedEvent] = useState(null);
 
-  const today = new Date();
-  const thirtyDaysAgo = new Date(today); thirtyDaysAgo.setDate(today.getDate() - 29);
-  const [chartStart, setChartStart] = useState(fmt(thirtyDaysAgo));
-  const [chartEnd, setChartEnd] = useState(fmt(today));
+  const [chartDays, setChartDays] = useState(30);
   const [chartTypes, setChartTypes] = useState(['phishing','malware','dlp']);
   const [chartMode, setChartMode] = useState('bar');
 
@@ -298,33 +300,22 @@ export default function CheckpointPage() {
     const type = name;
     const count = data[name];
     if (!count || count === 0) return;
-    
+
     navigate('/checkpoint/detail', {
       state: {
         dataset: 'checkpoint',
         filterId: 'checkpointDate',
         value: date,
         title: `${type} events on ${date}`,
-        dateFrom: chartStart,
-        dateTo: chartEnd,
         additionalFilter: { filterId: 'checkpointType', value: type }
       }
     });
   };
 
   // Cards: date-filtered events
-  const hasCardDateFilter = !!(cardDateFrom || cardDateTo);
   const cardEvents = useMemo(() => {
-    if (!hasCardDateFilter) return events;
-    return events.filter(e => {
-      const d = parseDate(e.eventCreated);
-      if (!d) return false;
-      const key = fmt(d);
-      if (cardDateFrom && key < cardDateFrom) return false;
-      if (cardDateTo   && key > cardDateTo)   return false;
-      return true;
-    });
-  }, [events, cardDateFrom, cardDateTo, hasCardDateFilter]);
+    return withinRange(events, (e) => parseRecordDate(e.eventCreated), cardDays);
+  }, [events, cardDays]);
 
   // Summaries
   const phishingSummary = computeSummary(cardEvents, phishingTypes);
@@ -333,21 +324,47 @@ export default function CheckpointPage() {
 
   // Chart data
   const chartData = useMemo(() => {
-    const start = new Date(chartStart + 'T00:00:00');
-    const end   = new Date(chartEnd   + 'T23:59:59');
+    if (!events || events.length === 0) return [];
+
+    const dateFn = (ev) => parseRecordDate(ev.eventCreated);
+    const inRange = withinRange(events, dateFn, chartDays);
+
+    const dates = inRange.map(dateFn).filter(Boolean);
+    if (dates.length === 0) return [];
+
+    const maxMs = Math.max(...dates.map(d => d.getTime()));
+    const minMs = Math.min(...dates.map(d => d.getTime()));
+
+    let end = new Date(maxMs);
+    end.setHours(23, 59, 59, 999);
+
+    const numDays = chartDays === 'all'
+      ? Math.max(1, Math.ceil((maxMs - minMs) / 86400000) + 1)
+      : (parseInt(chartDays, 10) || 30);
+
+    let start = new Date(end);
+    start.setDate(start.getDate() - numDays + 1);
+    start.setHours(0, 0, 0, 0);
+
     const map = {};
     const cursor = new Date(start);
-    while (cursor <= end) { map[fmt(cursor)] = {}; cursor.setDate(cursor.getDate()+1); }
-    events.forEach(ev => {
+    while (cursor <= end) {
+      map[fmt(cursor)] = {};
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    inRange.forEach(ev => {
       if (!chartTypes.includes(ev.type)) return;
-      const d = new Date(ev.eventCreated);
-      if (d < start || d > end) return;
+      const d = parseRecordDate(ev.eventCreated);
+      if (!d) return;
       const key = fmt(d);
-      if (!map[key]) return;
-      map[key][ev.type] = (map[key][ev.type] || 0) + 1;
+      if (map[key]) {
+        map[key][ev.type] = (map[key][ev.type] || 0) + 1;
+      }
     });
-    return Object.entries(map).sort(([a],[b]) => a.localeCompare(b)).map(([date,counts]) => ({ date, ...counts }));
-  }, [events, chartStart, chartEnd, chartTypes]);
+
+    return Object.entries(map).sort(([a],[b]) => a.localeCompare(b)).map(([date, counts]) => ({ date, ...counts }));
+  }, [events, chartDays, chartTypes]);
 
   // Table
   const tableEventTypes = ['all', ...Array.from(new Set(events.map(e => e.type))).sort()];
@@ -418,23 +435,13 @@ export default function CheckpointPage() {
       )}
 
       {/* Three threat cards */}
-      <div className="flex items-center justify-end gap-2 flex-wrap">
-        <div className="flex items-center gap-1.5">
-          <label className="text-[10px] text-[var(--muted)] font-medium">From</label>
-          <input type="date" value={cardDateFrom} max={cardDateTo || undefined}
-            onChange={(e) => setCardDateFrom(e.target.value)}
-            className="text-[10px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <h2 className="text-base font-semibold text-[var(--foreground)]">Threat Summary</h2>
         </div>
-        <div className="flex items-center gap-1.5">
-          <label className="text-[10px] text-[var(--muted)] font-medium">To</label>
-          <input type="date" value={cardDateTo} min={cardDateFrom || undefined}
-            onChange={(e) => setCardDateTo(e.target.value)}
-            className="text-[10px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+        <div className="flex items-center gap-2 flex-wrap">
+          <DaysFilter value={cardDays} onChange={setCardDays} options={DEFAULT_DAY_OPTIONS} />
         </div>
-        {hasCardDateFilter && (
-          <button onClick={() => { setCardDateFrom(''); setCardDateTo(''); }}
-            className="text-[10px] text-indigo-500 hover:text-indigo-700 font-semibold">Clear</button>
-        )}
       </div>
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <ThreatCard
@@ -465,11 +472,7 @@ export default function CheckpointPage() {
         <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-4">
           <h3 className="font-semibold text-[var(--foreground)] flex-1">Events per Day</h3>
           <div className="flex flex-wrap items-center gap-3">
-            <input type="date" value={chartStart} onChange={e => setChartStart(e.target.value)}
-              className="px-3 py-1.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-lg text-sm text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-            <span className="text-[var(--muted)] text-sm">to</span>
-            <input type="date" value={chartEnd} onChange={e => setChartEnd(e.target.value)}
-              className="px-3 py-1.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-lg text-sm text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <DaysFilter value={chartDays} onChange={setChartDays} options={DEFAULT_DAY_OPTIONS} compact />
             <div className="flex border border-[var(--card-border)] rounded-lg overflow-hidden">
               {['bar','line'].map(m => (
                 <button key={m} onClick={() => setChartMode(m)}

@@ -98,6 +98,23 @@ CREATE TABLE users (
   allowed_pages TEXT[]              -- NULL = all pages; array = only these page keys
 );
 
+CREATE TABLE IF NOT EXISTS user_logs (
+  id SERIAL PRIMARY KEY,
+  username VARCHAR(100) NOT NULL,
+  role VARCHAR(50) NOT NULL,
+  date DATE NOT NULL DEFAULT CURRENT_DATE,
+  login_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  logout_time TIMESTAMPTZ,
+  session_id TEXT,
+  ip_address VARCHAR(100),
+  user_agent TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_logs_username ON user_logs(username);
+CREATE INDEX IF NOT EXISTS idx_user_logs_date ON user_logs(date);
+CREATE INDEX IF NOT EXISTS idx_user_logs_login_time ON user_logs(login_time DESC);
+
 -- 2FA login sessions (QR + email OTP handoff).
 -- One row per login attempt; status walks pending -> scanned -> otp_sent -> verified.
 CREATE TABLE login_sessions (

@@ -71,10 +71,17 @@ function mintId() {
 }
 
 /** Store (or replace) the logged-in identity for this tab's session. */
-export function setAuth({ token, user }) {
+export function setAuth({ token, user, logId }) {
   initSession();
   localStorage.setItem(key('token'), token);
   localStorage.setItem(key('user'), JSON.stringify(user));
+  if (logId) {
+    localStorage.setItem(key('logId'), String(logId));
+  }
+}
+
+export function getLogId() {
+  return localStorage.getItem(key('logId'));
 }
 
 export function getToken() {
@@ -103,11 +110,12 @@ export function setOrgId(orgId) {
 export function clearSession() {
   const id = sessionId();
   if (id) {
-    ['token', 'user', 'org'].forEach((n) => localStorage.removeItem(`${PREFIX}${id}_${n}`));
+    ['token', 'user', 'org', 'logId'].forEach((n) => localStorage.removeItem(`${PREFIX}${id}_${n}`));
   }
   sessionStorage.removeItem(POINTER_KEY);
   // Best-effort cleanup of pre-session flat keys so stale logins don't linger.
   Object.values(LEGACY).forEach((k) => localStorage.removeItem(k));
+  localStorage.removeItem('ciso_logId');
 }
 
 /** Remove session blobs whose login is older than SESSION_MAX_AGE_MS. */

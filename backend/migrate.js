@@ -97,8 +97,35 @@ async function migrateOrg(org) {
   return { tokens: tokens.length, responses: responses.length };
 }
 
+async function ensureCentralTables() {
+  await centralPool.query(`
+    CREATE TABLE IF NOT EXISTS user_logs (
+      id SERIAL PRIMARY KEY,
+      username VARCHAR(100) NOT NULL,
+      role VARCHAR(50) NOT NULL,
+      date DATE NOT NULL DEFAULT CURRENT_DATE,
+      login_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      logout_time TIMESTAMPTZ,
+      session_id TEXT,
+      ip_address VARCHAR(100),
+      user_agent TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_logs_username ON user_logs(username);
+    CREATE INDEX IF NOT EXISTS idx_user_logs_date ON user_logs(date);
+    CREATE INDEX IF NOT EXISTS idx_user_logs_login_time ON user_logs(login_time DESC);
+  `);
+  console.log('✔  cisodashboard: central user_logs table ready');
+}
+
 async function runMigration() {
   console.log('🚚 Starting data migration to per-org databases...');
+  try {
+    await ensureCentralTables();
+  } catch (err) {
+    console.warn('⚠️  Could not ensure central tables:', err.message);
+  }
+
   const { rows: orgs } = await centralPool.query(
     'SELECT id, slug, org_name FROM organisations ORDER BY id ASC'
   );

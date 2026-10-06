@@ -34,6 +34,59 @@ function labelCls() {
   return 'block text-xs font-semibold text-[var(--foreground)] mb-1.5';
 }
 
+function formatLogDateTime(val) {
+  if (!val) return '—';
+  try {
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return String(val);
+    return d.toLocaleString('en-US', {
+      month: 'short',
+      day: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+    });
+  } catch {
+    return String(val);
+  }
+}
+
+function formatLogDate(val) {
+  if (!val) return '—';
+  try {
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return String(val);
+    return d.toLocaleDateString('en-US', {
+      month: 'short',
+      day: '2-digit',
+      year: 'numeric',
+    });
+  } catch {
+    return String(val);
+  }
+}
+
+function getSessionDuration(loginTime, logoutTime) {
+  if (!loginTime) return '—';
+  const start = new Date(loginTime).getTime();
+  const end = logoutTime ? new Date(logoutTime).getTime() : Date.now();
+  if (isNaN(start) || isNaN(end)) return '—';
+  const diffSec = Math.max(0, Math.floor((end - start) / 1000));
+  const hrs = Math.floor(diffSec / 3600);
+  const mins = Math.floor((diffSec % 3600) / 60);
+  const secs = diffSec % 60;
+  if (!logoutTime) {
+    if (hrs > 0) return `${hrs}h ${mins}m (Active)`;
+    if (mins > 0) return `${mins}m ${secs}s (Active)`;
+    return `${secs}s (Active)`;
+  }
+  if (hrs > 0) return `${hrs}h ${mins}m ${secs}s`;
+  if (mins > 0) return `${mins}m ${secs}s`;
+  return `${secs}s`;
+}
+
 export default function Members() {
   const { currentOrg } = useOrg();
   const user = session.getUser();
@@ -91,7 +144,32 @@ export default function Members() {
   const [addToOrgError, setAddToOrgError] = useState('');
   const [addToOrgSuccess, setAddToOrgSuccess] = useState('');
 
+  // ── Tab & Logs State ───────────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState('members'); // 'members' | 'logs'
+  const [userLogs, setUserLogs] = useState([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsSearch, setLogsSearch] = useState('');
+  const [logsRoleFilter, setLogsRoleFilter] = useState('all');
+
   const orgName = currentOrg?.org_name || 'Organization';
+
+  const loadUserLogs = async () => {
+    setLogsLoading(true);
+    try {
+      const r = await api.get('/auth/user-logs');
+      setUserLogs(r.data?.logs || []);
+    } catch (e) {
+      console.warn('[Members] loadUserLogs error:', e.message);
+    } finally {
+      setLogsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'logs') {
+      loadUserLogs();
+    }
+  }, [activeTab]);
 
   const loadMembers = async (orgId) => {
     setLoading(true);
@@ -301,8 +379,21 @@ export default function Members() {
       m.department?.toLowerCase().includes(search.toLowerCase())
   );
 
+  const filteredLogs = userLogs.filter((l) => {
+    const q = logsSearch.trim().toLowerCase();
+    const matchQ =
+      !q ||
+      (l.username && l.username.toLowerCase().includes(q)) ||
+      (l.role && l.role.toLowerCase().includes(q)) ||
+      (l.ip_address && l.ip_address.toLowerCase().includes(q)) ||
+      (l.date && String(l.date).toLowerCase().includes(q));
+    const matchRole = logsRoleFilter === 'all' || l.role === logsRoleFilter;
+    return matchQ && matchRole;
+  });
+
   const activeCount = members.filter((m) => m.is_active !== false).length;
   const adminCount = members.filter((m) => m.role === 'org_admin' || m.role === 'admin').length;
+  const activeLogsCount = userLogs.filter((l) => !l.logout_time).length;
 
   if (loading) {
     return (
@@ -331,11 +422,11 @@ export default function Members() {
         <div>
           <div className="flex items-center gap-2.5">
             <div className="w-2.5 h-7 rounded-full bg-gradient-to-b from-indigo-500 to-purple-600 shadow-sm" />
-            <h1 className="text-2xl font-black text-[var(--foreground)] tracking-tight">Members</h1>
+            <h1 className="text-2xl font-black text-[var(--foreground)] tracking-tight">Members &amp; User Logs</h1>
           </div>
           <p className="text-sm text-[var(--muted)] mt-1 ml-5">{orgName}</p>
         </div>
-        {canManage && (
+        {canManage && activeTab === 'members' && (
           <button
             onClick={() => {
               setAddError('');
@@ -349,6 +440,60 @@ export default function Members() {
             Add Member
           </button>
         )}
+        {activeTab === 'logs' && (
+          <button
+            onClick={loadUserLogs}
+            disabled={logsLoading}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-medium border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] hover:bg-[var(--muted-bg)] transition-colors cursor-pointer"
+          >
+            <svg
+              className={`w-4 h-4 text-[var(--muted)] ${logsLoading ? 'animate-spin text-indigo-500' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            Refresh Logs
+          </button>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <div className="flex items-center gap-2 border-b border-[var(--card-border)] pb-2">
+        <button
+          type="button"
+          onClick={() => setActiveTab('members')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer ${
+            activeTab === 'members'
+              ? 'bg-indigo-600 text-white shadow-sm'
+              : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+          }`}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+          Members ({members.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('logs')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer ${
+            activeTab === 'logs'
+              ? 'bg-indigo-600 text-white shadow-sm'
+              : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+          }`}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          User Login &amp; Activity Logs
+          {activeLogsCount > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500 text-white animate-pulse">
+              {activeLogsCount} Active
+            </span>
+          )}
+        </button>
       </div>
 
       {error && (
@@ -357,190 +502,362 @@ export default function Members() {
         </div>
       )}
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {[
-          { label: 'Total Members', value: members.length, color: 'text-indigo-500' },
-          { label: 'Active', value: activeCount, color: 'text-emerald-500' },
-          { label: 'Admins', value: adminCount, color: 'text-purple-500' },
-        ].map((s) => (
-          <div key={s.label} className="card-surface border border-[var(--card-border)] rounded-2xl p-4 shadow-sm">
-            <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider mb-1">{s.label}</p>
-            <p className={`text-2xl font-black ${s.color}`}>{s.value}</p>
+      {activeTab === 'members' ? (
+        <>
+          {/* Stats */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {[
+              { label: 'Total Members', value: members.length, color: 'text-indigo-500' },
+              { label: 'Active', value: activeCount, color: 'text-emerald-500' },
+              { label: 'Admins', value: adminCount, color: 'text-purple-500' },
+            ].map((s) => (
+              <div key={s.label} className="card-surface border border-[var(--card-border)] rounded-2xl p-4 shadow-sm">
+                <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider mb-1">{s.label}</p>
+                <p className={`text-2xl font-black ${s.color}`}>{s.value}</p>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
 
-      {/* Search */}
-      <div className="relative">
-        <svg
-          className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--muted)]"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by name, email or department…"
-          className="w-full pl-10 pr-4 py-2.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl text-xs sm:text-sm text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
-        />
-      </div>
-
-      {/* Table */}
-      {filtered.length === 0 ? (
-        <div className="card-surface border border-[var(--card-border)] rounded-2xl p-16 text-center shadow-sm">
-          <div className="w-14 h-14 bg-indigo-500/10 text-indigo-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+          {/* Search */}
+          <div className="relative">
+            <svg
+              className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--muted)]"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by name, email or department…"
+              className="w-full pl-10 pr-4 py-2.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl text-xs sm:text-sm text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
+            />
           </div>
-          <h3 className="text-base font-bold text-[var(--foreground)] mb-1">
-            {search ? 'No members found' : 'No members yet'}
-          </h3>
-          <p className="text-[var(--muted)] text-xs max-w-sm mx-auto">
-            {search ? 'Try a different search term or clear the filter.' : 'Add the first member to get started.'}
-          </p>
-        </div>
-      ) : (
-        <div className="card-surface border border-[var(--card-border)] rounded-2xl overflow-visible shadow-sm">
-          <table className="w-full text-left border-collapse">
-            <thead className="bg-[var(--muted-bg)]/50 border-b border-[var(--card-border)]">
-              <tr>
-                <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Member</th>
-                <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Role</th>
-                <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider hidden md:table-cell">
-                  Department
-                </th>
-                <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Status</th>
-                <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider hidden lg:table-cell">
-                  Joined
-                </th>
-                {canManage && <th className="px-6 py-3.5 text-right font-bold text-xs text-[var(--muted)]">Actions</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--card-border)] text-sm">
-              {filtered.map((m) => (
-                <tr key={m.id} className="hover:bg-[var(--muted-bg)]/30 transition-colors">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 bg-indigo-500/15 border border-indigo-500/30 rounded-xl flex items-center justify-center text-xs font-bold text-indigo-400 flex-shrink-0 uppercase">
-                        {m.name?.[0]?.toUpperCase() || '?'}
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-[var(--foreground)]">{m.name}</p>
-                        <p className="text-xs text-[var(--muted)]">{m.email || '—'}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
-                        m.role === 'org_admin' || m.role === 'admin'
-                          ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
-                          : 'bg-sky-500/10 text-sky-400 border-sky-500/30'
-                      }`}
-                    >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          m.role === 'org_admin' || m.role === 'admin' ? 'bg-purple-400' : 'bg-sky-400'
-                        }`}
-                      />
-                      {m.role === 'org_admin' || m.role === 'admin' ? 'Admin' : 'Member'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-xs text-[var(--muted)] hidden md:table-cell">
-                    {m.department || '—'}
-                  </td>
-                  <td className="px-6 py-4">
-                    {canManage ? (
-                      <button
-                        type="button"
-                        onClick={() => toggleActive(m)}
-                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${
-                          m.is_active !== false ? 'bg-emerald-500' : 'bg-zinc-600'
-                        }`}
-                      >
-                        <span
-                          className="inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-xs transition-transform"
-                          style={{ transform: m.is_active !== false ? 'translateX(18px)' : 'translateX(2px)' }}
-                        />
-                      </button>
-                    ) : (
-                      <span
-                        className={`text-xs font-bold ${
-                          m.is_active !== false ? 'text-emerald-500' : 'text-[var(--muted)]'
-                        }`}
-                      >
-                        {m.is_active !== false ? 'Active' : 'Inactive'}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 text-xs text-[var(--muted)] hidden lg:table-cell">
-                    {m.created_at
-                      ? new Date(m.created_at).toLocaleDateString('en-IN', {
-                          day: '2-digit',
-                          month: 'short',
-                          year: 'numeric',
-                        })
-                      : '—'}
-                  </td>
-                  {canManage && (
-                    <td className="px-6 py-4 text-right">
-                      <div className="relative inline-block" ref={openMenuId === m.id ? menuRef : undefined}>
-                        <button
-                          type="button"
-                          onClick={() => setOpenMenuId(openMenuId === m.id ? null : m.id)}
-                          className="text-[var(--muted)] hover:text-[var(--foreground)] transition-colors p-1.5 rounded-lg hover:bg-[var(--muted-bg)] border border-transparent hover:border-[var(--card-border)] cursor-pointer"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
-                          </svg>
-                        </button>
-                        {openMenuId === m.id && (
-                          <div className="absolute right-0 top-8 z-50 w-48 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-xl shadow-xl py-1 text-xs font-semibold animate-fadeIn">
-                            <button
-                              type="button"
-                              onClick={() => openEdit(m)}
-                              className="w-full text-left px-4 py-2 text-[var(--foreground)] hover:bg-[var(--muted-bg)] transition-colors cursor-pointer"
-                            >
-                              ✏️ Edit Member
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => openPageAccess(m)}
-                              className="w-full text-left px-4 py-2 text-[var(--foreground)] hover:bg-[var(--muted-bg)] transition-colors cursor-pointer"
-                            >
-                              🔒 Manage Page Access
-                            </button>
-                            {isSuperAdmin && (
-                              <button
-                                type="button"
-                                onClick={() => openAddToOrg(m)}
-                                className="w-full text-left px-4 py-2 text-[var(--foreground)] hover:bg-[var(--muted-bg)] transition-colors cursor-pointer"
-                              >
-                                🏢 Add to Another Org
-                              </button>
-                            )}
-                            <div className="border-t border-[var(--card-border)] my-1" />
-                            <button
-                              type="button"
-                              onClick={() => openRemove(m)}
-                              className="w-full text-left px-4 py-2 text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
-                            >
-                              🗑️ Remove from Org
-                            </button>
+
+          {/* Table */}
+          {filtered.length === 0 ? (
+            <div className="card-surface border border-[var(--card-border)] rounded-2xl p-16 text-center shadow-sm">
+              <div className="w-14 h-14 bg-indigo-500/10 text-indigo-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </div>
+              <h3 className="text-base font-bold text-[var(--foreground)] mb-1">
+                {search ? 'No members found' : 'No members yet'}
+              </h3>
+              <p className="text-[var(--muted)] text-xs max-w-sm mx-auto">
+                {search ? 'Try a different search term or clear the filter.' : 'Add the first member to get started.'}
+              </p>
+            </div>
+          ) : (
+            <div className="card-surface border border-[var(--card-border)] rounded-2xl overflow-visible shadow-sm">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-[var(--muted-bg)]/50 border-b border-[var(--card-border)]">
+                  <tr>
+                    <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Member</th>
+                    <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Role</th>
+                    <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider hidden md:table-cell">
+                      Department
+                    </th>
+                    <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Status</th>
+                    <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider hidden lg:table-cell">
+                      Joined
+                    </th>
+                    {canManage && <th className="px-6 py-3.5 text-right font-bold text-xs text-[var(--muted)]">Actions</th>}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--card-border)] text-sm">
+                  {filtered.map((m) => (
+                    <tr key={m.id} className="hover:bg-[var(--muted-bg)]/30 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 bg-indigo-500/15 border border-indigo-500/30 rounded-xl flex items-center justify-center text-xs font-bold text-indigo-400 flex-shrink-0 uppercase">
+                            {m.name?.[0]?.toUpperCase() || '?'}
                           </div>
+                          <div>
+                            <p className="text-sm font-bold text-[var(--foreground)]">{m.name}</p>
+                            <p className="text-xs text-[var(--muted)]">{m.email || '—'}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
+                            m.role === 'org_admin' || m.role === 'admin'
+                              ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
+                              : 'bg-sky-500/10 text-sky-400 border-sky-500/30'
+                          }`}
+                        >
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              m.role === 'org_admin' || m.role === 'admin' ? 'bg-purple-400' : 'bg-sky-400'
+                            }`}
+                          />
+                          {m.role === 'org_admin' || m.role === 'admin' ? 'Admin' : 'Member'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-xs text-[var(--muted)] hidden md:table-cell">
+                        {m.department || '—'}
+                      </td>
+                      <td className="px-6 py-4">
+                        {canManage ? (
+                          <button
+                            type="button"
+                            onClick={() => toggleActive(m)}
+                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${
+                              m.is_active !== false ? 'bg-emerald-500' : 'bg-zinc-600'
+                            }`}
+                          >
+                            <span
+                              className="inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-xs transition-transform"
+                              style={{ transform: m.is_active !== false ? 'translateX(18px)' : 'translateX(2px)' }}
+                            />
+                          </button>
+                        ) : (
+                          <span
+                            className={`text-xs font-bold ${
+                              m.is_active !== false ? 'text-emerald-500' : 'text-[var(--muted)]'
+                            }`}
+                          >
+                            {m.is_active !== false ? 'Active' : 'Inactive'}
+                          </span>
                         )}
-                      </div>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                      </td>
+                      <td className="px-6 py-4 text-xs text-[var(--muted)] hidden lg:table-cell">
+                        {m.created_at
+                          ? new Date(m.created_at).toLocaleDateString('en-IN', {
+                              day: '2-digit',
+                              month: 'short',
+                              year: 'numeric',
+                            })
+                          : '—'}
+                      </td>
+                      {canManage && (
+                        <td className="px-6 py-4 text-right">
+                          <div className="relative inline-block" ref={openMenuId === m.id ? menuRef : undefined}>
+                            <button
+                              type="button"
+                              onClick={() => setOpenMenuId(openMenuId === m.id ? null : m.id)}
+                              className="text-[var(--muted)] hover:text-[var(--foreground)] transition-colors p-1.5 rounded-lg hover:bg-[var(--muted-bg)] border border-transparent hover:border-[var(--card-border)] cursor-pointer"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+                              </svg>
+                            </button>
+                            {openMenuId === m.id && (
+                              <div className="absolute right-0 top-8 z-50 w-48 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-xl shadow-xl py-1 text-xs font-semibold animate-fadeIn">
+                                <button
+                                  type="button"
+                                  onClick={() => openEdit(m)}
+                                  className="w-full text-left px-4 py-2 text-[var(--foreground)] hover:bg-[var(--muted-bg)] transition-colors cursor-pointer"
+                                >
+                                  ✏️ Edit Member
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => openPageAccess(m)}
+                                  className="w-full text-left px-4 py-2 text-[var(--foreground)] hover:bg-[var(--muted-bg)] transition-colors cursor-pointer"
+                                >
+                                  🔒 Manage Page Access
+                                </button>
+                                {isSuperAdmin && (
+                                  <button
+                                    type="button"
+                                    onClick={() => openAddToOrg(m)}
+                                    className="w-full text-left px-4 py-2 text-[var(--foreground)] hover:bg-[var(--muted-bg)] transition-colors cursor-pointer"
+                                  >
+                                    🏢 Add to Another Org
+                                  </button>
+                                )}
+                                <div className="border-t border-[var(--card-border)] my-1" />
+                                <button
+                                  type="button"
+                                  onClick={() => openRemove(m)}
+                                  className="w-full text-left px-4 py-2 text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                                >
+                                  🗑️ Remove from Org
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      ) : (
+        /* User Activity & Login Logs Tab */
+        <div className="space-y-4">
+          {/* Logs KPI Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="card-surface border border-[var(--card-border)] rounded-2xl p-4 shadow-sm">
+              <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider mb-1">Total Login Sessions</p>
+              <p className="text-2xl font-black text-indigo-500">{userLogs.length}</p>
+            </div>
+            <div className="card-surface border border-[var(--card-border)] rounded-2xl p-4 shadow-sm">
+              <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider mb-1">Active Sessions</p>
+              <p className="text-2xl font-black text-emerald-500 flex items-center gap-2">
+                {activeLogsCount}
+                {activeLogsCount > 0 && <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />}
+              </p>
+            </div>
+            <div className="card-surface border border-[var(--card-border)] rounded-2xl p-4 shadow-sm">
+              <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider mb-1">Completed Sessions</p>
+              <p className="text-2xl font-black text-purple-500">{userLogs.length - activeLogsCount}</p>
+            </div>
+          </div>
+
+          {/* Logs Filter */}
+          <div className="card-surface rounded-2xl p-4 border border-[var(--card-border)] flex flex-col md:flex-row items-center justify-between gap-3 shadow-sm">
+            <div className="relative w-full md:w-80">
+              <svg
+                className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--muted)]"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                placeholder="Search logs by username, IP, date..."
+                value={logsSearch}
+                onChange={(e) => setLogsSearch(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl text-xs text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+            <div className="flex items-center gap-2.5 w-full md:w-auto">
+              <span className="text-xs font-medium text-[var(--muted)]">Role:</span>
+              <select
+                value={logsRoleFilter}
+                onChange={(e) => setLogsRoleFilter(e.target.value)}
+                className="text-xs px-2.5 py-1.5 rounded-lg border border-[var(--input-border)] bg-[var(--input-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer"
+              >
+                <option value="all">All Roles</option>
+                <option value="superAdmin">SuperAdmin</option>
+                <option value="admin">Admin</option>
+                <option value="org_admin">Org Admin</option>
+                <option value="member">Member</option>
+                <option value="org_user">Org User</option>
+              </select>
+              {(logsSearch || logsRoleFilter !== 'all') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLogsSearch('');
+                    setLogsRoleFilter('all');
+                  }}
+                  className="text-xs text-indigo-500 hover:underline px-2 cursor-pointer"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Logs Table */}
+          {logsLoading ? (
+            <div className="card-surface border border-[var(--card-border)] rounded-2xl p-12 text-center shadow-sm">
+              <svg className="w-8 h-8 text-indigo-500 animate-spin mx-auto mb-3" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              <p className="text-sm font-semibold text-[var(--muted)]">Loading user authentication logs…</p>
+            </div>
+          ) : filteredLogs.length === 0 ? (
+            <div className="card-surface border border-[var(--card-border)] rounded-2xl p-16 text-center shadow-sm">
+              <div className="w-14 h-14 bg-indigo-500/10 text-indigo-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <h3 className="text-base font-bold text-[var(--foreground)] mb-1">
+                {logsSearch ? 'No matching logs found' : 'No user logs recorded yet'}
+              </h3>
+              <p className="text-[var(--muted)] text-xs max-w-sm mx-auto">
+                User logins and logouts will appear here in real-time as users authenticate.
+              </p>
+            </div>
+          ) : (
+            <div className="card-surface border border-[var(--card-border)] rounded-2xl overflow-x-auto shadow-sm">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-[var(--muted-bg)]/50 border-b border-[var(--card-border)]">
+                  <tr>
+                    <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Username</th>
+                    <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Role</th>
+                    <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Date</th>
+                    <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Login Time</th>
+                    <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Logout Time</th>
+                    <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Duration</th>
+                    <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider hidden lg:table-cell">IP Address</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--card-border)] text-sm">
+                  {filteredLogs.map((log) => {
+                    const isActive = !log.logout_time;
+                    return (
+                      <tr key={log.id} className="hover:bg-[var(--muted-bg)]/30 transition-colors">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-xs font-bold text-indigo-400 flex-shrink-0 uppercase">
+                              {log.username?.[0]?.toUpperCase() || 'U'}
+                            </div>
+                            <div>
+                              <p className="font-bold text-[var(--foreground)] text-xs sm:text-sm">{log.username}</p>
+                              <p className="text-[10px] text-[var(--muted)] font-mono">Log ID #{log.id}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span
+                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border capitalize ${
+                              log.role === 'superAdmin'
+                                ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
+                                : log.role === 'admin' || log.role === 'org_admin'
+                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                : 'bg-sky-500/10 text-sky-400 border-sky-500/30'
+                            }`}
+                          >
+                            {log.role}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-xs text-[var(--foreground)] font-medium">
+                          {formatLogDate(log.date || log.login_time)}
+                        </td>
+                        <td className="px-6 py-4 text-xs text-[var(--foreground)] font-mono">
+                          {formatLogDateTime(log.login_time)}
+                        </td>
+                        <td className="px-6 py-4 text-xs font-mono">
+                          {isActive ? (
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-500 border border-emerald-500/30">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                              Active Session
+                            </span>
+                          ) : (
+                            <span className="text-[var(--foreground)]">{formatLogDateTime(log.logout_time)}</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-xs">
+                          <span className={`font-semibold ${isActive ? 'text-emerald-500' : 'text-[var(--muted)]'}`}>
+                            {getSessionDuration(log.login_time, log.logout_time)}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-xs text-[var(--muted)] font-mono hidden lg:table-cell">
+                          {log.ip_address || '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 

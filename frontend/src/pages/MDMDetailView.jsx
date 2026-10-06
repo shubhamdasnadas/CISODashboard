@@ -8,12 +8,89 @@ const PAGE_SIZE = 25;
 const fmt = (d) => d ? new Date(d).toLocaleString() : '—';
 const yesNo = (v) => v === true ? 'Yes' : v === false ? 'No' : '—';
 
+export function getDeviceAddress(d) {
+  if (!d) return '—';
+
+  // 1. Direct address string
+  if (typeof d.address === 'string' && d.address.trim()) return d.address.trim();
+  if (typeof d.device_address === 'string' && d.device_address.trim()) return d.device_address.trim();
+  if (typeof d.formatted_address === 'string' && d.formatted_address.trim()) return d.formatted_address.trim();
+  if (typeof d.location_address === 'string' && d.location_address.trim()) return d.location_address.trim();
+
+  // 2. Address object
+  if (d.address && typeof d.address === 'object') {
+    const parts = [
+      d.address.street || d.address.street_address || d.address.address_line1 || d.address.line1,
+      d.address.address_line2 || d.address.line2,
+      d.address.city,
+      d.address.state || d.address.province,
+      d.address.postal_code || d.address.zip || d.address.zipcode,
+      d.address.country,
+    ].filter(Boolean);
+    if (parts.length > 0) return parts.join(', ');
+    if (d.address.formatted || d.address.formatted_address) return d.address.formatted || d.address.formatted_address;
+  }
+
+  // 3. Location object or string
+  if (typeof d.location === 'string' && d.location.trim()) return d.location.trim();
+  if (d.location && typeof d.location === 'object') {
+    if (d.location.address && typeof d.location.address === 'string') return d.location.address;
+    if (d.location.formatted_address) return d.location.formatted_address;
+    if (d.location.display_name) return d.location.display_name;
+    if (d.location.name) return d.location.name;
+    const locParts = [
+      d.location.street || d.location.address_line1,
+      d.location.city,
+      d.location.state,
+      d.location.country,
+    ].filter(Boolean);
+    if (locParts.length > 0) return locParts.join(', ');
+    if (d.location.latitude && d.location.longitude) {
+      return `${d.location.latitude}, ${d.location.longitude}`;
+    }
+  }
+
+  // 4. Geo / Last Known Location
+  const geo = d.last_known_location || d.current_location || d.geo_location;
+  if (geo && typeof geo === 'object') {
+    if (geo.address && typeof geo.address === 'string') return geo.address;
+    if (geo.formatted_address) return geo.formatted_address;
+    if (geo.latitude && geo.longitude) return `${geo.latitude}, ${geo.longitude}`;
+  }
+
+  // 5. Split street/city/state/country fields
+  const composed = [
+    d.street_address || d.street,
+    d.city,
+    d.state || d.province,
+    d.zip || d.postal_code || d.zipcode,
+    d.country,
+  ].filter(Boolean);
+  if (composed.length > 0) return composed.join(', ');
+
+  // 6. Custom fields
+  if (Array.isArray(d.custom_fields)) {
+    const addrField = d.custom_fields.find((f) => /address|location/i.test(f.name || f.key || ''));
+    if (addrField && (addrField.value || addrField.val)) return addrField.value || addrField.val;
+  } else if (d.custom_fields && typeof d.custom_fields === 'object') {
+    for (const [k, v] of Object.entries(d.custom_fields)) {
+      if (/address|location/i.test(k) && v) return typeof v === 'string' ? v : JSON.stringify(v);
+    }
+  }
+
+  // 7. IP / MAC address fallback
+  if (d.ip_address || d.ip) return d.ip_address || d.ip;
+  if (d.wifi_mac || d.mac_address) return d.wifi_mac || d.mac_address;
+
+  return '—';
+}
+
 const DATASET_CONFIG = {
   devices: {
     endpoint: '/hexnode/db/devices',
     scalefusionEndpoint: '/scalefusion/db/devices',
     extract: (r) => r.data?.data || [],
-    cols: ['Device Name', 'Model', 'OS', 'OS Version', 'Type', 'Owner / Group', 'Compliant', 'Status', 'Serial Number', 'Last Reported'],
+    cols: ['Device Name', 'Model', 'OS', 'OS Version', 'Type', 'Owner / Group', 'Compliant', 'Status', 'Address', 'Serial Number', 'Last Reported'],
     rowFn: (d) => [
       d.device_name || d.name || `Device ${d.id}`,
       d.model_name || d.model || '—',
@@ -23,6 +100,7 @@ const DATASET_CONFIG = {
       d.user?.name || d.group_name || d.policy_name || '—',
       yesNo(d.compliant),
       d.status || d.compliance_state || d.enrollment_status || '—',
+      getDeviceAddress(d),
       d.serial_number || d.serial_no || '—',
       fmt(d.last_reported || d.last_connected_at || d.last_seen),
     ],
@@ -66,6 +144,7 @@ const DEVICE_FIELDS = [
   ['Owner / Group', (d) => d.user?.name || d.group_name || d.policy_name],
   ['Compliant', (d) => yesNo(d.compliant)],
   ['Status', (d) => d.status || d.compliance_state || d.enrollment_status],
+  ['Address', (d) => getDeviceAddress(d)],
   ['Serial Number', (d) => d.serial_number || d.serial_no],
   ['IMEI', (d) => d.imei || d.imei_no],
   ['UDID', (d) => d.udid],

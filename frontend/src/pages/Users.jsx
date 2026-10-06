@@ -4,8 +4,62 @@ import api from '../api';
 import { PAGES } from '../constants/navPages.js';
 import WidgetSkeleton from './dashboard/WidgetSkeleton.jsx';
 
+function formatLogDateTime(val) {
+  if (!val) return '—';
+  try {
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return String(val);
+    return d.toLocaleString('en-US', {
+      month: 'short',
+      day: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+    });
+  } catch {
+    return String(val);
+  }
+}
+
+function formatLogDate(val) {
+  if (!val) return '—';
+  try {
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return String(val);
+    return d.toLocaleDateString('en-US', {
+      month: 'short',
+      day: '2-digit',
+      year: 'numeric',
+    });
+  } catch {
+    return String(val);
+  }
+}
+
+function getSessionDuration(loginTime, logoutTime) {
+  if (!loginTime) return '—';
+  const start = new Date(loginTime).getTime();
+  const end = logoutTime ? new Date(logoutTime).getTime() : Date.now();
+  if (isNaN(start) || isNaN(end)) return '—';
+  const diffSec = Math.max(0, Math.floor((end - start) / 1000));
+  const hrs = Math.floor(diffSec / 3600);
+  const mins = Math.floor((diffSec % 3600) / 60);
+  const secs = diffSec % 60;
+  if (!logoutTime) {
+    if (hrs > 0) return `${hrs}h ${mins}m (Active)`;
+    if (mins > 0) return `${mins}m ${secs}s (Active)`;
+    return `${secs}s (Active)`;
+  }
+  if (hrs > 0) return `${hrs}h ${mins}m ${secs}s`;
+  if (mins > 0) return `${mins}m ${secs}s`;
+  return `${secs}s`;
+}
+
 export default function Users() {
   const currentUser = session.getUser();
+  const [activeTab, setActiveTab] = useState('users'); // 'users' | 'logs'
   const [users, setUsers] = useState([]);
   const [orgs, setOrgs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -14,6 +68,12 @@ export default function Users() {
   const [roleFilter, setRoleFilter] = useState('all');
   const [orgFilter, setOrgFilter] = useState('all');
   const [notice, setNotice] = useState(null); // { type: 'success' | 'error', message: '' }
+
+  // ── Logs State ───────────────────────────────────────────────────────────────
+  const [userLogs, setUserLogs] = useState([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsSearch, setLogsSearch] = useState('');
+  const [logsRoleFilter, setLogsRoleFilter] = useState('all');
 
   // ── Modals State ─────────────────────────────────────────────────────────────
   const [showAddModal, setShowAddModal] = useState(false);
@@ -58,9 +118,27 @@ export default function Users() {
     }
   }
 
+  async function loadLogs() {
+    setLogsLoading(true);
+    try {
+      const res = await api.get('/users/logs');
+      setUserLogs(res.data?.logs || []);
+    } catch (err) {
+      console.warn('[Users] loadLogs error:', err);
+    } finally {
+      setLogsLoading(false);
+    }
+  }
+
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'logs') {
+      loadLogs();
+    }
+  }, [activeTab]);
 
   function showNotice(type, message) {
     setNotice({ type, message });
@@ -232,6 +310,10 @@ export default function Users() {
     return { total, superAdmins, admins, members, assignedOrgsCount };
   }, [users]);
 
+  const activeLogsCount = useMemo(() => {
+    return userLogs.filter((l) => !l.logout_time).length;
+  }, [userLogs]);
+
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto">
       {/* ── Page Header ──────────────────────────────────────────────────────── */}
@@ -247,40 +329,98 @@ export default function Users() {
             </h1>
           </div>
           <p className="text-sm text-[var(--muted)] mt-1 ml-5">
-            Manage system users, authentication identities, role permissions, and organization access.
+            Manage system users, authentication identities, role permissions, and track real-time login/logout sessions.
           </p>
         </div>
 
         <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={loadData}
-            disabled={loading}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-medium border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] hover:bg-[var(--muted-bg)] transition-colors cursor-pointer"
-            title="Refresh database"
-          >
-            <svg
-              className={`w-4 h-4 text-[var(--muted)] ${loading ? 'animate-spin text-indigo-500' : ''}`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            Refresh
-          </button>
+          {activeTab === 'users' ? (
+            <>
+              <button
+                type="button"
+                onClick={loadData}
+                disabled={loading}
+                className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-medium border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] hover:bg-[var(--muted-bg)] transition-colors cursor-pointer"
+                title="Refresh database"
+              >
+                <svg
+                  className={`w-4 h-4 text-[var(--muted)] ${loading ? 'animate-spin text-indigo-500' : ''}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Refresh
+              </button>
 
-          <button
-            type="button"
-            onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 active:scale-98 text-white shadow-sm transition-all cursor-pointer"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            Add New User
-          </button>
+              <button
+                type="button"
+                onClick={() => setShowAddModal(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 active:scale-98 text-white shadow-sm transition-all cursor-pointer"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                Add New User
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={loadLogs}
+              disabled={logsLoading}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] hover:bg-[var(--muted-bg)] transition-colors cursor-pointer"
+            >
+              <svg
+                className={`w-4 h-4 text-[var(--muted)] ${logsLoading ? 'animate-spin text-indigo-500' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Refresh Logs
+            </button>
+          )}
         </div>
+      </div>
+
+      {/* ── Tabs ─────────────────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-2 border-b border-[var(--card-border)] pb-2">
+        <button
+          type="button"
+          onClick={() => setActiveTab('users')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer ${
+            activeTab === 'users'
+              ? 'bg-indigo-600 text-white shadow-sm'
+              : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+          }`}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+          </svg>
+          Users Directory ({users.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('logs')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer ${
+            activeTab === 'logs'
+              ? 'bg-indigo-600 text-white shadow-sm'
+              : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+          }`}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          User Login &amp; Activity Logs
+          {activeLogsCount > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500 text-white animate-pulse">
+              {activeLogsCount} Active
+            </span>
+          )}
+        </button>
       </div>
 
       {/* ── Notification Banner ──────────────────────────────────────────────── */}
@@ -314,276 +454,446 @@ export default function Users() {
         </div>
       )}
 
-      {/* ── KPI Summary Cards ────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
-        {[
-          { label: 'Total Users', value: stats.total, color: 'text-indigo-500', bg: 'bg-indigo-500/10', border: 'border-indigo-500/20' },
-          { label: 'SuperAdmins', value: stats.superAdmins, color: 'text-purple-500', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },
-          { label: 'Admins', value: stats.admins, color: 'text-emerald-500', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' },
-          { label: 'Members', value: stats.members, color: 'text-sky-500', bg: 'bg-sky-500/10', border: 'border-sky-500/20' },
-          { label: 'Linked Orgs', value: stats.assignedOrgsCount, color: 'text-amber-500', bg: 'bg-amber-500/10', border: 'border-amber-500/20' },
-        ].map((kpi) => (
-          <div
-            key={kpi.label}
-            className={`card-surface rounded-2xl p-4 border border-[var(--card-border)] flex items-center justify-between gap-3 shadow-sm`}
-          >
-            <div>
-              <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider">{kpi.label}</p>
-              <p className="text-2xl font-black text-[var(--foreground)] mt-1">{loading ? '—' : kpi.value}</p>
-            </div>
-            <div className={`w-10 h-10 rounded-xl ${kpi.bg} ${kpi.border} border flex items-center justify-center ${kpi.color} font-bold text-base flex-shrink-0`}>
-              {kpi.value}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* ── Search and Filter Controls ───────────────────────────────────────── */}
-      <div className="card-surface rounded-2xl p-4 border border-[var(--card-border)] flex flex-col md:flex-row items-center justify-between gap-3 shadow-sm">
-        <div className="relative w-full md:w-80">
-          <svg
-            className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--muted)]"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-          <input
-            type="text"
-            placeholder="Search by username, email, ID..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl text-xs text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
-        </div>
-
-        <div className="flex items-center gap-2.5 w-full md:w-auto flex-wrap">
-          {/* Role Filter */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs font-medium text-[var(--muted)]">Role:</span>
-            <select
-              value={roleFilter}
-              onChange={(e) => setRoleFilter(e.target.value)}
-              className="text-xs px-2.5 py-1.5 rounded-lg border border-[var(--input-border)] bg-[var(--input-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer"
-            >
-              <option value="all">All Roles ({users.length})</option>
-              <option value="superAdmin">SuperAdmin</option>
-              <option value="admin">Admin</option>
-              <option value="member">Member</option>
-            </select>
-          </div>
-
-          {/* Org Filter */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs font-medium text-[var(--muted)]">Organisation:</span>
-            <select
-              value={orgFilter}
-              onChange={(e) => setOrgFilter(e.target.value)}
-              className="text-xs px-2.5 py-1.5 rounded-lg border border-[var(--input-border)] bg-[var(--input-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer max-w-[160px] truncate"
-            >
-              <option value="all">All Organisations</option>
-              {orgs.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.org_name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {(search || roleFilter !== 'all' || orgFilter !== 'all') && (
-            <button
-              type="button"
-              onClick={() => {
-                setSearch('');
-                setRoleFilter('all');
-                setOrgFilter('all');
-              }}
-              className="text-xs font-semibold text-indigo-500 hover:text-indigo-700 px-2 py-1 cursor-pointer"
-            >
-              Reset Filters
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* ── Users Table ──────────────────────────────────────────────────────── */}
-      <div className="card-surface rounded-2xl border border-[var(--card-border)] overflow-hidden shadow-sm">
-        {loading ? (
-          <div className="p-6">
-            <WidgetSkeleton variant="table" />
-          </div>
-        ) : filteredUsers.length === 0 ? (
-          <div className="p-16 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 text-indigo-500 mx-auto flex items-center justify-center mb-3">
-              <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-              </svg>
-            </div>
-            <h3 className="text-base font-bold text-[var(--foreground)]">No users found</h3>
-            <p className="text-xs text-[var(--muted)] mt-1 max-w-sm mx-auto">
-              {search || roleFilter !== 'all' || orgFilter !== 'all'
-                ? 'No user matches your current search criteria. Try resetting the filters.'
-                : 'Get started by creating your first system user.'}
-            </p>
-            {(search || roleFilter !== 'all' || orgFilter !== 'all') && (
-              <button
-                type="button"
-                onClick={() => {
-                  setSearch('');
-                  setRoleFilter('all');
-                  setOrgFilter('all');
-                }}
-                className="mt-4 px-4 py-2 rounded-xl text-xs font-semibold bg-indigo-600 text-white cursor-pointer"
+      {activeTab === 'users' ? (
+        <>
+          {/* ── KPI Summary Cards ────────────────────────────────────────────────── */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+            {[
+              { label: 'Total Users', value: stats.total, color: 'text-indigo-500', bg: 'bg-indigo-500/10', border: 'border-indigo-500/20' },
+              { label: 'SuperAdmins', value: stats.superAdmins, color: 'text-purple-500', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },
+              { label: 'Admins', value: stats.admins, color: 'text-emerald-500', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' },
+              { label: 'Members', value: stats.members, color: 'text-sky-500', bg: 'bg-sky-500/10', border: 'border-sky-500/20' },
+              { label: 'Linked Orgs', value: stats.assignedOrgsCount, color: 'text-amber-500', bg: 'bg-amber-500/10', border: 'border-amber-500/20' },
+            ].map((kpi) => (
+              <div
+                key={kpi.label}
+                className={`card-surface rounded-2xl p-4 border border-[var(--card-border)] flex items-center justify-between gap-3 shadow-sm`}
               >
-                Clear Filters
-              </button>
-            )}
+                <div>
+                  <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider">{kpi.label}</p>
+                  <p className="text-2xl font-black text-[var(--foreground)] mt-1">{loading ? '—' : kpi.value}</p>
+                </div>
+                <div className={`w-10 h-10 rounded-xl ${kpi.bg} ${kpi.border} border flex items-center justify-center ${kpi.color} font-bold text-base flex-shrink-0`}>
+                  {kpi.value}
+                </div>
+              </div>
+            ))}
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-[var(--card-border)] bg-[var(--muted-bg)]/40 text-[11px] font-bold text-[var(--muted)] uppercase tracking-wider">
-                  <th className="py-3 px-4">User</th>
-                  <th className="py-3 px-4">Role</th>
-                  <th className="py-3 px-4">Assigned Organisations</th>
-                  <th className="py-3 px-4">Page Permissions</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--card-border)] text-sm">
-                {filteredUsers.map((u) => {
-                  const isCurrent = currentUser?.userId === u.id;
-                  const customPagesCount = Array.isArray(u.allowed_pages) ? u.allowed_pages.length : null;
 
-                  return (
-                    <tr key={u.id} className="hover:bg-[var(--muted-bg)]/30 transition-colors">
-                      {/* User Info */}
-                      <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-500 font-bold text-xs uppercase flex-shrink-0">
-                            {u.username ? u.username.slice(0, 2) : 'U'}
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-[var(--foreground)]">{u.username}</span>
-                              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--muted-bg)] text-[var(--muted)] border border-[var(--card-border)]">
-                                ID: {u.id}
-                              </span>
-                              {isCurrent && (
-                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
-                                  You
-                                </span>
+          {/* ── Search and Filter Controls ───────────────────────────────────────── */}
+          <div className="card-surface rounded-2xl p-4 border border-[var(--card-border)] flex flex-col md:flex-row items-center justify-between gap-3 shadow-sm">
+            <div className="relative w-full md:w-80">
+              <svg
+                className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--muted)]"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                placeholder="Search by username, email, ID..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl text-xs text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+
+            <div className="flex items-center gap-2.5 w-full md:w-auto flex-wrap">
+              {/* Role Filter */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-medium text-[var(--muted)]">Role:</span>
+                <select
+                  value={roleFilter}
+                  onChange={(e) => setRoleFilter(e.target.value)}
+                  className="text-xs px-2.5 py-1.5 rounded-lg border border-[var(--input-border)] bg-[var(--input-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer"
+                >
+                  <option value="all">All Roles ({users.length})</option>
+                  <option value="superAdmin">SuperAdmin</option>
+                  <option value="admin">Admin</option>
+                  <option value="member">Member</option>
+                </select>
+              </div>
+
+              {/* Org Filter */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-medium text-[var(--muted)]">Organisation:</span>
+                <select
+                  value={orgFilter}
+                  onChange={(e) => setOrgFilter(e.target.value)}
+                  className="text-xs px-2.5 py-1.5 rounded-lg border border-[var(--input-border)] bg-[var(--input-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer max-w-[160px] truncate"
+                >
+                  <option value="all">All Organisations</option>
+                  {orgs.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.org_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {(search || roleFilter !== 'all' || orgFilter !== 'all') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearch('');
+                    setRoleFilter('all');
+                    setOrgFilter('all');
+                  }}
+                  className="text-xs font-semibold text-indigo-500 hover:text-indigo-700 px-2 py-1 cursor-pointer"
+                >
+                  Reset Filters
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* ── Users Table ──────────────────────────────────────────────────────── */}
+          <div className="card-surface rounded-2xl border border-[var(--card-border)] overflow-hidden shadow-sm">
+            {loading ? (
+              <div className="p-6">
+                <WidgetSkeleton variant="table" />
+              </div>
+            ) : filteredUsers.length === 0 ? (
+              <div className="p-16 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 text-indigo-500 mx-auto flex items-center justify-center mb-3">
+                  <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                  </svg>
+                </div>
+                <h3 className="text-base font-bold text-[var(--foreground)]">No users found</h3>
+                <p className="text-xs text-[var(--muted)] mt-1 max-w-sm mx-auto">
+                  {search || roleFilter !== 'all' || orgFilter !== 'all'
+                    ? 'No user matches your current search criteria. Try resetting the filters.'
+                    : 'Get started by creating your first system user.'}
+                </p>
+                {(search || roleFilter !== 'all' || orgFilter !== 'all') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearch('');
+                      setRoleFilter('all');
+                      setOrgFilter('all');
+                    }}
+                    className="mt-4 px-4 py-2 rounded-xl text-xs font-semibold bg-indigo-600 text-white cursor-pointer"
+                  >
+                    Clear Filters
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-[var(--card-border)] bg-[var(--muted-bg)]/40 text-[11px] font-bold text-[var(--muted)] uppercase tracking-wider">
+                      <th className="py-3 px-4">User</th>
+                      <th className="py-3 px-4">Role</th>
+                      <th className="py-3 px-4">Assigned Organisations</th>
+                      <th className="py-3 px-4">Page Permissions</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--card-border)] text-sm">
+                    {filteredUsers.map((u) => {
+                      const isCurrent = currentUser?.userId === u.id;
+                      const customPagesCount = Array.isArray(u.allowed_pages) ? u.allowed_pages.length : null;
+
+                      return (
+                        <tr key={u.id} className="hover:bg-[var(--muted-bg)]/30 transition-colors">
+                          {/* User Info */}
+                          <td className="py-3.5 px-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-500 font-bold text-xs uppercase flex-shrink-0">
+                                {u.username ? u.username.slice(0, 2) : 'U'}
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-[var(--foreground)]">{u.username}</span>
+                                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--muted-bg)] text-[var(--muted)] border border-[var(--card-border)]">
+                                    ID: {u.id}
+                                  </span>
+                                  {isCurrent && (
+                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                                      You
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-[var(--muted)] mt-0.5">
+                                  {u.email ? u.email : <span className="italic opacity-60">No email assigned</span>}
+                                </p>
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* Role Badge */}
+                          <td className="py-3.5 px-4">
+                            <span
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold capitalize border ${
+                                u.role === 'superAdmin'
+                                  ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
+                                  : u.role === 'admin'
+                                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                  : 'bg-sky-500/10 text-sky-400 border-sky-500/30'
+                              }`}
+                            >
+                              <span
+                                className={`w-1.5 h-1.5 rounded-full ${
+                                  u.role === 'superAdmin'
+                                    ? 'bg-purple-400'
+                                    : u.role === 'admin'
+                                    ? 'bg-emerald-400'
+                                    : 'bg-sky-400'
+                                }`}
+                              />
+                              {u.role === 'superAdmin' ? 'Super Admin' : u.role}
+                            </span>
+                          </td>
+
+                          {/* Organisations */}
+                          <td className="py-3.5 px-4">
+                            <div className="flex flex-wrap gap-1.5 max-w-xs">
+                              {u.organisations && u.organisations.length > 0 ? (
+                                u.organisations.map((o) => (
+                                  <span
+                                    key={o.id}
+                                    className="text-xs px-2.5 py-0.5 rounded-lg bg-[var(--muted-bg)] text-[var(--foreground)] border border-[var(--card-border)] font-medium"
+                                  >
+                                    {o.org_name}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-xs text-[var(--muted)] italic">No organisations assigned</span>
                               )}
                             </div>
-                            <p className="text-xs text-[var(--muted)] mt-0.5">
-                              {u.email ? u.email : <span className="italic opacity-60">No email assigned</span>}
-                            </p>
-                          </div>
-                        </div>
-                      </td>
+                          </td>
 
-                      {/* Role Badge */}
-                      <td className="py-3.5 px-4">
-                        <span
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold capitalize border ${
-                            u.role === 'superAdmin'
-                              ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
-                              : u.role === 'admin'
-                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                              : 'bg-sky-500/10 text-sky-400 border-sky-500/30'
-                          }`}
-                        >
-                          <span
-                            className={`w-1.5 h-1.5 rounded-full ${
-                              u.role === 'superAdmin'
-                                ? 'bg-purple-400'
-                                : u.role === 'admin'
-                                ? 'bg-emerald-400'
-                                : 'bg-sky-400'
-                            }`}
-                          />
-                          {u.role === 'superAdmin' ? 'Super Admin' : u.role}
-                        </span>
-                      </td>
-
-                      {/* Organisations */}
-                      <td className="py-3.5 px-4">
-                        <div className="flex flex-wrap gap-1.5 max-w-xs">
-                          {u.organisations && u.organisations.length > 0 ? (
-                            u.organisations.map((o) => (
-                              <span
-                                key={o.id}
-                                className="text-xs px-2.5 py-0.5 rounded-lg bg-[var(--muted-bg)] text-[var(--foreground)] border border-[var(--card-border)] font-medium"
-                              >
-                                {o.org_name}
+                          {/* Page Permissions */}
+                          <td className="py-3.5 px-4">
+                            {customPagesCount === null ? (
+                              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-lg">
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Full Access (All Pages)
                               </span>
-                            ))
-                          ) : (
-                            <span className="text-xs text-[var(--muted)] italic">No organisations assigned</span>
-                          )}
-                        </div>
-                      </td>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-lg">
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                                </svg>
+                                Custom ({customPagesCount} / {PAGES.length} pages)
+                              </span>
+                            )}
+                          </td>
 
-                      {/* Page Permissions */}
-                      <td className="py-3.5 px-4">
-                        {customPagesCount === null ? (
-                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-lg">
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                            </svg>
-                            Full Access (All Pages)
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-lg">
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                            </svg>
-                            Custom ({customPagesCount} / {PAGES.length} pages)
-                          </span>
-                        )}
-                      </td>
+                          {/* Actions */}
+                          <td className="py-3.5 px-4 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => openEditModal(u)}
+                                className="p-1.5 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] hover:bg-[var(--muted-bg)] transition-colors cursor-pointer"
+                                title="Edit user details & permissions"
+                              >
+                                <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                </svg>
+                              </button>
 
-                      {/* Actions */}
-                      <td className="py-3.5 px-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            type="button"
-                            onClick={() => openEditModal(u)}
-                            className="p-1.5 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] hover:bg-[var(--muted-bg)] transition-colors cursor-pointer"
-                            title="Edit user details & permissions"
-                          >
-                            <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                            </svg>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => setDeleteTarget(u)}
-                            disabled={isCurrent}
-                            className={`p-1.5 rounded-lg border border-[var(--card-border)] transition-colors ${
-                              isCurrent
-                                ? 'opacity-40 cursor-not-allowed bg-[var(--muted-bg)]'
-                                : 'bg-[var(--card-bg)] text-rose-500 hover:bg-rose-500/10 hover:border-rose-500/30 cursor-pointer'
-                            }`}
-                            title={isCurrent ? 'You cannot delete your own active account' : 'Delete user account'}
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                              <button
+                                type="button"
+                                onClick={() => setDeleteTarget(u)}
+                                disabled={isCurrent}
+                                className={`p-1.5 rounded-lg border border-[var(--card-border)] transition-colors ${
+                                  isCurrent
+                                    ? 'opacity-40 cursor-not-allowed bg-[var(--muted-bg)]'
+                                    : 'bg-[var(--card-bg)] text-rose-500 hover:bg-rose-500/10 hover:border-rose-500/30 cursor-pointer'
+                                }`}
+                                title={isCurrent ? 'You cannot delete your own active account' : 'Delete user account'}
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </>
+      ) : (
+        /* ── User Activity & Login Logs Tab ───────────────────────────────────── */
+        <div className="space-y-4">
+          {/* Logs KPI Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="card-surface border border-[var(--card-border)] rounded-2xl p-4 shadow-sm">
+              <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider mb-1">Total Login Sessions</p>
+              <p className="text-2xl font-black text-indigo-500">{userLogs.length}</p>
+            </div>
+            <div className="card-surface border border-[var(--card-border)] rounded-2xl p-4 shadow-sm">
+              <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider mb-1">Active Sessions</p>
+              <p className="text-2xl font-black text-emerald-500 flex items-center gap-2">
+                {activeLogsCount}
+                {activeLogsCount > 0 && <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />}
+              </p>
+            </div>
+            <div className="card-surface border border-[var(--card-border)] rounded-2xl p-4 shadow-sm">
+              <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider mb-1">Completed Sessions</p>
+              <p className="text-2xl font-black text-purple-500">{userLogs.length - activeLogsCount}</p>
+            </div>
+          </div>
+
+          {/* Logs Filter Controls */}
+          <div className="card-surface rounded-2xl p-4 border border-[var(--card-border)] flex flex-col md:flex-row items-center justify-between gap-3 shadow-sm">
+            <div className="relative w-full md:w-80">
+              <svg
+                className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--muted)]"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                placeholder="Search logs by username, IP, date..."
+                value={logsSearch}
+                onChange={(e) => setLogsSearch(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl text-xs text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+            <div className="flex items-center gap-2.5 w-full md:w-auto">
+              <span className="text-xs font-medium text-[var(--muted)]">Role:</span>
+              <select
+                value={logsRoleFilter}
+                onChange={(e) => setLogsRoleFilter(e.target.value)}
+                className="text-xs px-2.5 py-1.5 rounded-lg border border-[var(--input-border)] bg-[var(--input-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer"
+              >
+                <option value="all">All Roles</option>
+                <option value="superAdmin">SuperAdmin</option>
+                <option value="admin">Admin</option>
+                <option value="member">Member</option>
+              </select>
+              {(logsSearch || logsRoleFilter !== 'all') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLogsSearch('');
+                    setLogsRoleFilter('all');
+                  }}
+                  className="text-xs text-indigo-500 hover:underline px-2 cursor-pointer"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Logs Table */}
+          {logsLoading ? (
+            <div className="card-surface border border-[var(--card-border)] rounded-2xl p-12 text-center shadow-sm">
+              <svg className="w-8 h-8 text-indigo-500 animate-spin mx-auto mb-3" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              <p className="text-sm font-semibold text-[var(--muted)]">Loading user authentication logs…</p>
+            </div>
+          ) : filteredLogs.length === 0 ? (
+            <div className="card-surface border border-[var(--card-border)] rounded-2xl p-16 text-center shadow-sm">
+              <div className="w-14 h-14 bg-indigo-500/10 text-indigo-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <h3 className="text-base font-bold text-[var(--foreground)]">
+                {logsSearch ? 'No matching logs found' : 'No user logs recorded yet'}
+              </h3>
+              <p className="text-[var(--muted)] text-xs max-w-sm mx-auto mt-1">
+                User logins and logouts will appear here in real-time as users authenticate.
+              </p>
+            </div>
+          ) : (
+            <div className="card-surface border border-[var(--card-border)] rounded-2xl overflow-x-auto shadow-sm">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-[var(--muted-bg)]/50 border-b border-[var(--card-border)]">
+                  <tr>
+                    <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Username</th>
+                    <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Role</th>
+                    <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Date</th>
+                    <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Login Time</th>
+                    <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Logout Time</th>
+                    <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Duration</th>
+                    <th className="px-6 py-3.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wider hidden lg:table-cell">IP Address</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--card-border)] text-sm">
+                  {filteredLogs.map((log) => {
+                    const isActive = !log.logout_time;
+                    return (
+                      <tr key={log.id} className="hover:bg-[var(--muted-bg)]/30 transition-colors">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-xs font-bold text-indigo-400 flex-shrink-0 uppercase">
+                              {log.username?.[0]?.toUpperCase() || 'U'}
+                            </div>
+                            <div>
+                              <p className="font-bold text-[var(--foreground)] text-xs sm:text-sm">{log.username}</p>
+                              <p className="text-[10px] text-[var(--muted)] font-mono">Log ID #{log.id}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span
+                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border capitalize ${
+                              log.role === 'superAdmin'
+                                ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
+                                : log.role === 'admin' || log.role === 'org_admin'
+                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                : 'bg-sky-500/10 text-sky-400 border-sky-500/30'
+                            }`}
+                          >
+                            {log.role}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-xs text-[var(--foreground)] font-medium">
+                          {formatLogDate(log.date || log.login_time)}
+                        </td>
+                        <td className="px-6 py-4 text-xs text-[var(--foreground)] font-mono">
+                          {formatLogDateTime(log.login_time)}
+                        </td>
+                        <td className="px-6 py-4 text-xs font-mono">
+                          {isActive ? (
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-500 border border-emerald-500/30">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                              Active Session
+                            </span>
+                          ) : (
+                            <span className="text-[var(--foreground)]">{formatLogDateTime(log.logout_time)}</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-xs">
+                          <span className={`font-semibold ${isActive ? 'text-emerald-500' : 'text-[var(--muted)]'}`}>
+                            {getSessionDuration(log.login_time, log.logout_time)}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-xs text-[var(--muted)] font-mono hidden lg:table-cell">
+                          {log.ip_address || '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Add User Modal ───────────────────────────────────────────────────── */}
       {showAddModal && (
