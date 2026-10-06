@@ -23,13 +23,18 @@ export function OrgProvider({ children }) {
       const list = data.organisations || [];
       setOrganisations(list);
 
-      // Restore previous selection ONLY if it still belongs to this user.
-      // Otherwise leave currentOrg null so the user is forced to the picker.
+      // Restore previous selection ONLY if it still belongs to this user,
+      // or default to the user's primary organisation.
       const savedId = session.getOrgId();
       const found = list.find((o) => o.id === savedId);
       if (found) {
         setCurrentOrgState(found);
         api.defaults.headers.common['X-Org-Id'] = String(found.id);
+      } else if (list.length > 0) {
+        const defaultOrg = list[0];
+        setCurrentOrgState(defaultOrg);
+        session.setOrgId(defaultOrg.id);
+        api.defaults.headers.common['X-Org-Id'] = String(defaultOrg.id);
       } else {
         setCurrentOrgState(null);
         session.setOrgId(null);

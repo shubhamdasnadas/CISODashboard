@@ -6,6 +6,7 @@ import { PAGES } from '../constants/navPages.js';
 import { useOrg } from '../context/OrgContext.jsx';
 import { useTheme } from '../context/ThemeContext.jsx';
 import PageTransitionLoader from './PageTransitionLoader.jsx';
+import SuperAdminBanner from './SuperAdminBanner.jsx';
 
 const NAV = [
   {
@@ -78,10 +79,14 @@ const NAV = [
     icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>,
   },
   {
+    key: 'superadmin-console', name: 'SuperAdmin Console', path: '/superadmin-console', superAdminOnly: true,
+    icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l9-5-9-5-9 5 9 5z" /></svg>,
+  },
+  {
     key: 'admin', name: 'Admin Orgs', path: '/admin/organizations', superAdminOnly: true,
     icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>,
   },
-   {
+  {
     key: 'members', name: 'Users', path: '/members',
     icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>,
   },
@@ -403,6 +408,9 @@ function getPageLoaderMeta(pathname) {
   if (pathname === '/members') {
     return { badge: 'Team', statusText: 'Loading Team Members & Access Roles…' };
   }
+  if (pathname === '/superadmin-console' || pathname.startsWith('/superadmin-console/')) {
+    return { badge: 'Governance', statusText: 'Loading SuperAdmin Console & Tenant Management…' };
+  }
   if (pathname.startsWith('/admin/')) {
     return { badge: 'Administration', statusText: 'Loading Organizations & Management Data…' };
   }
@@ -439,25 +447,28 @@ export default function AppLayout() {
 
   // Synchronous route transition state to prevent target page flash before loader (Image #25)
   const location = useLocation();
+  const isSuperAdminConsole = location.pathname === '/superadmin-console';
   const [transitionState, setTransitionState] = useState({
     activePath: location.pathname,
-    isTransitioning: true,
+    isTransitioning: !isSuperAdminConsole,
   });
 
   const prevOrgIdRef = useRef(currentOrg?.id);
   useEffect(() => {
     if (prevOrgIdRef.current !== currentOrg?.id) {
       prevOrgIdRef.current = currentOrg?.id;
-      setTransitionState((prev) => ({ ...prev, isTransitioning: true }));
+      if (!isSuperAdminConsole) {
+        setTransitionState((prev) => ({ ...prev, isTransitioning: true }));
+      }
     }
-  }, [currentOrg?.id]);
+  }, [currentOrg?.id, isSuperAdminConsole]);
 
   // Synchronously intercept route change during render phase so the loader appears instantly
   // without allowing the target page (e.g. Dashboard) to render or paint first
   if (transitionState.activePath !== location.pathname) {
     setTransitionState({
       activePath: location.pathname,
-      isTransitioning: true,
+      isTransitioning: !isSuperAdminConsole,
     });
   }
 
@@ -485,11 +496,19 @@ export default function AppLayout() {
         onToggleCollapse={() => setSidebarCollapsed(v => !v)}
       />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {isSuperAdmin && session.getSuperAdminViewingOrg() && (
+          <SuperAdminBanner
+            viewingOrg={session.getSuperAdminViewingOrg()}
+            onExit={() => {
+              setTransitionState((prev) => ({ ...prev }));
+            }}
+          />
+        )}
         <TopBar
           onMenuClick={() => setSidebarOpen(true)}
         />
         <main className="flex-1 overflow-y-auto overflow-x-hidden relative">
-          {transitionState.isTransitioning && (
+          {transitionState.isTransitioning && !isSuperAdminConsole && (
             <PageTransitionLoader
               key={location.pathname}
               isLoading={true}
@@ -499,7 +518,7 @@ export default function AppLayout() {
               onComplete={() => setTransitionState(prev => ({ ...prev, isTransitioning: false }))}
             />
           )}
-          <div className={`w-full min-h-full transition-opacity duration-200 ${transitionState.isTransitioning ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+          <div className={`w-full min-h-full transition-opacity duration-200 ${(transitionState.isTransitioning && !isSuperAdminConsole) ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
             {guardedOutlet}
           </div>
         </main>

@@ -47,6 +47,7 @@ const nvdCpeRoutes = require('./routes/nvdCpe');
 const updatedNvdRoutes = require('./routes/updatedNvd');
 const updatedCpesRoutes = require('./routes/updatedCpes');
 const cacheRoutes = require('./routes/cache');
+const superAdminConsoleRoutes = require('./routes/superAdminConsole');
 
 // Sync services (for cron)
 const { syncSentinelOne } = require('./services/sentinelone');
@@ -71,6 +72,7 @@ app.get('/', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/auth', auth2faRoutes);
 app.use('/api/auth/otp', otpRoutes);
+app.use('/api/superadmin', superAdminConsoleRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/organisations', orgRoutes);
 app.use('/api/tokens', tokenRoutes);

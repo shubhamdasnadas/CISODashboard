@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import api from '../api';
+import * as session from '../utils/session.js';
 import PageTransitionLoader from '../components/PageTransitionLoader.jsx';
 import OtpNotificationToast from '../components/OtpNotificationToast.jsx';
 
@@ -12,6 +13,18 @@ export default function Login2FA() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [receivedOtp, setReceivedOtp] = useState('');
+
+  useEffect(() => {
+    const token = session.getToken();
+    if (token) {
+      const user = session.getUser();
+      if (user?.role === 'superAdmin') {
+        navigate('/superadmin-console', { replace: true });
+      } else {
+        navigate('/dashboard', { replace: true });
+      }
+    }
+  }, [navigate]);
 
   async function handleSubmit(e) {
     e.preventDefault();

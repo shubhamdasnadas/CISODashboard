@@ -197,11 +197,23 @@ export default function OtpVerify() {
 
       // Store token, user, and logId in this tab's own session
       session.setAuth({ token, user, logId });
-      session.setOrgId(null);
       localStorage.removeItem('ciso_2fa_email');
       sessionStorage.removeItem('ciso_last_otp');
-      delete api.defaults.headers.common['X-Org-Id'];
-      navigate('/select-organisation', { replace: true });
+
+      if (user?.role === 'superAdmin') {
+        session.setOrgId(null);
+        delete api.defaults.headers.common['X-Org-Id'];
+        navigate('/superadmin-console', { replace: true });
+      } else {
+        if (Array.isArray(user?.org_ids) && user.org_ids.length > 0) {
+          session.setOrgId(user.org_ids[0]);
+          api.defaults.headers.common['X-Org-Id'] = String(user.org_ids[0]);
+        } else {
+          session.setOrgId(null);
+          delete api.defaults.headers.common['X-Org-Id'];
+        }
+        navigate('/dashboard', { replace: true });
+      }
     } catch (err) {
       setError(err.response?.data?.error || 'Invalid code');
     } finally {

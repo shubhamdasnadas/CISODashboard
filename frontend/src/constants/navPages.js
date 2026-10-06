@@ -20,4 +20,5 @@ export const PAGES = [
   { key: 'news',          label: 'News' },
   { key: 'settings',      label: 'Settings' },
   { key: 'members',       label: 'Users' },
+  { key: 'superadmin-console', label: 'SuperAdmin Console' },
 ];

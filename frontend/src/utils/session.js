@@ -106,16 +106,39 @@ export function setOrgId(orgId) {
   else localStorage.setItem(key('org'), String(orgId));
 }
 
+/** SuperAdmin viewing organization context helpers */
+export function getSuperAdminViewingOrg() {
+  try {
+    const raw = localStorage.getItem(key('sa_viewing_org'));
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setSuperAdminViewingOrg(org) {
+  if (!org) {
+    localStorage.removeItem(key('sa_viewing_org'));
+  } else {
+    localStorage.setItem(key('sa_viewing_org'), JSON.stringify(org));
+  }
+}
+
+export function clearSuperAdminViewingOrg() {
+  localStorage.removeItem(key('sa_viewing_org'));
+}
+
 /** Log this tab out: drop its session data and the tab's pointer. */
 export function clearSession() {
   const id = sessionId();
   if (id) {
-    ['token', 'user', 'org', 'logId'].forEach((n) => localStorage.removeItem(`${PREFIX}${id}_${n}`));
+    ['token', 'user', 'org', 'logId', 'sa_viewing_org'].forEach((n) => localStorage.removeItem(`${PREFIX}${id}_${n}`));
   }
   sessionStorage.removeItem(POINTER_KEY);
   // Best-effort cleanup of pre-session flat keys so stale logins don't linger.
   Object.values(LEGACY).forEach((k) => localStorage.removeItem(k));
   localStorage.removeItem('ciso_logId');
+  localStorage.removeItem('ciso_sa_viewing_org');
 }
 
 /** Remove session blobs whose login is older than SESSION_MAX_AGE_MS. */

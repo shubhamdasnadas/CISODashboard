@@ -114,8 +114,43 @@ async function ensureCentralTables() {
     CREATE INDEX IF NOT EXISTS idx_user_logs_username ON user_logs(username);
     CREATE INDEX IF NOT EXISTS idx_user_logs_date ON user_logs(date);
     CREATE INDEX IF NOT EXISTS idx_user_logs_login_time ON user_logs(login_time DESC);
+
+    -- SuperAdmin console tables & column migrations
+    ALTER TABLE organisations ADD COLUMN IF NOT EXISTS start_date DATE DEFAULT CURRENT_DATE;
+    ALTER TABLE organisations ADD COLUMN IF NOT EXISTS end_date DATE DEFAULT (CURRENT_DATE + INTERVAL '1 year');
+    ALTER TABLE organisations ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'active';
+    ALTER TABLE organisations ADD COLUMN IF NOT EXISTS created_by VARCHAR(100);
+    ALTER TABLE organisations ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+    ALTER TABLE organisations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+    ALTER TABLE organisations ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS organisation_id INTEGER;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number VARCHAR(50);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'active';
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS password_setup_token VARCHAR(255);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS password_setup_expires_at TIMESTAMPTZ;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT FALSE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+    CREATE TABLE IF NOT EXISTS superadmin_audit_logs (
+      id SERIAL PRIMARY KEY,
+      actor VARCHAR(100) NOT NULL,
+      target VARCHAR(100),
+      target_type VARCHAR(50),
+      action VARCHAR(100) NOT NULL,
+      details JSONB,
+      ip_address VARCHAR(100),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_sa_audit_created_at ON superadmin_audit_logs(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_sa_audit_actor ON superadmin_audit_logs(actor);
+    CREATE INDEX IF NOT EXISTS idx_sa_audit_target ON superadmin_audit_logs(target);
   `);
-  console.log('✔  cisodashboard: central user_logs table ready');
+  console.log('✔  cisodashboard: central user_logs & superadmin tables/columns ready');
 }
 
 async function runMigration() {

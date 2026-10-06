@@ -67,6 +67,8 @@ import Members from './pages/Members.jsx';
 // Admin
 import AdminOrganizations from './pages/admin/AdminOrganizations.jsx';
 import AdminOrgUsers from './pages/admin/AdminOrgUsers.jsx';
+import SuperAdminConsole from './pages/SuperAdminConsole.jsx';
+import SetPassword from './pages/SetPassword.jsx';
 
 import * as session from './utils/session.js';
 
@@ -85,6 +87,10 @@ function ProtectedRoute({ children, requireSuperAdmin = false }) {
 }
 
 function OrgGate({ children }) {
+  // SuperAdmin can access all routes immediately without waiting on org loading or having a selected org
+  const user = session.getUser();
+  if (user?.role === 'superAdmin') return children;
+
   const { loading, currentOrg } = useOrg();
   if (loading) {
     return (
@@ -93,13 +99,20 @@ function OrgGate({ children }) {
       </div>
     );
   }
-  // SuperAdmin can access all routes even without a selected org
-  const user = session.getUser();
-  if (user.role === 'superAdmin') return children;
   if (!currentOrg) {
     return <Navigate to="/select-organisation" replace />;
   }
   return children;
+}
+
+function RootRedirect() {
+  const token = session.getToken();
+  if (!token) return <Navigate to="/login" replace />;
+  const user = session.getUser();
+  if (user?.role === 'superAdmin') {
+    return <Navigate to="/superadmin-console" replace />;
+  }
+  return <Navigate to="/dashboard" replace />;
 }
 
 export default function App() {
@@ -113,6 +126,8 @@ export default function App() {
               <Route path="/login-2fa" element={<Login2FA />} />
               <Route path="/verify-otp" element={<OtpVerify />} />
               <Route path="/select-organisation" element={<SelectOrganisation />} />
+              <Route path="/superadmin-console" element={<ProtectedRoute requireSuperAdmin><SuperAdminConsole /></ProtectedRoute>} />
+              <Route path="/setpassword" element={<SetPassword />} />
               <Route path="/analytics-print" element={<Analytics printMode={true} />} />
               <Route
                 element={
@@ -188,8 +203,8 @@ export default function App() {
                 <Route path="/settings/microsoft" element={<MicrosoftConfig />} />
               </Route>
 
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
-              <Route path="*" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/" element={<RootRedirect />} />
+              <Route path="*" element={<RootRedirect />} />
             </Routes>
           </ProviderProvider>
         </DashboardProvider>

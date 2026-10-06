@@ -80,7 +80,10 @@ export default function Users() {
   const [addForm, setAddForm] = useState({
     username: '',
     email: '',
+    phone_number: '',
     password: '',
+    confirmPassword: '',
+    send_invite: true,
     role: 'member',
     org_ids: [],
     allowed_pages: null, // null = full access, array = custom
@@ -91,6 +94,7 @@ export default function Users() {
   const [editForm, setEditForm] = useState({
     username: '',
     email: '',
+    phone_number: '',
     password: '',
     role: 'member',
     org_ids: [],
@@ -99,6 +103,7 @@ export default function Users() {
   const [showEditPages, setShowEditPages] = useState(false);
 
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [resendingUserId, setResendingUserId] = useState(null);
 
   // ── Fetch Users & Organizations from Database ────────────────────────────────
   async function loadData() {
@@ -150,30 +155,45 @@ export default function Users() {
   // ── Handlers ─────────────────────────────────────────────────────────────────
   async function handleAddSubmit(e) {
     e.preventDefault();
-    if (!addForm.username.trim() || !addForm.password) {
-      showNotice('error', 'Username and Password are required');
+    if (!addForm.username.trim()) {
+      showNotice('error', 'Full Name / Username is required');
       return;
     }
+    if (addForm.send_invite && !addForm.email.trim()) {
+      showNotice('error', 'Email Address is required to send password setup invitation');
+      return;
+    }
+    if (!addForm.send_invite && !addForm.password) {
+      showNotice('error', 'Password is required when not sending an invite email');
+      return;
+    }
+
     setActionLoading(true);
     try {
       const payload = {
         username: addForm.username.trim(),
         email: addForm.email ? addForm.email.trim() : null,
-        password: addForm.password,
+        phone_number: addForm.phone_number ? addForm.phone_number.trim() : null,
+        password: addForm.send_invite ? null : addForm.password,
+        confirmPassword: addForm.confirmPassword || null,
         role: addForm.role,
         org_ids: addForm.org_ids,
+        send_invite: addForm.send_invite,
         allowed_pages: showAddPages && Array.isArray(addForm.allowed_pages) && addForm.allowed_pages.length > 0
           ? addForm.allowed_pages
           : null,
       };
 
       const res = await api.post('/users', payload);
-      showNotice('success', `User "${res.data?.user?.username || addForm.username}" created successfully`);
+      showNotice('success', res.data?.message || `User "${res.data?.user?.username || addForm.username}" created successfully`);
       setShowAddModal(false);
       setAddForm({
         username: '',
         email: '',
+        phone_number: '',
         password: '',
+        confirmPassword: '',
+        send_invite: true,
         role: 'member',
         org_ids: [],
         allowed_pages: null,
@@ -188,6 +208,21 @@ export default function Users() {
     }
   }
 
+  async function handleResendInvite(user) {
+    if (!user || !user.id) return;
+    setResendingUserId(user.id);
+    try {
+      const res = await api.post(`/users/${user.id}/resend-invite`);
+      showNotice('success', res.data?.message || `Password setup invitation email resent to ${user.email}`);
+      loadData();
+    } catch (err) {
+      console.error('[Users] Resend invite error:', err);
+      showNotice('error', err.response?.data?.error || err.response?.data?.message || 'Failed to resend password setup invite');
+    } finally {
+      setResendingUserId(null);
+    }
+  }
+
   function openEditModal(user) {
     setEditUser(user);
     const hasCustomPages = Array.isArray(user.allowed_pages) && user.allowed_pages.length > 0;
@@ -195,6 +230,7 @@ export default function Users() {
     setEditForm({
       username: user.username || '',
       email: user.email || '',
+      phone_number: user.phone_number || '',
       password: '',
       role: user.role || 'member',
       org_ids: Array.isArray(user.org_ids) ? [...user.org_ids] : [],
@@ -214,6 +250,7 @@ export default function Users() {
       const payload = {
         username: editForm.username.trim(),
         email: editForm.email ? editForm.email.trim() : null,
+        phone_number: editForm.phone_number ? editForm.phone_number.trim() : null,
         role: editForm.role,
         org_ids: editForm.org_ids,
         allowed_pages: showEditPages && Array.isArray(editForm.allowed_pages) && editForm.allowed_pages.length > 0
@@ -287,6 +324,7 @@ export default function Users() {
         !q ||
         (u.username && u.username.toLowerCase().includes(q)) ||
         (u.email && u.email.toLowerCase().includes(q)) ||
+        (u.phone_number && u.phone_number.toLowerCase().includes(q)) ||
         String(u.id).includes(q) ||
         (u.organisations && u.organisations.some((o) => o.org_name?.toLowerCase().includes(q)));
 
@@ -588,15 +626,18 @@ export default function Users() {
                   <thead>
                     <tr className="border-b border-[var(--card-border)] bg-[var(--muted-bg)]/40 text-[11px] font-bold text-[var(--muted)] uppercase tracking-wider">
                       <th className="py-3 px-4">User</th>
-                      <th className="py-3 px-4">Role</th>
-                      <th className="py-3 px-4">Assigned Organisations</th>
-                      <th className="py-3 px-4">Page Permissions</th>
+                      <th className="py-3 px-3">Contact &amp; Phone</th>
+                      <th className="py-3 px-3">Role</th>
+                      <th className="py-3 px-3">Assigned Organisations</th>
+                      <th className="py-3 px-3">Status</th>
+                      <th className="py-3 px-3">Page Permissions</th>
                       <th className="py-3 px-4 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--card-border)] text-sm">
                     {filteredUsers.map((u) => {
                       const isCurrent = currentUser?.userId === u.id;
+                      const isPending = u.status === 'pending' || u.is_pending_setup;
                       const customPagesCount = Array.isArray(u.allowed_pages) ? u.allowed_pages.length : null;
 
                       return (
@@ -619,15 +660,28 @@ export default function Users() {
                                     </span>
                                   )}
                                 </div>
-                                <p className="text-xs text-[var(--muted)] mt-0.5">
-                                  {u.email ? u.email : <span className="italic opacity-60">No email assigned</span>}
-                                </p>
                               </div>
                             </div>
                           </td>
 
+                          {/* Contact & Phone */}
+                          <td className="py-3.5 px-3">
+                            <div className="space-y-0.5">
+                              <p className="text-xs text-[var(--foreground)] font-medium">
+                                {u.email ? u.email : <span className="italic text-[var(--muted)] opacity-60">No email</span>}
+                              </p>
+                              {u.phone_number ? (
+                                <p className="text-[11px] text-[var(--muted)] font-mono flex items-center gap-1">
+                                  <span>📞</span> {u.phone_number}
+                                </p>
+                              ) : (
+                                <p className="text-[11px] text-[var(--muted)] opacity-50">—</p>
+                              )}
+                            </div>
+                          </td>
+
                           {/* Role Badge */}
-                          <td className="py-3.5 px-4">
+                          <td className="py-3.5 px-3">
                             <span
                               className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold capitalize border ${
                                 u.role === 'superAdmin'
@@ -651,13 +705,13 @@ export default function Users() {
                           </td>
 
                           {/* Organisations */}
-                          <td className="py-3.5 px-4">
+                          <td className="py-3.5 px-3">
                             <div className="flex flex-wrap gap-1.5 max-w-xs">
                               {u.organisations && u.organisations.length > 0 ? (
                                 u.organisations.map((o) => (
                                   <span
                                     key={o.id}
-                                    className="text-xs px-2.5 py-0.5 rounded-lg bg-[var(--muted-bg)] text-[var(--foreground)] border border-[var(--card-border)] font-medium"
+                                    className="text-xs px-2 py-0.5 rounded-lg bg-[var(--muted-bg)] text-[var(--foreground)] border border-[var(--card-border)] font-medium"
                                   >
                                     {o.org_name}
                                   </span>
@@ -668,28 +722,71 @@ export default function Users() {
                             </div>
                           </td>
 
+                          {/* Status */}
+                          <td className="py-3.5 px-3">
+                            {isPending ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 shadow-xs">
+                                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                                Pending Setup
+                              </span>
+                            ) : u.is_active ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                                Active
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700">
+                                <span className="w-2 h-2 rounded-full bg-zinc-400" />
+                                Inactive
+                              </span>
+                            )}
+                          </td>
+
                           {/* Page Permissions */}
-                          <td className="py-3.5 px-4">
+                          <td className="py-3.5 px-3">
                             {customPagesCount === null ? (
                               <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-lg">
                                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                                 </svg>
-                                Full Access (All Pages)
+                                Full Access
                               </span>
                             ) : (
                               <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-lg">
                                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                                 </svg>
-                                Custom ({customPagesCount} / {PAGES.length} pages)
+                                Custom ({customPagesCount}p)
                               </span>
                             )}
                           </td>
 
                           {/* Actions */}
                           <td className="py-3.5 px-4 text-right">
-                            <div className="flex items-center justify-end gap-2">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {/* Resend Invite Link Button (for Pending users) */}
+                              {isPending && (
+                                <button
+                                  type="button"
+                                  title="Resend Password Setup Link via Email"
+                                  onClick={() => handleResendInvite(u)}
+                                  disabled={resendingUserId === u.id}
+                                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 transition-all cursor-pointer shadow-xs active:scale-95 disabled:opacity-50"
+                                >
+                                  {resendingUserId === u.id ? (
+                                    <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                    </svg>
+                                  ) : (
+                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                                    </svg>
+                                  )}
+                                  <span>Resend</span>
+                                </button>
+                              )}
+
                               <button
                                 type="button"
                                 onClick={() => openEditModal(u)}
@@ -911,18 +1008,18 @@ export default function Users() {
               <span>👤</span> Add New System User
             </h2>
             <p className="text-xs text-[var(--muted)] mt-1 mb-5">
-              Create an authentication account and link access to organisations.
+              Create an authentication account, assign roles, and dispatch an invitation link.
             </p>
 
             <form onSubmit={handleAddSubmit} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-[var(--foreground)] mb-1">
-                  Username <span className="text-rose-500">*</span>
+                  Full Name / Username <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. jdoe"
+                  placeholder="e.g. John Doe / jdoe"
                   value={addForm.username}
                   onChange={(e) => setAddForm({ ...addForm, username: e.target.value })}
                   className="w-full px-3.5 py-2.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl text-xs text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -932,7 +1029,7 @@ export default function Users() {
               <div>
                 <label className="block text-xs font-semibold text-[var(--foreground)] mb-1">
                   Email Address <span className="text-rose-500">*</span>
-                  <span className="text-[10px] text-[var(--muted)] font-normal ml-1">(Used for OTP Login & notifications)</span>
+                  <span className="text-[10px] text-[var(--muted)] font-normal ml-1">(Used for setup link &amp; OTP login)</span>
                 </label>
                 <input
                   type="email"
@@ -946,14 +1043,14 @@ export default function Users() {
 
               <div>
                 <label className="block text-xs font-semibold text-[var(--foreground)] mb-1">
-                  Password <span className="text-rose-500">*</span>
+                  Phone Number
+                  <span className="text-[10px] text-[var(--muted)] font-normal ml-1">(For notifications &amp; verification)</span>
                 </label>
                 <input
-                  type="password"
-                  required
-                  placeholder="••••••••••••"
-                  value={addForm.password}
-                  onChange={(e) => setAddForm({ ...addForm, password: e.target.value })}
+                  type="tel"
+                  placeholder="e.g. +91 9876543210"
+                  value={addForm.phone_number}
+                  onChange={(e) => setAddForm({ ...addForm, phone_number: e.target.value })}
                   className="w-full px-3.5 py-2.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl text-xs text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
@@ -1000,6 +1097,78 @@ export default function Users() {
                         </button>
                       );
                     })}
+                  </div>
+                )}
+              </div>
+
+              {/* Password Setup Mode */}
+              <div className="p-3.5 rounded-xl bg-[var(--muted-bg)]/40 border border-[var(--card-border)] space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-[var(--foreground)]">Password Setup Method</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAddForm({ ...addForm, send_invite: true })}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                        addForm.send_invite
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-[var(--muted)] hover:text-[var(--foreground)]'
+                      }`}
+                    >
+                      Email Setup Link
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAddForm({ ...addForm, send_invite: false })}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                        !addForm.send_invite
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-[var(--muted)] hover:text-[var(--foreground)]'
+                      }`}
+                    >
+                      Set Password
+                    </button>
+                  </div>
+                </div>
+
+                {addForm.send_invite ? (
+                  <div className="space-y-2.5">
+                    <div className="p-3 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs flex items-start gap-2">
+                      <span className="text-base leading-none">✉️</span>
+                      <div>
+                        <p className="font-semibold text-[var(--foreground)]">Automated Setup Invitation</p>
+                        <p className="text-[11px] text-[var(--muted)] mt-0.5">
+                          An invitation email will be sent to <strong className="text-[var(--foreground)]">{addForm.email || 'the user'}</strong> containing a secure 24-hour link to set their password. Account status will be <span className="text-amber-400 font-semibold">Pending Setup</span> until configured.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-[var(--foreground)] mb-1">
+                        Authorize with your current password
+                      </label>
+                      <input
+                        type="password"
+                        placeholder="Enter your administrator password to authorize"
+                        value={addForm.confirmPassword}
+                        onChange={(e) => setAddForm({ ...addForm, confirmPassword: e.target.value })}
+                        className="w-full px-3.5 py-2.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl text-xs text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-xs font-semibold text-[var(--foreground)] mb-1">
+                      Direct Password <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="password"
+                      required={!addForm.send_invite}
+                      placeholder="••••••••••••"
+                      value={addForm.password}
+                      onChange={(e) => setAddForm({ ...addForm, password: e.target.value })}
+                      className="w-full px-3.5 py-2.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl text-xs text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
                   </div>
                 )}
               </div>
@@ -1090,7 +1259,19 @@ export default function Users() {
                   disabled={actionLoading}
                   className="px-5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white shadow-sm transition-all cursor-pointer flex items-center gap-2"
                 >
-                  {actionLoading ? 'Creating User…' : 'Create User'}
+                  {actionLoading ? (
+                    <>
+                      <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Creating User…
+                    </>
+                  ) : addForm.send_invite ? (
+                    'Send Setup Invitation'
+                  ) : (
+                    'Create User'
+                  )}
                 </button>
               </div>
             </form>
@@ -1114,7 +1295,7 @@ export default function Users() {
               <span>✏️</span> Edit User: {editUser.username}
             </h2>
             <p className="text-xs text-[var(--muted)] mt-1 mb-5">
-              Update authentication credentials, role permissions, and organization access.
+              Update user details, contact info, role permissions, and organization access.
             </p>
 
             <form onSubmit={handleEditSubmit} className="space-y-4">
@@ -1134,13 +1315,26 @@ export default function Users() {
               <div>
                 <label className="block text-xs font-semibold text-[var(--foreground)] mb-1">
                   Email Address
-                  <span className="text-[10px] text-[var(--muted)] font-normal ml-1">(Used for OTP Login & notifications)</span>
+                  <span className="text-[10px] text-[var(--muted)] font-normal ml-1">(Used for OTP Login &amp; notifications)</span>
                 </label>
                 <input
                   type="email"
                   placeholder="e.g. user@example.com"
                   value={editForm.email}
                   onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                  className="w-full px-3.5 py-2.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl text-xs text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[var(--foreground)] mb-1">
+                  Phone Number
+                </label>
+                <input
+                  type="tel"
+                  placeholder="e.g. +91 9876543210"
+                  value={editForm.phone_number}
+                  onChange={(e) => setEditForm({ ...editForm, phone_number: e.target.value })}
                   className="w-full px-3.5 py-2.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl text-xs text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>

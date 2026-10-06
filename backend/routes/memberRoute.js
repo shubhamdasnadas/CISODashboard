@@ -1,7 +1,9 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 const router = express.Router();
 const { centralPool } = require('../db');
+const { sendUserInviteEmail } = require('../utils/mailer');
 
 // GET /api/member/my-access — page access for the CURRENT user + org.
 // Returns { allowed_pages: null } when everything is allowed.
@@ -158,19 +160,25 @@ router.get('/members', async (req, res) => {
 });
 
 // Ensures a users-table account exists for this member
-async function ensureUserAccount({ email, name, password, role, orgId, allowed_pages }) {
+async function ensureUserAccount({ email, name, password, role, orgId, allowed_pages, invitedBy }) {
+  const isInvite = !password || !String(password).trim();
+  const token = isInvite ? crypto.randomBytes(32).toString('hex') : null;
+  const expiresAt = isInvite ? new Date(Date.now() + 24 * 60 * 60 * 1000) : null;
+  const status = isInvite ? 'pending' : 'active';
+  const isActive = !isInvite;
+
   const insertHash = await bcrypt.hash(
-    password || require('crypto').randomBytes(24).toString('hex'),
+    password || crypto.randomBytes(32).toString('hex'),
     10
   );
 
-  const trimmedEmail = email ? email.trim() : null;
+  const trimmedEmail = email ? email.trim().toLowerCase() : null;
   const sysRole = toSystemRole(role);
 
   // If email exists, append orgId
   if (trimmedEmail) {
     const { rows: existing } = await centralPool.query(
-      'SELECT id, username, org_ids, allowed_pages FROM users WHERE LOWER(email) = LOWER($1)',
+      'SELECT id, username, org_ids, allowed_pages, status, is_active FROM users WHERE LOWER(email) = LOWER($1)',
       [trimmedEmail]
     );
     if (existing[0]) {
@@ -180,7 +188,8 @@ async function ensureUserAccount({ email, name, password, role, orgId, allowed_p
                             THEN org_ids
                             ELSE array_append(COALESCE(org_ids, ARRAY[]::int[]), $1::int) END,
              role = COALESCE($2, role),
-             allowed_pages = COALESCE($3, allowed_pages)
+             allowed_pages = COALESCE($3, allowed_pages),
+             updated_at = NOW()
          WHERE id = $4`,
         [orgId, sysRole, allowed_pages || null, existing[0].id]
       );
@@ -198,11 +207,49 @@ async function ensureUserAccount({ email, name, password, role, orgId, allowed_p
   }
 
   const { rows } = await centralPool.query(
-    `INSERT INTO users (username, password, role, email, org_ids, allowed_pages)
-     VALUES ($1, $2, $3, $4, ARRAY[$5::int], $6)
-     RETURNING id, username, email, role, org_ids, allowed_pages`,
-    [username, insertHash, sysRole, trimmedEmail, orgId, allowed_pages || null]
+    `INSERT INTO users (
+       username, password, role, email, org_ids, allowed_pages,
+       is_active, status, password_setup_token, password_setup_expires_at,
+       created_at, updated_at
+     )
+     VALUES ($1, $2, $3, $4, ARRAY[$5::int], $6, $7, $8, $9, $10, NOW(), NOW())
+     RETURNING id, username, email, role, org_ids, allowed_pages, is_active, status`,
+    [
+      username,
+      insertHash,
+      sysRole,
+      trimmedEmail,
+      orgId,
+      allowed_pages || null,
+      isActive,
+      status,
+      token,
+      expiresAt,
+    ]
   );
+
+  // Dispatch setup invitation email if pending
+  if (isInvite && trimmedEmail && token) {
+    let orgName = null;
+    if (orgId) {
+      const orgRes = await centralPool.query('SELECT org_name FROM organisations WHERE id = $1', [orgId]);
+      orgName = orgRes.rows[0]?.org_name || null;
+    }
+    try {
+      await sendUserInviteEmail({
+        to: trimmedEmail,
+        name: username,
+        phone: null,
+        token,
+        invitedBy: invitedBy || 'Organisation Admin',
+        role: sysRole,
+        orgName,
+      });
+    } catch (mailErr) {
+      console.error('[memberRoute] Send invite email error:', mailErr.message);
+    }
+  }
+
   return rows[0];
 }
 
@@ -220,7 +267,7 @@ router.post('/members', async (req, res) => {
 
     const trimmedName = name.trim();
     const trimmedEmail = email.trim();
-    const hashed = password ? await bcrypt.hash(password, 10) : await bcrypt.hash('Password@123', 10);
+    const hashed = password ? await bcrypt.hash(password, 10) : await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
 
     // 1. Create or link user in central `users` table
     const user = await ensureUserAccount({
@@ -230,17 +277,18 @@ router.post('/members', async (req, res) => {
       role,
       orgId,
       allowed_pages: Array.isArray(allowed_pages) && allowed_pages.length > 0 ? allowed_pages : null,
+      invitedBy: req.user?.username || 'Organisation Admin',
     });
 
     // 2. Sync to `org_users`
     const { rows } = await centralPool.query(
       `INSERT INTO org_users (org_id, name, email, password, role, department, is_active, allowed_pages)
-       VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (email, org_id) DO UPDATE SET
          name = EXCLUDED.name,
          role = EXCLUDED.role,
          department = COALESCE(EXCLUDED.department, org_users.department),
-         is_active = TRUE,
+         is_active = EXCLUDED.is_active,
          allowed_pages = EXCLUDED.allowed_pages,
          updated_at = NOW()
        RETURNING id, org_id, name, email, role, department, is_active, allowed_pages, created_at`,
@@ -251,6 +299,7 @@ router.post('/members', async (req, res) => {
         hashed,
         toOrgRole(role),
         department || null,
+        password ? true : false,
         Array.isArray(allowed_pages) && allowed_pages.length > 0 ? allowed_pages : null,
       ]
     );

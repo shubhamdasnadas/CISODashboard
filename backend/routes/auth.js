@@ -229,4 +229,102 @@ router.get('/user-logs', authMiddleware, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/auth/verify-setup-token
+ * Verify whether an email password setup token is valid and unexpired
+ */
+router.get('/verify-setup-token', async (req, res) => {
+  try {
+    const { token, email } = req.query;
+    if (!token || !email) {
+      return res.status(400).json({ valid: false, error: 'Token and email parameters are required' });
+    }
+
+    const trimmedEmail = email.trim().toLowerCase();
+    const { rows } = await centralPool.query(
+      `SELECT id, username, email, role, status, password_setup_expires_at
+       FROM users
+       WHERE LOWER(email) = $1 AND password_setup_token = $2 AND deleted_at IS NULL`,
+      [trimmedEmail, token.trim()]
+    );
+
+    if (rows.length === 0) {
+      return res.status(400).json({ valid: false, error: 'This password setup link is invalid or has already been used.' });
+    }
+
+    const user = rows[0];
+    if (user.password_setup_expires_at && new Date(user.password_setup_expires_at).getTime() < Date.now()) {
+      return res.status(400).json({ valid: false, error: 'This password setup link has expired. Please ask your administrator to resend an invite.' });
+    }
+
+    return res.json({
+      valid: true,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+    });
+  } catch (err) {
+    console.error('verify-setup-token error:', err);
+    return res.status(500).json({ valid: false, error: 'Server error verifying setup token' });
+  }
+});
+
+/**
+ * POST /api/auth/setup-password
+ * Activate user account and set initial password
+ */
+router.post('/setup-password', async (req, res) => {
+  try {
+    const { token, email, password } = req.body;
+    if (!token || !email || !password) {
+      return res.status(400).json({ error: 'Token, email, and new password are required' });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters long.' });
+    }
+
+    const trimmedEmail = email.trim().toLowerCase();
+    const { rows } = await centralPool.query(
+      `SELECT id, username, email, role, status, password_setup_expires_at
+       FROM users
+       WHERE LOWER(email) = $1 AND password_setup_token = $2 AND deleted_at IS NULL`,
+      [trimmedEmail, token.trim()]
+    );
+
+    if (rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid or already used password setup token.' });
+    }
+
+    const user = rows[0];
+    if (user.password_setup_expires_at && new Date(user.password_setup_expires_at).getTime() < Date.now()) {
+      return res.status(400).json({ error: 'This password setup link has expired. Please request a new invite link.' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    await centralPool.query(
+      `UPDATE users SET
+         password = $1,
+         password_setup_token = NULL,
+         password_setup_expires_at = NULL,
+         is_active = TRUE,
+         status = 'active',
+         must_change_password = FALSE,
+         updated_at = NOW()
+       WHERE id = $2`,
+      [hashedPassword, user.id]
+    );
+
+    return res.json({
+      success: true,
+      message: 'Your password has been successfully configured! You can now log in.',
+      username: user.username,
+    });
+  } catch (err) {
+    console.error('setup-password error:', err);
+    return res.status(500).json({ error: 'Server error setting up password', detail: err.message });
+  }
+});
+
 module.exports = router;

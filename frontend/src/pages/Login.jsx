@@ -21,7 +21,15 @@ export default function Login() {
   useEffect(() => {
     // A fresh visit to /login starts a NEW session for this tab — otherwise
     // the tab would silently resume whatever user last logged in here.
-    if (session.getToken()) navigate('/select-organisation');
+    const token = session.getToken();
+    if (token) {
+      const user = session.getUser();
+      if (user?.role === 'superAdmin') {
+        navigate('/superadmin-console', { replace: true });
+      } else {
+        navigate('/dashboard', { replace: true });
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -125,9 +133,20 @@ export default function Login() {
       } else {
         // Legacy fallback - directly logged in (creates this tab's own session)
         session.setAuth({ token: data.token, user: data.user });
-        session.setOrgId(null);
-        delete api.defaults.headers.common['X-Org-Id'];
-        navigate('/select-organisation');
+        if (data.user?.role === 'superAdmin') {
+          session.setOrgId(null);
+          delete api.defaults.headers.common['X-Org-Id'];
+          navigate('/superadmin-console', { replace: true });
+        } else {
+          if (Array.isArray(data.user?.org_ids) && data.user.org_ids.length > 0) {
+            session.setOrgId(data.user.org_ids[0]);
+            api.defaults.headers.common['X-Org-Id'] = String(data.user.org_ids[0]);
+          } else {
+            session.setOrgId(null);
+            delete api.defaults.headers.common['X-Org-Id'];
+          }
+          navigate('/dashboard', { replace: true });
+        }
       }
     } catch (err) {
       console.error('[login/otp] failed:', err);

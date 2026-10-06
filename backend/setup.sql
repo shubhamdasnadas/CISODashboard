@@ -85,18 +85,51 @@ CREATE TABLE organisations (
   industry    VARCHAR(100),
   plan        VARCHAR(50)  DEFAULT 'free',
   color       VARCHAR(20),
-  description TEXT
+  description TEXT,
+  start_date  DATE         DEFAULT CURRENT_DATE,
+  end_date    DATE         DEFAULT (CURRENT_DATE + INTERVAL '1 year'),
+  status      VARCHAR(50)  DEFAULT 'active',
+  created_by  VARCHAR(100),
+  created_at  TIMESTAMPTZ  DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ  DEFAULT NOW(),
+  deleted_at  TIMESTAMPTZ
 );
 
 CREATE TABLE users (
-  id SERIAL PRIMARY KEY,
-  username VARCHAR(100) UNIQUE NOT NULL,
-  password VARCHAR(255) NOT NULL,
-  role VARCHAR(50) NOT NULL,
-  email VARCHAR(255),
-  org_ids INTEGER[],
-  allowed_pages TEXT[]              -- NULL = all pages; array = only these page keys
+  id                  SERIAL PRIMARY KEY,
+  username            VARCHAR(100) UNIQUE NOT NULL,
+  password            VARCHAR(255) NOT NULL,
+  role                VARCHAR(50) NOT NULL,
+  email               VARCHAR(255),
+  phone_number        VARCHAR(50),
+  org_ids             INTEGER[],
+  organisation_id     INTEGER,
+  allowed_pages       TEXT[],              -- NULL = all pages; array = only these page keys
+  is_active           BOOLEAN DEFAULT TRUE,
+  status              VARCHAR(50) DEFAULT 'active',
+  password_setup_token VARCHAR(255),
+  password_setup_expires_at TIMESTAMPTZ,
+  must_change_password BOOLEAN DEFAULT FALSE,
+  last_login_at       TIMESTAMPTZ,
+  created_at          TIMESTAMPTZ DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ DEFAULT NOW(),
+  deleted_at          TIMESTAMPTZ
 );
+
+CREATE TABLE IF NOT EXISTS superadmin_audit_logs (
+  id SERIAL PRIMARY KEY,
+  actor VARCHAR(100) NOT NULL,
+  target VARCHAR(100),
+  target_type VARCHAR(50),
+  action VARCHAR(100) NOT NULL,
+  details JSONB,
+  ip_address VARCHAR(100),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sa_audit_created_at ON superadmin_audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sa_audit_actor ON superadmin_audit_logs(actor);
+CREATE INDEX IF NOT EXISTS idx_sa_audit_target ON superadmin_audit_logs(target);
 
 CREATE TABLE IF NOT EXISTS user_logs (
   id SERIAL PRIMARY KEY,

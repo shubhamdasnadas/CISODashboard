@@ -146,10 +146,41 @@ router.post('/2fa/verify-otp', async (req, res) => {
     // Issue the final access token (embeds org_ids; org context is applied
     // later via the X-Org-Id header, matching the rest of the app).
     const { rows: userRows } = await centralPool.query(
-      'SELECT id, username, role, org_ids FROM users WHERE id = $1',
+      'SELECT id, username, role, org_ids, is_active FROM users WHERE id = $1',
       [session.user_id]
     );
     const user = userRows[0];
+
+    // For non-superAdmin users, check user status and organization status
+    if (user.role !== 'superAdmin') {
+      if (user.is_active === false) {
+        return res.status(403).json({ error: 'Your account has been deactivated. Please contact your administrator.' });
+      }
+      if (Array.isArray(user.org_ids) && user.org_ids.length > 0) {
+        const orgCheck = await centralPool.query(
+          `SELECT id, status, is_active, end_date FROM organisations
+           WHERE id = ANY($1::int[]) AND deleted_at IS NULL`,
+          [user.org_ids]
+        );
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const activeOrgs = orgCheck.rows.filter((o) => {
+          if (o.status === 'suspended' || o.is_active === false) return false;
+          if (o.end_date && new Date(o.end_date) < today) return false;
+          return true;
+        });
+        if (activeOrgs.length === 0 && orgCheck.rows.length > 0) {
+          return res.status(403).json({
+            error: 'Your organization access is inactive or expired. Please contact your administrator.',
+          });
+        }
+      }
+    }
+
+    // Update last_login_at
+    try {
+      await centralPool.query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [user.id]);
+    } catch {}
 
     const accessToken = jwt.sign(
       { userId: user.id, username: user.username, role: user.role, org_ids: user.org_ids || [] },

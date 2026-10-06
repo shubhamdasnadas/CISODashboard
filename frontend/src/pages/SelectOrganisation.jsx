@@ -29,6 +29,11 @@ export default function SelectOrganisation() {
       navigate('/login', { replace: true });
       return;
     }
+    const user = session.getUser();
+    if (user?.role === 'superAdmin') {
+      navigate('/superadmin-console', { replace: true });
+      return;
+    }
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

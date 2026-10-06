@@ -121,11 +121,38 @@ router.post('/verify', async (req, res) => {
   const { otp } = req.body;
   if (!identifier || !otp) return res.status(400).json({ error: 'Email and OTP are required' });
   const userRes = await centralPool.query(
-    'SELECT id, username, email, role, org_ids FROM users WHERE LOWER(email) = LOWER($1)',
+    'SELECT id, username, email, role, org_ids, is_active FROM users WHERE LOWER(email) = LOWER($1)',
     [identifier]
   );
   if (userRes.rows.length === 0) return res.status(404).json({ error: 'User not found' });
   const user = userRes.rows[0];
+
+  // For non-superAdmin users, check user status and organization status
+  if (user.role !== 'superAdmin') {
+    if (user.is_active === false) {
+      return res.status(403).json({ error: 'Your account has been deactivated. Please contact your administrator.' });
+    }
+    if (Array.isArray(user.org_ids) && user.org_ids.length > 0) {
+      const orgCheck = await centralPool.query(
+        `SELECT id, status, is_active, end_date FROM organisations
+         WHERE id = ANY($1::int[]) AND deleted_at IS NULL`,
+        [user.org_ids]
+      );
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const activeOrgs = orgCheck.rows.filter((o) => {
+        if (o.status === 'suspended' || o.is_active === false) return false;
+        if (o.end_date && new Date(o.end_date) < today) return false;
+        return true;
+      });
+      if (activeOrgs.length === 0 && orgCheck.rows.length > 0) {
+        return res.status(403).json({
+          error: 'Your organization access is inactive or expired. Please contact your administrator.',
+        });
+      }
+    }
+  }
+
   const verified = await verifyOtp(user.id, otp);
   // Distinguish a truly expired code (user must resend) from a wrong one.
   if (!verified.valid) {
@@ -133,6 +160,13 @@ router.post('/verify', async (req, res) => {
       ? 'This code has expired. Request a new one.'
       : 'Invalid code. Check the 6-digit code and try again.';
     return res.status(401).json({ error: message });
+  }
+
+  // Update last_login_at
+  try {
+    await centralPool.query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [user.id]);
+  } catch (err) {
+    console.warn('[auth/otp] Failed to update last_login_at:', err.message);
   }
 
   // Generate JWT token after OTP verification
