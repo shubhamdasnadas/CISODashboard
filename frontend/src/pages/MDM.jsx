@@ -760,20 +760,19 @@ function ScaleFusionTab() {
       .catch(() => setDevices([]))
       .finally(() => setDevicesLoading(false));
   };
-
   const loadApps = () => {
     setAppsLoading(true);
     api.get('/scalefusion/db/applications')
-      .then((r) => setApps(Array.isArray(r.data?.data) ? r.data.data : []))
-      .catch(() => setApps([]))
-      .finally(() => setAppsLoading(false));
+    .then((r) => setApps(Array.isArray(r.data?.data) ? r.data.data : []))
+    .catch(() => setApps([]))
+    .finally(() => setAppsLoading(false));
   };
-
+  
   const loadFlaggedApps = () => {
     setFlaggedAppsLoading(true);
     api.get('/scalefusion/db/device-applications/flagged')
-      .then((r) => setFlaggedApps(Array.isArray(r.data?.data) ? r.data.data : []))
-      .catch(() => setFlaggedApps([]))
+    .then((r) => setFlaggedApps(Array.isArray(r.data?.data) ? r.data.data : []))
+    .catch(() => setFlaggedApps([]))
       .finally(() => setFlaggedAppsLoading(false));
   };
 
@@ -784,7 +783,8 @@ function ScaleFusionTab() {
         if (r.data?.synced_at) setLastSyncedAt(r.data.synced_at);
       })
       .catch(() => setRawResponse(null));
-  };
+    };
+    console.log("data avaliable", rawResponse);
 
   useEffect(() => {
     loadDevices();

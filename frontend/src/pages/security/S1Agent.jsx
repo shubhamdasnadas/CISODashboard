@@ -3,52 +3,28 @@ import { useNavigate } from 'react-router-dom';
 import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 import api from '../../api.js';
 import {
-  MultiViewChart, ChartViewDropdown, useViewState, rangeComparison, CompareRangeSelector, withinRange,
-  categoryTimeSeries, KpiCard, DeltaBadge, splitByWindow,
+  MultiViewChart,
+  ChartViewDropdown,
+  DaysFilter,
+  DEFAULT_DAY_OPTIONS,
+  useViewState,
+  rangeComparison,
+  withinRange,
+  categoryTimeSeries,
+  KpiCard,
+  DeltaBadge,
+  parseRecordDate,
 } from './widgetViews.jsx';
 
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
 
-function parseDate(v) {
-  if (!v) return null;
-  const d = new Date(v);
-  return isNaN(d.getTime()) ? null : d;
-}
-
-function DateFilter({ from, to, onFromChange, onToChange, onClear }) {
-  return (
-    <div className="flex items-center gap-1.5 flex-wrap">
-      <input type="date" value={from} max={to || undefined}
-        onChange={(e) => onFromChange(e.target.value)}
-        className="text-[10px] px-1.5 py-0.5 rounded-md border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400" />
-      <span className="text-[10px] text-[var(--muted)]">→</span>
-      <input type="date" value={to} min={from || undefined}
-        onChange={(e) => onToChange(e.target.value)}
-        className="text-[10px] px-1.5 py-0.5 rounded-md border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400" />
-      {(from || to) && (
-        <button onClick={onClear} className="text-[10px] text-indigo-500 hover:text-indigo-700 font-semibold">✕</button>
-      )}
-    </div>
-  );
-}
-
-function useCardFilter(agents) {
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+function useCardDaysFilter(agents, defaultDays = 'all') {
+  const [days, setDays] = useState(defaultDays);
   const filtered = useMemo(() => {
-    if (!from && !to) return agents;
-    const f = from ? new Date(from) : null;
-    const t = to ? new Date(to + 'T23:59:59') : null;
-    return agents.filter((a) => {
-      const d = parseDate(a.lastActiveDate);
-      if (!d) return false;
-      if (f && d < f) return false;
-      if (t && d > t) return false;
-      return true;
-    });
-  }, [agents, from, to]);
-  const clear = () => { setFrom(''); setTo(''); };
-  return { from, to, setFrom, setTo, clear, filtered };
+    if (days === 'all' || !days) return agents;
+    return withinRange(agents, (a) => a.lastActiveDate, days);
+  }, [agents, days]);
+  return { days, setDays, filtered };
 }
 
 function SectionCard({ title, count, controls, children }) {
@@ -109,8 +85,7 @@ export default function S1Agent() {
   const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openUser, setOpenUser] = useState(null);
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [selectedDays, setSelectedDays] = useState('all');
 
   // Chart view states (persisted to localStorage)
   const [osView, setOsView] = useViewState('agentOs', 'donut');
@@ -137,9 +112,19 @@ export default function S1Agent() {
       .finally(() => setLoading(false));
   }, []);
 
-  const inactiveDays = (a) => Math.floor((Date.now() - new Date(a.lastActiveDate)) / 86400000);
-  const scanAgeDays = (a) => a.lastSuccessfulScanDate ? Math.floor((Date.now() - new Date(a.lastSuccessfulScanDate)) / 86400000) : null;
-  const fmt = (d) => d ? new Date(d).toLocaleDateString() : '—';
+  const inactiveDays = (a) => {
+    const d = parseRecordDate(a.lastActiveDate);
+    return d ? Math.floor((Date.now() - d.getTime()) / 86400000) : 0;
+  };
+  const scanAgeDays = (a) => {
+    const d = parseRecordDate(a.lastSuccessfulScanDate);
+    return d ? Math.floor((Date.now() - d.getTime()) / 86400000) : null;
+  };
+  const fmt = (d) => {
+    const parsed = parseRecordDate(d);
+    return parsed ? parsed.toLocaleDateString() : '—';
+  };
+  const dateOfAgent = (a) => parseRecordDate(a.lastActiveDate);
 
   const computeAgentMetrics = (arr) => {
     if (!arr || arr.length === 0) {
@@ -154,26 +139,56 @@ export default function S1Agent() {
     return { total, active, inactive, threats, outdated, health };
   };
 
-  const { current: windowCurrent, previous: windowPrevious, isFiltered } = useMemo(
-    () => splitByWindow(agents, (a) => a.lastActiveDate, dateFrom, dateTo),
-    [agents, dateFrom, dateTo]
-  );
+  const { current: windowCurrent, previous: windowPrevious, isFiltered } = useMemo(() => {
+    if (!agents || agents.length === 0) return { current: [], previous: [], isFiltered: false };
+    if (selectedDays === 'all' || !selectedDays) {
+      return { current: agents, previous: [], isFiltered: false };
+    }
+    const numDays = parseInt(selectedDays, 10);
+    if (isNaN(numDays) || numDays <= 0) {
+      return { current: agents, previous: [], isFiltered: false };
+    }
+
+    const current = withinRange(agents, dateOfAgent, numDays);
+
+    const validDates = agents.map(dateOfAgent).filter(Boolean);
+    let ref = new Date();
+    if (validDates.length > 0) {
+      const maxMs = Math.max(...validDates.map((d) => d.getTime()));
+      if (validDates.every((d) => d.getTime() < ref.getTime() - numDays * 86400000)) {
+        ref = new Date(maxMs);
+        ref.setHours(23, 59, 59, 999);
+      }
+    }
+    const curStart = new Date(ref.getTime() - numDays * 86400000);
+    curStart.setHours(0, 0, 0, 0);
+    const prevStart = new Date(curStart.getTime() - numDays * 86400000);
+
+    const previous = agents.filter((a) => {
+      const d = dateOfAgent(a);
+      if (!d) return false;
+      return d >= prevStart && d < curStart;
+    });
+
+    return { current, previous, isFiltered: true };
+  }, [agents, selectedDays]);
+
   const curKpis = useMemo(() => computeAgentMetrics(windowCurrent), [windowCurrent]);
-  const prevKpis = useMemo(() => isFiltered ? computeAgentMetrics(windowPrevious) : null, [windowPrevious, isFiltered]);
+  const prevKpis = useMemo(() => (isFiltered ? computeAgentMetrics(windowPrevious) : null), [windowPrevious, isFiltered]);
   const filteredAgents = windowCurrent;
   const kpis = curKpis;
 
   // Per-card filters
-  const inactiveFilter = useCardFilter(agents);
-  const oldVersionFilter = useCardFilter(agents);
-  const fwFilter = useCardFilter(agents);
-  const threatsFilter = useCardFilter(agents);
-  const scansFilter = useCardFilter(agents);
-  const userMapFilter = useCardFilter(agents);
-  const siteFilter = useCardFilter(agents);
-  const osFilter = useCardFilter(agents);
-  const networkFilter = useCardFilter(agents);
-  const riskyFilter = useCardFilter(agents);
+  const inactiveFilter = useCardDaysFilter(filteredAgents);
+  const oldVersionFilter = useCardDaysFilter(filteredAgents);
+  const fwFilter = useCardDaysFilter(filteredAgents);
+  const threatsFilter = useCardDaysFilter(filteredAgents);
+  const scansFilter = useCardDaysFilter(filteredAgents);
+  const userMapFilter = useCardDaysFilter(filteredAgents);
+  const siteFilter = useCardDaysFilter(filteredAgents);
+  const osFilter = useCardDaysFilter(filteredAgents);
+  const networkFilter = useCardDaysFilter(filteredAgents);
+  const riskyFilter = useCardDaysFilter(filteredAgents);
 
   const inactiveMachines = useMemo(() =>
     inactiveFilter.filtered.filter((a) => !a.isActive && inactiveDays(a) > 7)
@@ -252,7 +267,6 @@ export default function S1Agent() {
     , [riskyFilter.filtered]);
 
   // Pie chart data computations
-  const dateOfAgent = (a) => parseDate(a.lastActiveDate);
   const osDistribution = useMemo(() => {
     const map = {};
     withinRange(filteredAgents, dateOfAgent, osDays).forEach((a) => {
@@ -332,25 +346,25 @@ export default function S1Agent() {
   // views can show the two months in different colours on the same graph.
   // The reference month is the agent's last-active month.
   const osRange = useMemo(() => rangeComparison(filteredAgents, {
-    keyOf: (a) => a.osName || 'Unknown', dateOf: (a) => parseDate(a.lastActiveDate), days: osDays,
+    keyOf: (a) => a.osName || 'Unknown', dateOf: dateOfAgent, days: osDays,
   }), [filteredAgents, osDays]);
   const activeRange = useMemo(() => rangeComparison(filteredAgents, {
-    keyOf: (a) => a.isActive ? 'Active' : 'Inactive', dateOf: (a) => parseDate(a.lastActiveDate), days: activeDays,
+    keyOf: (a) => a.isActive ? 'Active' : 'Inactive', dateOf: dateOfAgent, days: activeDays,
   }), [filteredAgents, activeDays]);
   const fwRange = useMemo(() => rangeComparison(filteredAgents, {
-    keyOf: (a) => a.firewallEnabled ? 'Enabled' : 'Disabled', dateOf: (a) => parseDate(a.lastActiveDate), days: fwDays,
+    keyOf: (a) => a.firewallEnabled ? 'Enabled' : 'Disabled', dateOf: dateOfAgent, days: fwDays,
   }), [filteredAgents, fwDays]);
   const versionRange = useMemo(() => rangeComparison(filteredAgents, {
-    keyOf: (a) => a.isUpToDate ? 'Up to Date' : 'Outdated', dateOf: (a) => parseDate(a.lastActiveDate), days: versionDays,
+    keyOf: (a) => a.isUpToDate ? 'Up to Date' : 'Outdated', dateOf: dateOfAgent, days: versionDays,
   }), [filteredAgents, versionDays]);
   const siteRange = useMemo(() => rangeComparison(filteredAgents, {
-    keyOf: (a) => a.siteName || 'Unknown', dateOf: (a) => parseDate(a.lastActiveDate), days: siteDays,
+    keyOf: (a) => a.siteName || 'Unknown', dateOf: dateOfAgent, days: siteDays,
   }), [filteredAgents, siteDays]);
   const netRange = useMemo(() => rangeComparison(filteredAgents, {
-    keyOf: (a) => a.networkStatus || 'unknown', dateOf: (a) => parseDate(a.lastActiveDate), days: netDays,
+    keyOf: (a) => a.networkStatus || 'unknown', dateOf: dateOfAgent, days: netDays,
   }), [filteredAgents, netDays]);
   const scanRange = useMemo(() => rangeComparison(filteredAgents, {
-    keyOf: (a) => a.scanStatus || 'Unknown', dateOf: (a) => parseDate(a.lastActiveDate), days: scanDays,
+    keyOf: (a) => a.scanStatus || 'Unknown', dateOf: dateOfAgent, days: scanDays,
   }), [filteredAgents, scanDays]);
 
   // Category time series for Line / Area daily trends per category
@@ -430,67 +444,15 @@ export default function S1Agent() {
           <h1 className="text-xl font-bold text-[var(--foreground)]">Agent Analytics</h1>
           <p className="text-sm text-[var(--muted)] mt-0.5">
             {curKpis.total} agents · SentinelOne
-            {(dateFrom || dateTo) && (
+            {selectedDays !== 'all' && (
               <span className="ml-2 text-indigo-500 font-medium">
-                {dateFrom && dateTo ? `${dateFrom} → ${dateTo}` : dateFrom ? `From ${dateFrom}` : `Until ${dateTo}`}
+                Last {selectedDays} days
               </span>
             )}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-lg p-0.5">
-            {[
-              { label: '7D', days: 7 },
-              { label: '14D', days: 14 },
-              { label: '30D', days: 30 },
-              { label: '90D', days: 90 },
-            ].map(({ label, days }) => {
-              const to = new Date().toISOString().slice(0, 10);
-              const fromD = new Date();
-              fromD.setDate(fromD.getDate() - days);
-              const from = fromD.toISOString().slice(0, 10);
-              const isActive = dateFrom === from && dateTo === to;
-              return (
-                <button
-                  key={label}
-                  type="button"
-                  onClick={() => {
-                    if (isActive) {
-                      setDateFrom('');
-                      setDateTo('');
-                    } else {
-                      setDateFrom(from);
-                      setDateTo(to);
-                    }
-                  }}
-                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-md transition-all ${
-                    isActive
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
-                  }`}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-          <div className="flex items-center gap-1.5">
-            <label className="text-[11px] text-[var(--muted)] font-medium">From</label>
-            <input type="date" value={dateFrom} max={dateTo || undefined}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="text-[11px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
-          </div>
-          <div className="flex items-center gap-1.5">
-            <label className="text-[11px] text-[var(--muted)] font-medium">To</label>
-            <input type="date" value={dateTo} min={dateFrom || undefined}
-              onChange={(e) => setDateTo(e.target.value)}
-              className="text-[11px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
-          </div>
-          {(dateFrom || dateTo) && (
-            <button
-              onClick={() => { setDateFrom(''); setDateTo(''); }}
-              className="text-[11px] text-indigo-500 hover:text-indigo-700 font-semibold">Clear</button>
-          )}
+          <DaysFilter value={selectedDays} onChange={setSelectedDays} options={DEFAULT_DAY_OPTIONS} />
         </div>
       </div>
 
@@ -556,7 +518,7 @@ export default function S1Agent() {
       {/* Pie Chart Overview */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <SectionCard title="OS Distribution" count={osDistribution.length}
-          controls={<><ChartViewDropdown value={osView} onChange={setOsView} /><CompareRangeSelector value={osDays} onChange={setOsDays} /></>}>
+          controls={<><ChartViewDropdown value={osView} onChange={setOsView} /><DaysFilter value={osDays} onChange={setOsDays} options={DEFAULT_DAY_OPTIONS} compact /></>}>
           <div style={{ height: 280 }}>
             <MultiViewChart
               data={osDistribution}
@@ -570,7 +532,7 @@ export default function S1Agent() {
         </SectionCard>
 
         <SectionCard title="Active Status" count={activeStatusDistribution.length}
-          controls={<><ChartViewDropdown value={activeView} onChange={setActiveView} /><CompareRangeSelector value={activeDays} onChange={setActiveDays} /></>}>
+          controls={<><ChartViewDropdown value={activeView} onChange={setActiveView} /><DaysFilter value={activeDays} onChange={setActiveDays} options={DEFAULT_DAY_OPTIONS} compact /></>}>
           <div style={{ height: 280 }}>
             <MultiViewChart
               data={activeStatusDistribution}
@@ -584,7 +546,7 @@ export default function S1Agent() {
         </SectionCard>
 
         <SectionCard title="Firewall Status" count={firewallStatusDistribution.length}
-          controls={<><ChartViewDropdown value={fwView} onChange={setFwView} /><CompareRangeSelector value={fwDays} onChange={setFwDays} /></>}>
+          controls={<><ChartViewDropdown value={fwView} onChange={setFwView} /><DaysFilter value={fwDays} onChange={setFwDays} options={DEFAULT_DAY_OPTIONS} compact /></>}>
           <div style={{ height: 280 }}>
             <MultiViewChart
               data={firewallStatusDistribution}
@@ -600,7 +562,7 @@ export default function S1Agent() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
         <SectionCard title="Agent Version" count={agentVersionStatus.length}
-          controls={<><ChartViewDropdown value={versionView} onChange={setVersionView} /><CompareRangeSelector value={versionDays} onChange={setVersionDays} /></>}>
+          controls={<><ChartViewDropdown value={versionView} onChange={setVersionView} /><DaysFilter value={versionDays} onChange={setVersionDays} options={DEFAULT_DAY_OPTIONS} compact /></>}>
           <div style={{ height: 280 }}>
             <MultiViewChart
               data={agentVersionStatus}
@@ -613,7 +575,7 @@ export default function S1Agent() {
           </div>
         </SectionCard>
         <SectionCard title="Site Distribution" count={siteDistribution.length}
-          controls={<><ChartViewDropdown value={siteView} onChange={setSiteView} /><CompareRangeSelector value={siteDays} onChange={setSiteDays} /></>}>
+          controls={<><ChartViewDropdown value={siteView} onChange={setSiteView} /><DaysFilter value={siteDays} onChange={setSiteDays} options={DEFAULT_DAY_OPTIONS} compact /></>}>
           <div style={{ height: 280 }}>
             <MultiViewChart
               data={siteDistribution}
@@ -627,7 +589,7 @@ export default function S1Agent() {
         </SectionCard>
 
         <SectionCard title="Network Status" count={networkStatusDistribution.length}
-          controls={<><ChartViewDropdown value={netView} onChange={setNetView} /><CompareRangeSelector value={netDays} onChange={setNetDays} /></>}>
+          controls={<><ChartViewDropdown value={netView} onChange={setNetView} /><DaysFilter value={netDays} onChange={setNetDays} options={DEFAULT_DAY_OPTIONS} compact /></>}>
           <div style={{ height: 280 }}>
             <MultiViewChart
               data={networkStatusDistribution}
@@ -641,7 +603,7 @@ export default function S1Agent() {
         </SectionCard>
 
         <SectionCard title="Scan Status" count={scanStatusDistribution.length}
-          controls={<><ChartViewDropdown value={scanView} onChange={setScanView} /><CompareRangeSelector value={scanDays} onChange={setScanDays} /></>}>
+          controls={<><ChartViewDropdown value={scanView} onChange={setScanView} /><DaysFilter value={scanDays} onChange={setScanDays} options={DEFAULT_DAY_OPTIONS} compact /></>}>
           <div style={{ height: 280 }}>
             <MultiViewChart
               data={scanStatusDistribution}
@@ -659,7 +621,7 @@ export default function S1Agent() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* 1. Inactive Machines — card grid with severity badges */}
         <SectionCard title="Inactive Machines (>7 days)" count={inactiveMachines.length}
-          controls={<DateFilter from={inactiveFilter.from} to={inactiveFilter.to} onFromChange={inactiveFilter.setFrom} onToChange={inactiveFilter.setTo} onClear={inactiveFilter.clear} />}>
+          controls={<DaysFilter value={inactiveFilter.days} onChange={inactiveFilter.setDays} options={DEFAULT_DAY_OPTIONS} compact />}>
           {inactiveMachines.length === 0
             ? <div className="px-4 py-6 text-center text-sm text-[var(--muted)]">No inactive machines over 7 days</div>
             : <div className="grid grid-cols-1 gap-3 p-4 max-h-[520px] overflow-y-auto">
@@ -694,7 +656,7 @@ export default function S1Agent() {
 
         {/* 4. Active Threats — priority alert table */}
         <SectionCard title="Endpoints with Active Threats" count={activeThreats.length}
-          controls={<DateFilter from={threatsFilter.from} to={threatsFilter.to} onFromChange={threatsFilter.setFrom} onToChange={threatsFilter.setTo} onClear={threatsFilter.clear} />}>
+          controls={<DaysFilter value={threatsFilter.days} onChange={threatsFilter.setDays} options={DEFAULT_DAY_OPTIONS} compact />}>
           <div className="max-h-[520px] overflow-y-auto">
             <TableWrap
               cols={['Machine', 'User', 'Site', 'Threats', 'Mitigation']}
@@ -722,7 +684,7 @@ export default function S1Agent() {
 
         {/* 5. Old/Pending Scan — status indicator list */}
         <SectionCard title="Old / Pending Scan" count={oldScans.length}
-          controls={<DateFilter from={scansFilter.from} to={scansFilter.to} onFromChange={scansFilter.setFrom} onToChange={scansFilter.setTo} onClear={scansFilter.clear} />}>
+          controls={<DaysFilter value={scansFilter.days} onChange={scansFilter.setDays} options={DEFAULT_DAY_OPTIONS} compact />}>
           {oldScans.length === 0
             ? <div className="px-4 py-6 text-center text-sm text-[var(--muted)]">All scans finished</div>
             : <div className="divide-y divide-[var(--card-border)] max-h-[520px] overflow-y-auto">
@@ -760,7 +722,7 @@ export default function S1Agent() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* 2. Old Agent Version — compact list with version badges */}
         <SectionCard title="Outdated Agent Version" count={oldVersion.length}
-          controls={<DateFilter from={oldVersionFilter.from} to={oldVersionFilter.to} onFromChange={oldVersionFilter.setFrom} onToChange={oldVersionFilter.setTo} onClear={oldVersionFilter.clear} />}>
+          controls={<DaysFilter value={oldVersionFilter.days} onChange={oldVersionFilter.setDays} options={DEFAULT_DAY_OPTIONS} compact />}>
           {oldVersion.length === 0
             ? <div className="px-4 py-6 text-center text-sm text-[var(--muted)]">All agents are up to date</div>
             : <div className="divide-y divide-[var(--card-border)] max-h-[520px] overflow-y-auto">
@@ -788,7 +750,7 @@ export default function S1Agent() {
 
         {/* 6. User–Device Mapping */}
         <SectionCard title="User–Device Mapping" count={userDeviceMap.length}
-          controls={<DateFilter from={userMapFilter.from} to={userMapFilter.to} onFromChange={userMapFilter.setFrom} onToChange={userMapFilter.setTo} onClear={userMapFilter.clear} />}>
+          controls={<DaysFilter value={userMapFilter.days} onChange={userMapFilter.setDays} options={DEFAULT_DAY_OPTIONS} compact />}>
           <div className="overflow-x-auto max-h-[520px] overflow-y-auto divide-y divide-[var(--card-border)]">
             {userDeviceMap.length === 0
               ? <div className="px-4 py-6 text-center text-sm text-[var(--muted)]">No data</div>
@@ -852,7 +814,7 @@ export default function S1Agent() {
 
       {/* 7. Site Health Score */}
       <SectionCard title="Site Health Score"
-        controls={<DateFilter from={siteFilter.from} to={siteFilter.to} onFromChange={siteFilter.setFrom} onToChange={siteFilter.setTo} onClear={siteFilter.clear} />}>
+        controls={<DaysFilter value={siteFilter.days} onChange={siteFilter.setDays} options={DEFAULT_DAY_OPTIONS} compact />}>
         <div className="overflow-x-auto max-h-72 overflow-y-auto">
           <table className="w-full text-xs">
             <thead className="sticky top-0 z-10">
@@ -883,7 +845,7 @@ export default function S1Agent() {
 
       {/* 8. OS-wise Outdated */}
       <SectionCard title="OS-wise Outdated Agents"
-        controls={<DateFilter from={osFilter.from} to={osFilter.to} onFromChange={osFilter.setFrom} onToChange={osFilter.setTo} onClear={osFilter.clear} />}>
+        controls={<DaysFilter value={osFilter.days} onChange={osFilter.setDays} options={DEFAULT_DAY_OPTIONS} compact />}>
         <div className="overflow-x-auto max-h-64 overflow-y-auto">
           <table className="w-full text-xs">
             <thead className="sticky top-0 z-10">
@@ -911,40 +873,11 @@ export default function S1Agent() {
         </div>
       </SectionCard>
 
-      {/* 9. Network Status Distribution */}
-      {/* <SectionCard title="Network Status Distribution"
-        controls={<DateFilter from={networkFilter.from} to={networkFilter.to} onFromChange={networkFilter.setFrom} onToChange={networkFilter.setTo} onClear={networkFilter.clear} />}>
-        <div className="overflow-x-auto max-h-64 overflow-y-auto">
-          <table className="w-full text-xs">
-            <thead className="sticky top-0 z-10">
-              <tr className="bg-[var(--muted-bg)]">
-                {['Status', 'Count', 'Share'].map((c) => (
-                  <th key={c} className="px-3 py-2 text-left font-semibold text-[var(--muted)] uppercase tracking-wide border-b border-[var(--card-border)] whitespace-nowrap">{c}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--card-border)]">
-              {networkStatus.map(({ status, count }) => (
-                <tr
-                  key={status}
-                  onClick={() => navigate('/security/detail', { state: { dataset: 'agents', filterId: 'networkStatus', value: status, title: `Network Status: ${status}` } })}
-                  className="hover:bg-[var(--muted-bg)]/60 cursor-pointer"
-                >
-                  <td className="px-3 py-2 font-medium text-[var(--foreground)] capitalize">{status}</td>
-                  <td className="px-3 py-2 text-[var(--muted)]">{count}</td>
-                  <td className="px-3 py-2 min-w-[140px]"><ProgressBar value={count} max={networkFilter.filtered.length} color="#3b82f6" /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </SectionCard> */}
-
       {/* Top Risky Endpoints + Firewall Disabled — side by side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* 10. Top Risky Endpoints */}
         <SectionCard title="Top Risky Endpoints" count={topRisky.length}
-          controls={<DateFilter from={riskyFilter.from} to={riskyFilter.to} onFromChange={riskyFilter.setFrom} onToChange={riskyFilter.setTo} onClear={riskyFilter.clear} />}>
+          controls={<DaysFilter value={riskyFilter.days} onChange={riskyFilter.setDays} options={DEFAULT_DAY_OPTIONS} compact />}>
           <div className="overflow-x-auto max-h-[520px] overflow-y-auto">
             <table className="w-full text-xs">
               <thead className="sticky top-0 z-10">
@@ -978,7 +911,7 @@ export default function S1Agent() {
 
         {/* 3. Firewall Disabled — warning alert cards */}
         <SectionCard title="Firewall Disabled" count={fwDisabled.length}
-          controls={<DateFilter from={fwFilter.from} to={fwFilter.to} onFromChange={fwFilter.setFrom} onToChange={fwFilter.setTo} onClear={fwFilter.clear} />}>
+          controls={<DaysFilter value={fwFilter.days} onChange={fwFilter.setDays} options={DEFAULT_DAY_OPTIONS} compact />}>
           {fwDisabled.length === 0
             ? <div className="px-4 py-6 text-center text-sm text-[var(--muted)]">All agents have firewall enabled</div>
             : <div className="p-4 grid grid-cols-1 gap-3 max-h-[520px] overflow-y-auto">

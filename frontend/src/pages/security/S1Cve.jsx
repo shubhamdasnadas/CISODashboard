@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../api.js';
 import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 import {
-  MultiViewChart, ChartViewDropdown, useViewState, rangeComparison, CompareRangeSelector, withinRange,
-  categoryTimeSeries, KpiCard, DeltaBadge, splitByWindow,
+  MultiViewChart, ChartViewDropdown, DaysFilter, DEFAULT_DAY_OPTIONS, useViewState, rangeComparison, withinRange,
+  categoryTimeSeries, KpiCard, DeltaBadge, parseRecordDate,
 } from './widgetViews.jsx';
 
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
@@ -46,8 +46,7 @@ export default function S1Cve() {
   const [apps, setApps]         = useState([]);
   const [loading, setLoading]   = useState(true);
   const [lastSync, setLastSync] = useState(null);
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo]     = useState('');
+  const [selectedDays, setSelectedDays] = useState('all');
 
   // Chart-type view per card — same dropdown as Threats.jsx, persisted to
   // localStorage so the chosen view survives a page refresh.
@@ -76,9 +75,9 @@ export default function S1Cve() {
       .finally(() => setLoading(false));
   }, []);
 
-  const hasDateFilter = !!(dateFrom || dateTo);
+  const dateOfCve = (r) => parseRecordDate(r.detectionDate);
 
-  const goToDetail = (state) => navigate('/security/detail', { state: { ...state, dateFrom, dateTo } });
+  const goToDetail = (state) => navigate('/security/detail', { state: { ...state, days: selectedDays } });
 
   const computeCveMetrics = (rows) => {
     if (!rows || rows.length === 0) {
@@ -127,17 +126,45 @@ export default function S1Cve() {
     };
   };
 
-  const { current: windowCurrent, previous: windowPrevious, isFiltered } = useMemo(
-    () => splitByWindow(apps, (r) => r.detectionDate, dateFrom, dateTo),
-    [apps, dateFrom, dateTo]
-  );
+  const { current: windowCurrent, previous: windowPrevious, isFiltered } = useMemo(() => {
+    if (!apps || apps.length === 0) return { current: [], previous: [], isFiltered: false };
+    if (selectedDays === 'all' || !selectedDays) {
+      return { current: apps, previous: [], isFiltered: false };
+    }
+    const numDays = parseInt(selectedDays, 10);
+    if (isNaN(numDays) || numDays <= 0) {
+      return { current: apps, previous: [], isFiltered: false };
+    }
+
+    const current = withinRange(apps, dateOfCve, numDays);
+
+    const validDates = apps.map(dateOfCve).filter(Boolean);
+    let ref = new Date();
+    if (validDates.length > 0) {
+      const maxMs = Math.max(...validDates.map((d) => d.getTime()));
+      if (validDates.every((d) => d.getTime() < ref.getTime() - numDays * 86400000)) {
+        ref = new Date(maxMs);
+        ref.setHours(23, 59, 999);
+      }
+    }
+    const curStart = new Date(ref.getTime() - numDays * 86400000);
+    curStart.setHours(0, 0, 0, 0);
+    const prevStart = new Date(curStart.getTime() - numDays * 86400000);
+
+    const previous = apps.filter((r) => {
+      const d = dateOfCve(r);
+      if (!d) return false;
+      return d >= prevStart && d < curStart;
+    });
+
+    return { current, previous, isFiltered: true };
+  }, [apps, selectedDays]);
+
   const curKpis = useMemo(() => computeCveMetrics(windowCurrent), [windowCurrent]);
   const prevKpis = useMemo(() => isFiltered ? computeCveMetrics(windowPrevious) : null, [windowPrevious, isFiltered]);
 
   const filteredApps = windowCurrent;
   const filteredRawCves = windowCurrent;
-
-  const dateOfCve = (r) => parseDate(r.detectionDate);
 
   // Per-card day-window slices so the day selector filters the base chart
   // data (not just the comparison series) for every comparison-capable card.
@@ -417,9 +444,9 @@ export default function S1Cve() {
           <h1 className="text-xl font-bold text-[var(--foreground)]">Application CVE Analytics</h1>
           <p className="text-sm text-[var(--muted)] mt-0.5">
             {curKpis.totalApplications} applications · {curKpis.totalCves} CVE records
-            {(dateFrom || dateTo) && (
+            {selectedDays !== 'all' && (
               <span className="ml-2 text-indigo-500 font-medium">
-                {dateFrom && dateTo ? `${dateFrom} → ${dateTo}` : dateFrom ? `From ${dateFrom}` : `Until ${dateTo}`}
+                Last {selectedDays} days
               </span>
             )}
             {lastSync && <span> · Last sync: {new Date(lastSync).toLocaleString()}</span>}
@@ -427,66 +454,14 @@ export default function S1Cve() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-lg p-0.5">
-            {[
-              { label: '7D', days: 7 },
-              { label: '14D', days: 14 },
-              { label: '30D', days: 30 },
-              { label: '90D', days: 90 },
-            ].map(({ label, days }) => {
-              const to = new Date().toISOString().slice(0, 10);
-              const fromD = new Date();
-              fromD.setDate(fromD.getDate() - days);
-              const from = fromD.toISOString().slice(0, 10);
-              const isActive = dateFrom === from && dateTo === to;
-              return (
-                <button
-                  key={label}
-                  type="button"
-                  onClick={() => {
-                    if (isActive) {
-                      setDateFrom('');
-                      setDateTo('');
-                    } else {
-                      setDateFrom(from);
-                      setDateTo(to);
-                    }
-                  }}
-                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-md transition-all ${
-                    isActive
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
-                  }`}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-          <div className="flex items-center gap-1.5">
-            <label className="text-[11px] text-[var(--muted)] font-medium">From</label>
-            <input type="date" value={dateFrom} max={dateTo || undefined}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="text-[11px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
-          </div>
-          <div className="flex items-center gap-1.5">
-            <label className="text-[11px] text-[var(--muted)] font-medium">To</label>
-            <input type="date" value={dateTo} min={dateFrom || undefined}
-              onChange={(e) => setDateTo(e.target.value)}
-              className="text-[11px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
-          </div>
-          {(dateFrom || dateTo) && (
-            <button
-              onClick={() => { setDateFrom(''); setDateTo(''); }}
-              className="text-[11px] text-indigo-500 hover:text-indigo-700 font-semibold">Clear</button>
-          )}
+          <DaysFilter value={selectedDays} onChange={setSelectedDays} options={DEFAULT_DAY_OPTIONS} />
         </div>
       </div>
 
       {filteredApps.length === 0 ? (
         <div className="p-6 flex flex-col items-center justify-center text-center bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl">
           <p className="text-sm font-semibold text-[var(--foreground)]">No CVEs detected in the selected date range</p>
-          <p className="text-xs text-[var(--muted)] mt-1">Try widening the From/To filter above.</p>
+          <p className="text-xs text-[var(--muted)] mt-1">Try selecting a wider time range above.</p>
         </div>
       ) : (
       <>
@@ -559,7 +534,7 @@ export default function S1Cve() {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
 
         {/* Severity Distribution */}
-        <ChartCard title="Severity Distribution" controls={<><ChartViewDropdown value={severityView} onChange={setSeverityView} /><CompareRangeSelector value={severityDays} onChange={setSeverityDays} /></>}>
+        <ChartCard title="Severity Distribution" controls={<><ChartViewDropdown value={severityView} onChange={setSeverityView} /><DaysFilter value={severityDays} onChange={setSeverityDays} options={DEFAULT_DAY_OPTIONS} compact /></>}>
           <div style={{ height: 280 }}>
             <MultiViewChart
               data={severityPieData}
@@ -575,7 +550,7 @@ export default function S1Cve() {
         </ChartCard>
 
         {/* Base Score Range */}
-        <ChartCard title="Base Score Range" controls={<><ChartViewDropdown value={scoreView} onChange={setScoreView} /><CompareRangeSelector value={scoreDays} onChange={setScoreDays} /></>}>
+        <ChartCard title="Base Score Range" controls={<><ChartViewDropdown value={scoreView} onChange={setScoreView} /><DaysFilter value={scoreDays} onChange={setScoreDays} options={DEFAULT_DAY_OPTIONS} compact /></>}>
           <div style={{ height: 280 }}>
             <MultiViewChart
               data={scoreRangePieData}
@@ -591,7 +566,7 @@ export default function S1Cve() {
         </ChartCard>
 
         {/* Top 10 Risky Applications */}
-        <ChartCard title="Top 10 Risky Applications" controls={<><ChartViewDropdown value={riskyView} onChange={setRiskyView} /><CompareRangeSelector value={riskyDays} onChange={setRiskyDays} /></>}>
+        <ChartCard title="Top 10 Risky Applications" controls={<><ChartViewDropdown value={riskyView} onChange={setRiskyView} /><DaysFilter value={riskyDays} onChange={setRiskyDays} options={DEFAULT_DAY_OPTIONS} compact /></>}>
           <div style={{ height: 300 }}>
             <MultiViewChart
               data={topRiskyApps.map((a) => ({ name: a.name, fullName: a.fullName, value: a.cves, fill: '#ef4444' }))}
@@ -608,7 +583,7 @@ export default function S1Cve() {
         </ChartCard>
 
         {/* CVE Aging */}
-        <ChartCard title="CVE Aging (Days Detected)" controls={<><ChartViewDropdown value={agingView} onChange={setAgingView} /><CompareRangeSelector value={agingDays} onChange={setAgingDays} /></>}>
+        <ChartCard title="CVE Aging (Days Detected)" controls={<><ChartViewDropdown value={agingView} onChange={setAgingView} /><DaysFilter value={agingDays} onChange={setAgingDays} options={DEFAULT_DAY_OPTIONS} compact /></>}>
           <div style={{ height: 300 }}>
             <MultiViewChart
               data={cveAging.map((a, i) => ({ name: a.name, value: a.count, fill: CHART_COLORS[i % CHART_COLORS.length] }))}
@@ -625,7 +600,7 @@ export default function S1Cve() {
         </ChartCard>
 
         {/* Endpoint Impact */}
-        <ChartCard title="Endpoint Impact (Top 10)" controls={<><ChartViewDropdown value={impactView} onChange={setImpactView} /><CompareRangeSelector value={impactDays} onChange={setImpactDays} /></>}>
+        <ChartCard title="Endpoint Impact (Top 10)" controls={<><ChartViewDropdown value={impactView} onChange={setImpactView} /><DaysFilter value={impactDays} onChange={setImpactDays} options={DEFAULT_DAY_OPTIONS} compact /></>}>
           <div style={{ height: 300 }}>
             <MultiViewChart
               data={endpointImpact.map((a) => ({ name: a.name, fullName: a.fullName, value: a.endpoints, fill: '#22c55e' }))}
@@ -642,7 +617,7 @@ export default function S1Cve() {
         </ChartCard>
 
         {/* Vendor Risk */}
-        <ChartCard title="Vendor Risk (CVEs by Vendor)" controls={<><ChartViewDropdown value={vendorView} onChange={setVendorView} /><CompareRangeSelector value={vendorDays} onChange={setVendorDays} /></>}>
+        <ChartCard title="Vendor Risk (CVEs by Vendor)" controls={<><ChartViewDropdown value={vendorView} onChange={setVendorView} /><DaysFilter value={vendorDays} onChange={setVendorDays} options={DEFAULT_DAY_OPTIONS} compact /></>}>
           <div style={{ height: 300 }}>
             <MultiViewChart
               data={vendorRisk.map((v) => ({ name: v.name, fullName: v.fullName, value: v.cves, fill: v.fill }))}

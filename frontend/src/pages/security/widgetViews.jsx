@@ -17,6 +17,27 @@ export const DONUT_PROPS = {
   paddingAngle: 3,
 };
 
+export function parseRecordDate(v) {
+  if (!v) return null;
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  if (typeof v === 'number') {
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (!s || s === '-' || s.toLowerCase() === 'unknown' || s.toLowerCase() === 'null' || s.toLowerCase() === 'undefined') return null;
+    if (/^\d{10,13}$/.test(s)) {
+      const num = Number(s);
+      const d = new Date(s.length === 10 ? num * 1000 : num);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
 export const tooltipStyle = {
   background: 'var(--card-bg)',
   border: '1px solid var(--card-border)',
@@ -102,14 +123,14 @@ export function categoryTimeSeries(events, { keyOf, dateOf, days = 30, refDate, 
   const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
   const numDays = days === 'all' ? 30 : Math.max(1, parseInt(days, 10) || 30);
-  let ref = refDate ? new Date(refDate) : new Date();
+  let ref = refDate ? (parseRecordDate(refDate) || new Date()) : new Date();
   let start = new Date(ref);
   start.setDate(start.getDate() - numDays);
   start.setHours(0, 0, 0, 0);
 
   // Fall back to latest observed date if current window is empty
   const dates = (events || [])
-    .map((e) => { const d = dateOf ? dateOf(e) : null; return d && !isNaN(d.getTime()) ? d : null; })
+    .map((e) => (dateOf ? parseRecordDate(dateOf(e)) : null))
     .filter(Boolean);
   if (dates.length > 0) {
     const latest = new Date(Math.max(...dates.map((d) => d.getTime())));
@@ -128,10 +149,10 @@ export function categoryTimeSeries(events, { keyOf, dateOf, days = 30, refDate, 
   const dayBuckets = {};
 
   (events || []).forEach((event, idx) => {
-    const k = keyOf(event);
+    const k = keyOf ? keyOf(event) : null;
     if (!k) return;
-    let d = dateOf ? dateOf(event) : null;
-    if (!d || isNaN(d.getTime())) {
+    let d = dateOf ? parseRecordDate(dateOf(event)) : null;
+    if (!d) {
       d = new Date(start);
       d.setDate(d.getDate() + (idx % numDays) + 1);
     }
@@ -183,10 +204,25 @@ export function CategoryTimeSeriesChart({ timeSeriesData, type = 'line', storage
   const { data, categories, colors } = timeSeriesData;
   const isArea = type === 'area';
   const Chart = isArea ? AreaChart : LineChart;
+  const safeKey = String(storageKey || 'chart').replace(/[^a-zA-Z0-9_-]/g, '_');
 
   return (
     <ResponsiveContainer width="100%" height="100%">
       <Chart data={data} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
+        {isArea && (
+          <defs>
+            {categories.map((_cat, i) => {
+              const color = (colors && colors[i]) || CATEGORY_COLORS[i % CATEGORY_COLORS.length];
+              const gradientId = `areaGrad-${safeKey}-${i}`;
+              return (
+                <linearGradient key={gradientId} id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={color} stopOpacity={0.4} />
+                  <stop offset="95%" stopColor={color} stopOpacity={0.05} />
+                </linearGradient>
+              );
+            })}
+          </defs>
+        )}
         <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
         <XAxis dataKey="date" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={Math.max(0, Math.floor(data.length / 7))} tickFormatter={(v) => v ? v.slice(5) : ''} />
         <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
@@ -195,7 +231,7 @@ export function CategoryTimeSeriesChart({ timeSeriesData, type = 'line', storage
         {categories.map((cat, i) => {
           const color = (colors && colors[i]) || CATEGORY_COLORS[i % CATEGORY_COLORS.length];
           if (isArea) {
-            const gradientId = `areaGrad-${storageKey}-${i}`;
+            const gradientId = `areaGrad-${safeKey}-${i}`;
             return (
               <Area
                 key={cat}
@@ -207,14 +243,7 @@ export function CategoryTimeSeriesChart({ timeSeriesData, type = 'line', storage
                 fill={`url(#${gradientId})`}
                 dot={{ r: 2, fill: color }}
                 activeDot={{ r: 4, cursor: 'pointer' }}
-              >
-                <defs>
-                  <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={color} stopOpacity={0.4} />
-                    <stop offset="95%" stopColor={color} stopOpacity={0.05} />
-                  </linearGradient>
-                </defs>
-              </Area>
+              />
             );
           }
           return (
@@ -266,7 +295,7 @@ export function rangeComparison(rows, options = {}) {
 
   // Fall back to the latest observed date when the current window is empty.
   const dates = (rows || [])
-    .map((r) => { const d = dateOf ? dateOf(r) : null; return d && !isNaN(d.getTime()) ? d : null; })
+    .map((r) => (dateOf ? parseRecordDate(dateOf(r)) : null))
     .filter(Boolean);
   if (dates.length > 0) {
     const has = (start) => {
@@ -291,8 +320,8 @@ export function rangeComparison(rows, options = {}) {
   (rows || []).forEach((r) => {
     const k = keyOf ? keyOf(r) : null;
     if (!k) return;
-    const d = dateOf ? dateOf(r) : null;
-    if (!d || isNaN(d.getTime())) return;
+    const d = dateOf ? parseRecordDate(dateOf(r)) : null;
+    if (!d) return;
     const dk = dayKey(d);
     keys.add(k);
     const count = typeof getValue === 'function' ? getValue(r) : 1;
@@ -338,10 +367,7 @@ export function withinRange(rows, dateOf, days = 30, refDate) {
   if (isNaN(numDays) || numDays <= 0) return rows;
 
   const validDates = rows
-    .map((r) => {
-      const d = dateOf ? dateOf(r) : null;
-      return d && !isNaN(d.getTime()) ? d : null;
-    })
+    .map((r) => (r && dateOf ? parseRecordDate(dateOf(r)) : null))
     .filter(Boolean);
 
   if (validDates.length === 0) {
@@ -362,7 +388,7 @@ export function withinRange(rows, dateOf, days = 30, refDate) {
     return rows.slice(0, count);
   }
 
-  let ref = refDate ? new Date(refDate) : new Date();
+  let ref = refDate ? (parseRecordDate(refDate) || new Date()) : new Date();
   let start = new Date(ref);
   start.setDate(start.getDate() - numDays);
   start.setHours(0, 0, 0, 0);
@@ -377,8 +403,9 @@ export function withinRange(rows, dateOf, days = 30, refDate) {
   }
 
   const filtered = rows.filter((r) => {
-    const d = dateOf ? dateOf(r) : null;
-    if (!d || isNaN(d.getTime())) return false;
+    if (!r) return false;
+    const d = dateOf ? parseRecordDate(dateOf(r)) : null;
+    if (!d) return false;
     return d >= start && d <= ref;
   });
 
@@ -693,27 +720,6 @@ export function ChartViewDropdown({ value, onChange, groups = VIEW_GROUPS, compa
       ))}
     </select>
   );
-}
-
-export function parseRecordDate(v) {
-  if (!v) return null;
-  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
-  if (typeof v === 'number') {
-    const d = new Date(v);
-    return isNaN(d.getTime()) ? null : d;
-  }
-  if (typeof v === 'string') {
-    const s = v.trim();
-    if (!s || s === '-' || s.toLowerCase() === 'unknown' || s.toLowerCase() === 'null') return null;
-    if (/^\d{10,13}$/.test(s)) {
-      const num = Number(s);
-      const d = new Date(s.length === 10 ? num * 1000 : num);
-      return isNaN(d.getTime()) ? null : d;
-    }
-    const d = new Date(s);
-    return isNaN(d.getTime()) ? null : d;
-  }
-  return null;
 }
 
 export function splitByWindow(arr, dateFn, from, to) {

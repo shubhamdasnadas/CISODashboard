@@ -9,10 +9,10 @@ import {
 } from 'recharts';
 import {
   tooltipStyle, truncateLabel,
-  MultiViewChart, ChartViewDropdown, useViewState,
-  rangeComparison, CompareRangeSelector, withinRange,
+  MultiViewChart, ChartViewDropdown, DaysFilter, DEFAULT_DAY_OPTIONS, useViewState,
+  rangeComparison, withinRange,
   CategoryTimeSeriesChart, categoryTimeSeries,
-  KpiCard, DeltaBadge, splitByWindow,
+  KpiCard, parseRecordDate,
 } from './widgetViews.jsx';
 
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
@@ -127,23 +127,6 @@ function monthComparison(series, refDate, days = 30) {
   };
 }
 
-function DateFilter({ from, to, onFromChange, onToChange, onClear, compact = true }) {
-  return (
-    <div className="flex items-center gap-1 shrink-0">
-      <input type="date" value={from} max={to || undefined}
-        onChange={(e) => onFromChange(e.target.value)}
-        className={`rounded-md border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 ${compact ? 'text-[9px] px-1 py-0.5 w-[86px]' : 'text-[10px] px-1.5 py-0.5'}`} />
-      <span className="text-[9px] text-[var(--muted)] shrink-0">→</span>
-      <input type="date" value={to} min={from || undefined}
-        onChange={(e) => onToChange(e.target.value)}
-        className={`rounded-md border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 ${compact ? 'text-[9px] px-1 py-0.5 w-[86px]' : 'text-[10px] px-1.5 py-0.5'}`} />
-      {(from || to) && (
-        <button onClick={onClear} className="text-[9px] text-indigo-500 hover:text-indigo-700 font-semibold shrink-0">✕</button>
-      )}
-    </div>
-  );
-}
-
 // Line/Area/Daily selector shared by the trend cards (Threat Trend, MTTD,
 // MTTM).  Line & Area render the current-vs-previous-month comparison.
 function TrendViewDropdown({ value, onChange }) {
@@ -195,29 +178,13 @@ function ComparisonChart({ comparison, type, unit = (v) => v }) {
   );
 }
 
-// Persists a widget's selected chart view to localStorage so it survives
-// a page refresh. Falls back gracefully (in-memory only) if storage is
-// unavailable — e.g. private browsing.
-const VIEW_STORAGE_PREFIX = 'threatsDashboard:chartView:';
-// (useViewState itself lives in widgetViews.jsx and is shared with S1Cve)
-
-function useCardFilter(threats) {
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+function useCardDaysFilter(threats, defaultDays = 'all') {
+  const [days, setDays] = useState(defaultDays);
   const filtered = useMemo(() => {
-    if (!from && !to) return threats;
-    const f = from ? new Date(from) : null;
-    const t = to ? new Date(to + 'T23:59:59') : null;
-    return threats.filter((x) => {
-      const d = parseDate(x.threatInfo?.createdAt);
-      if (!d) return false;
-      if (f && d < f) return false;
-      if (t && d > t) return false;
-      return true;
-    });
-  }, [threats, from, to]);
-  const clear = () => { setFrom(''); setTo(''); };
-  return { from, to, setFrom, setTo, clear, filtered };
+    if (days === 'all' || !days) return threats;
+    return withinRange(threats, (t) => parseRecordDate(t.threatInfo?.createdAt), days);
+  }, [threats, days]);
+  return { days, setDays, filtered };
 }
 
 function ChartCard({ title, subtitle, controls, children, height = 260 }) {
@@ -285,15 +252,12 @@ export default function Threats() {
   const navigate = useNavigate();
   const [threats, setThreats] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [selectedDays, setSelectedDays] = useState('all');
 
   // Chart-type view mode per switchable widget (default matches the
   // original look of each card: donut for the pies, bar for Top Users).
   // Persisted to localStorage so the chosen view survives a page refresh.
   const [trendView, setTrendView] = useViewState('threatTrend', 'line');
-  const [mttdView, setMttdView] = useViewState('mttdTrend', 'line');
-  const [mttmView, setMttmView] = useViewState('mttmTrend', 'line');
   const [classView, setClassView] = useViewState('classification', 'donut');
   const [filelessView, setFilelessView] = useViewState('fileless', 'donut');
   const [mitigView, setMitigView] = useViewState('mitigation', 'donut');
@@ -320,22 +284,9 @@ export default function Threats() {
       .finally(() => setLoading(false));
   }, []);
 
-  const filteredThreats = useMemo(() => {
-    if (!dateFrom && !dateTo) return threats;
-    const from = dateFrom ? new Date(dateFrom) : null;
-    const to = dateTo ? new Date(dateTo + 'T23:59:59') : null;
-    return threats.filter((t) => {
-      const d = parseDate(t.threatInfo?.createdAt);
-      if (!d) return false;
-      if (from && d < from) return false;
-      if (to && d > to) return false;
-      return true;
-    });
-  }, [threats, dateFrom, dateTo]);
-
   // Maps a threat to its creation date (Date or null) for the rolling
   // Line/Area/Comparison views.
-  const dateOf = useMemo(() => (t) => parseDate(t.threatInfo?.createdAt), []);
+  const dateOf = useMemo(() => (t) => parseRecordDate(t.threatInfo?.createdAt), []);
 
   const computeThreatMetrics = (arr) => {
     if (!arr || arr.length === 0) return { total: 0, mitigated: 0, unresolved: 0, fileless: 0, avgMttd: 0, avgMttm: 0 };
@@ -363,27 +314,54 @@ export default function Threats() {
     };
   };
 
-  const { current: windowCurrent, previous: windowPrevious, isFiltered } = useMemo(
-    () => splitByWindow(threats, (t) => t.threatInfo?.createdAt, dateFrom, dateTo),
-    [threats, dateFrom, dateTo]
-  );
+  const { current: windowCurrent, previous: windowPrevious, isFiltered } = useMemo(() => {
+    if (!threats || threats.length === 0) return { current: [], previous: [], isFiltered: false };
+    if (selectedDays === 'all' || !selectedDays) {
+      return { current: threats, previous: [], isFiltered: false };
+    }
+    const numDays = parseInt(selectedDays, 10);
+    if (isNaN(numDays) || numDays <= 0) {
+      return { current: threats, previous: [], isFiltered: false };
+    }
+
+    const current = withinRange(threats, dateOf, numDays);
+
+    const validDates = threats.map(dateOf).filter(Boolean);
+    let ref = new Date();
+    if (validDates.length > 0) {
+      const maxMs = Math.max(...validDates.map((d) => d.getTime()));
+      if (validDates.every((d) => d.getTime() < ref.getTime() - numDays * 86400000)) {
+        ref = new Date(maxMs);
+        ref.setHours(23, 59, 59, 999);
+      }
+    }
+    const curStart = new Date(ref.getTime() - numDays * 86400000);
+    curStart.setHours(0, 0, 0, 0);
+    const prevStart = new Date(curStart.getTime() - numDays * 86400000);
+
+    const previous = threats.filter((t) => {
+      const d = dateOf(t);
+      if (!d) return false;
+      return d >= prevStart && d < curStart;
+    });
+
+    return { current, previous, isFiltered: true };
+  }, [threats, selectedDays, dateOf]);
+
   const curKpis = useMemo(() => computeThreatMetrics(windowCurrent), [windowCurrent]);
   const prevKpis = useMemo(() => isFiltered ? computeThreatMetrics(windowPrevious) : null, [windowPrevious, isFiltered]);
   const kpis = curKpis;
+  const filteredThreats = windowCurrent;
 
-  const trendFilter = useCardFilter(threats);
-  const endpointFilter = useCardFilter(threats);
-  const mitreFilter = useCardFilter(threats);
-  const matrixFilter = useCardFilter(threats);
-  const classFilter = useCardFilter(threats);
-  const filelessFilter = useCardFilter(threats);
-  const mitigFilter = useCardFilter(threats);
-  const usersFilter = useCardFilter(threats);
-  const severityFilter = useCardFilter(threats);
-  const mttdFilter = useCardFilter(threats);
-  const mttmFilter = useCardFilter(threats);
-  const siteFilter = useCardFilter(threats);
-  const groupFilter = useCardFilter(threats);
+  const trendFilter = useCardDaysFilter(filteredThreats);
+  const matrixFilter = useCardDaysFilter(filteredThreats);
+  const classFilter = useCardDaysFilter(filteredThreats);
+  const filelessFilter = useCardDaysFilter(filteredThreats);
+  const mitigFilter = useCardDaysFilter(filteredThreats);
+  const usersFilter = useCardDaysFilter(filteredThreats);
+  const severityFilter = useCardDaysFilter(filteredThreats);
+  const siteFilter = useCardDaysFilter(filteredThreats);
+  const groupFilter = useCardDaysFilter(filteredThreats);
 
   const filteredThreatTrend = useMemo(() => {
     const counts = {};
@@ -397,34 +375,10 @@ export default function Threats() {
   }, [trendFilter.filtered, dateOf, trendDays]);
 
   // Current month vs previous month — aligned by day-of-month so the two
-  // series share an X axis. The "reference" month is the filter's `to` date
-  // (if set) else today; the previous window is the same length before it.
+  // series share an X axis.
   const threatComparison = useMemo(() =>
-    monthComparison(filteredThreatTrend.map((d) => ({ date: d.date, value: d.count })), trendFilter.to ? parseDate(trendFilter.to) : null, trendDays),
-    [filteredThreatTrend, trendFilter.to, trendDays]);
-
-  const topEndpoints = useMemo(() => {
-    const c = {};
-    endpointFilter.filtered.forEach((t) => {
-      const k = t.agentRealtimeInfo?.agentComputerName || t.agentDetectionInfo?.agentComputerName || t.agentComputerName || '';
-      if (k) c[k] = (c[k] || 0) + 1;
-    });
-    return topN(c, 10).map((x) => ({ ...x, fullName: x.name, name: truncateLabel(x.name) }));
-  }, [endpointFilter.filtered]);
-
-  const mitreData = useMemo(() => {
-    const c = {};
-    threats.forEach((t) => {
-      const seen = new Set();
-      (t.indicators || []).forEach((ind) => {
-        (ind.tactics || []).forEach((tac) => {
-          (tac.techniques || []).forEach((tech) => { if (tech.name) seen.add(tech.name); });
-        });
-      });
-      seen.forEach((name) => { c[name] = (c[name] || 0) + 1; });
-    });
-    return topN(c, 10).map((x) => ({ ...x, fullName: x.name, name: truncateLabel(x.name) }));
-  }, [mitreFilter.filtered]);
+    monthComparison(filteredThreatTrend.map((d) => ({ date: d.date, value: d.count })), null, trendDays),
+    [filteredThreatTrend, trendDays]);
 
   const mitreMatrix = useMemo(() => {
     const byTactic = {};
@@ -517,47 +471,6 @@ export default function Threats() {
     });
     return Object.entries(c).map(([name, value], i) => ({ name, value, fill: CHART_COLORS[i % CHART_COLORS.length] }));
   }, [severityFilter.filtered, dateOf, severityDays]);
-
-  const mttdTrend = useMemo(() => {
-    const byDay = {};
-    mttdFilter.filtered.forEach((t) => {
-      const created = parseDate(t.threatInfo?.createdAt);
-      const identified = parseDate(t.threatInfo?.identifiedAt);
-      if (!created || !identified) return;
-      const key = created.toISOString().slice(0, 10);
-      if (!byDay[key]) byDay[key] = { sum: 0, count: 0 };
-      byDay[key].sum += (created - identified) / 60000;
-      byDay[key].count += 1;
-    });
-    return Object.entries(byDay).sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, { sum, count }]) => ({ date, avg: Math.round(sum / count) }));
-  }, [mttdFilter.filtered]);
-
-  const mttmTrend = useMemo(() => {
-    const byDay = {};
-    mttmFilter.filtered.forEach((t) => {
-      const identified = parseDate(t.threatInfo?.identifiedAt);
-      const successEntry = (t.mitigationStatus || []).find((s) => s.status === 'success');
-      if (!identified || !successEntry) return;
-      const ended = parseDate(successEntry.mitigationEndedAt);
-      if (!ended) return;
-      const key = identified.toISOString().slice(0, 10);
-      if (!byDay[key]) byDay[key] = { sum: 0, count: 0 };
-      byDay[key].sum += (ended - identified) / 60000;
-      byDay[key].count += 1;
-    });
-    return Object.entries(byDay).sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, { sum, count }]) => ({ date, avg: Math.round(sum / count) }));
-  }, [mttmFilter.filtered]);
-
-  // Monthly (current vs previous) comparisons for the MTTD/MTTM trends.
-  const mttdComparison = useMemo(() =>
-    monthComparison(mttdTrend.map((d) => ({ date: d.date, value: d.avg })), mttdFilter.to ? parseDate(mttdFilter.to) : null),
-    [mttdTrend, mttdFilter.to]);
-
-  const mttmComparison = useMemo(() =>
-    monthComparison(mttmTrend.map((d) => ({ date: d.date, value: d.avg })), mttmFilter.to ? parseDate(mttmFilter.to) : null),
-    [mttmTrend, mttmFilter.to]);
 
   const bySiteData = useMemo(() => {
     const c = {};
@@ -692,67 +605,10 @@ export default function Threats() {
           <h1 className="text-xl font-bold text-[var(--foreground)]">Threat Analytics</h1>
           <p className="text-sm text-[var(--muted)] mt-0.5">
             {kpis.total} threats · SentinelOne
-            {(dateFrom || dateTo) && (
-              <span className="ml-2 text-indigo-500 font-medium">
-                {dateFrom && dateTo ? `${dateFrom} → ${dateTo}` : dateFrom ? `From ${dateFrom}` : `Until ${dateTo}`}
-              </span>
-            )}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-lg p-0.5">
-            {[
-              { label: '7D', days: 7 },
-              { label: '14D', days: 14 },
-              { label: '30D', days: 30 },
-              { label: '90D', days: 90 },
-            ].map(({ label, days }) => {
-              const to = new Date().toISOString().slice(0, 10);
-              const fromD = new Date();
-              fromD.setDate(fromD.getDate() - days);
-              const from = fromD.toISOString().slice(0, 10);
-              const isActive = dateFrom === from && dateTo === to;
-              return (
-                <button
-                  key={label}
-                  type="button"
-                  onClick={() => {
-                    if (isActive) {
-                      setDateFrom('');
-                      setDateTo('');
-                    } else {
-                      setDateFrom(from);
-                      setDateTo(to);
-                    }
-                  }}
-                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-md transition-all ${
-                    isActive
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
-                  }`}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-          <div className="flex items-center gap-1.5">
-            <label className="text-[11px] text-[var(--muted)] font-medium">From</label>
-            <input type="date" value={dateFrom} max={dateTo || undefined}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="text-[11px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
-          </div>
-          <div className="flex items-center gap-1.5">
-            <label className="text-[11px] text-[var(--muted)] font-medium">To</label>
-            <input type="date" value={dateTo} min={dateFrom || undefined}
-              onChange={(e) => setDateTo(e.target.value)}
-              className="text-[11px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
-          </div>
-          {(dateFrom || dateTo) && (
-            <button
-              onClick={() => { setDateFrom(''); setDateTo(''); }}
-              className="text-[11px] text-indigo-500 hover:text-indigo-700 font-semibold">Clear</button>
-          )}
+          <DaysFilter value={selectedDays} onChange={setSelectedDays} options={DEFAULT_DAY_OPTIONS} />
         </div>
       </div>
 
@@ -837,8 +693,7 @@ export default function Threats() {
           height={260}
           controls={<>
             <TrendViewDropdown value={trendView} onChange={setTrendView} />
-            <CompareRangeSelector value={trendDays} onChange={setTrendDays} />
-            <DateFilter from={trendFilter.from} to={trendFilter.to} onFromChange={trendFilter.setFrom} onToChange={trendFilter.setTo} onClear={trendFilter.clear} />
+            <DaysFilter value={trendDays} onChange={setTrendDays} options={DEFAULT_DAY_OPTIONS} compact />
           </>}>
           {trendView === 'line' || trendView === 'area' ? (
             <ComparisonChart comparison={threatComparison} type={trendView} />
@@ -866,7 +721,7 @@ export default function Threats() {
 
       {/* MITRE ATT&CK Matrix */}
       <ChartCard title="MITRE ATT&CK Matrix" subtitle="Unresolved / total threats per technique" height="auto"
-        controls={<DateFilter from={matrixFilter.from} to={matrixFilter.to} onFromChange={matrixFilter.setFrom} onToChange={matrixFilter.setTo} onClear={matrixFilter.clear} />}>
+        controls={<DaysFilter value={matrixFilter.days} onChange={matrixFilter.setDays} options={DEFAULT_DAY_OPTIONS} compact />}>
         <MitreMatrix
           matrix={mitreMatrix.columns}
           onTechniqueClick={(name) => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'mitreTechnique', value: name, title: `Threats using ${name}` } })}
@@ -885,7 +740,7 @@ export default function Threats() {
           height={260}
           controls={<>
             <TrendViewDropdown value={mttdView} onChange={setMttdView} />
-            <DateFilter from={mttdFilter.from} to={mttdFilter.to} onFromChange={mttdFilter.setFrom} onToChange={mttdFilter.setTo} onClear={mttdFilter.clear} />
+            <DaysFilter value={mttdFilter.days} onChange={mttdFilter.setDays} options={DEFAULT_DAY_OPTIONS} compact />
           </>}>
           {mttdView === 'line' || mttdView === 'area' ? (
             <ComparisonChart comparison={mttdComparison} type={mttdView} unit={(v) => formatDuration(v)} />
@@ -910,7 +765,7 @@ export default function Threats() {
           height={260}
           controls={<>
             <TrendViewDropdown value={mttmView} onChange={setMttmView} />
-            <DateFilter from={mttmFilter.from} to={mttmFilter.to} onFromChange={mttmFilter.setFrom} onToChange={mttmFilter.setTo} onClear={mttmFilter.clear} />
+            <DaysFilter value={mttmFilter.days} onChange={mttmFilter.setDays} options={DEFAULT_DAY_OPTIONS} compact />
           </>}>
           {mttmView === 'line' || mttmView === 'area' ? (
             <ComparisonChart comparison={mttmComparison} type={mttmView} unit={(v) => formatDuration(v)} />
@@ -933,8 +788,7 @@ export default function Threats() {
         <ChartCard title="Classification" height={280}
           controls={<>
             <ChartViewDropdown value={classView} onChange={setClassView} compact />
-            <CompareRangeSelector value={classDays} onChange={setClassDays} />
-            <DateFilter from={classFilter.from} to={classFilter.to} onFromChange={classFilter.setFrom} onToChange={classFilter.setTo} onClear={classFilter.clear} />
+            <DaysFilter value={classDays} onChange={setClassDays} options={DEFAULT_DAY_OPTIONS} compact />
           </>}>
           {classView === 'line' || classView === 'area' ? (
             <CategoryTimeSeriesChart timeSeriesData={classTimeSeries} type={classView} storageKey="classification" />
@@ -952,8 +806,7 @@ export default function Threats() {
         <ChartCard title="Fileless vs File-based" height={280}
           controls={<>
             <ChartViewDropdown value={filelessView} onChange={setFilelessView} compact />
-            <CompareRangeSelector value={filelessDays} onChange={setFilelessDays} />
-            <DateFilter from={filelessFilter.from} to={filelessFilter.to} onFromChange={filelessFilter.setFrom} onToChange={filelessFilter.setTo} onClear={filelessFilter.clear} />
+            <DaysFilter value={filelessDays} onChange={setFilelessDays} options={DEFAULT_DAY_OPTIONS} compact />
           </>}>
           {filelessView === 'line' || filelessView === 'area' ? (
             <CategoryTimeSeriesChart timeSeriesData={filelessTimeSeries} type={filelessView} storageKey="fileless" />
@@ -971,8 +824,7 @@ export default function Threats() {
         <ChartCard title="Mitigation Outcomes" height={280}
           controls={<>
             <ChartViewDropdown value={mitigView} onChange={setMitigView} compact />
-            <CompareRangeSelector value={mitigDays} onChange={setMitigDays} />
-            <DateFilter from={mitigFilter.from} to={mitigFilter.to} onFromChange={mitigFilter.setFrom} onToChange={mitigFilter.setTo} onClear={mitigFilter.clear} />
+            <DaysFilter value={mitigDays} onChange={setMitigDays} options={DEFAULT_DAY_OPTIONS} compact />
           </>}>
           {mitigView === 'line' || mitigView === 'area' ? (
             <CategoryTimeSeriesChart timeSeriesData={mitigTimeSeries} type={mitigView} storageKey="mitigation" />
@@ -995,8 +847,7 @@ export default function Threats() {
         <ChartCard title="Top Users by Threat Count" height={280}
           controls={<>
             <ChartViewDropdown value={usersView} onChange={setUsersView} />
-            <CompareRangeSelector value={usersDays} onChange={setUsersDays} />
-            <DateFilter from={usersFilter.from} to={usersFilter.to} onFromChange={usersFilter.setFrom} onToChange={usersFilter.setTo} onClear={usersFilter.clear} />
+            <DaysFilter value={usersDays} onChange={setUsersDays} options={DEFAULT_DAY_OPTIONS} compact />
           </>}>
           {usersView === 'line' || usersView === 'area' ? (
             <CategoryTimeSeriesChart timeSeriesData={usersTimeSeries} type={usersView} storageKey="topUsers" />
@@ -1016,8 +867,7 @@ export default function Threats() {
         <ChartCard title="Severity / Confidence Distribution" height={280}
           controls={<>
             <ChartViewDropdown value={severityView} onChange={setSeverityView} />
-            <CompareRangeSelector value={severityDays} onChange={setSeverityDays} />
-            <DateFilter from={severityFilter.from} to={severityFilter.to} onFromChange={severityFilter.setFrom} onToChange={severityFilter.setTo} onClear={severityFilter.clear} />
+            <DaysFilter value={severityDays} onChange={setSeverityDays} options={DEFAULT_DAY_OPTIONS} compact />
           </>}>
           {severityView === 'line' || severityView === 'area' ? (
             <CategoryTimeSeriesChart timeSeriesData={severityTimeSeries} type={severityView} storageKey="severity" />
@@ -1038,8 +888,7 @@ export default function Threats() {
         <ChartCard title="Threats by Site" height={280}
           controls={<>
             <ChartViewDropdown value={siteView} onChange={setSiteView} />
-            <CompareRangeSelector value={siteDays} onChange={setSiteDays} />
-            <DateFilter from={siteFilter.from} to={siteFilter.to} onFromChange={siteFilter.setFrom} onToChange={siteFilter.setTo} onClear={siteFilter.clear} />
+            <DaysFilter value={siteDays} onChange={setSiteDays} options={DEFAULT_DAY_OPTIONS} compact />
           </>}>
           {siteView === 'line' || siteView === 'area' ? (
             <CategoryTimeSeriesChart timeSeriesData={siteTimeSeries} type={siteView} storageKey="site" />
@@ -1059,8 +908,7 @@ export default function Threats() {
         <ChartCard title="Threats by Group" height={280}
           controls={<>
             <ChartViewDropdown value={groupView} onChange={setGroupView} />
-            <CompareRangeSelector value={groupDays} onChange={setGroupDays} />
-            <DateFilter from={groupFilter.from} to={groupFilter.to} onFromChange={groupFilter.setFrom} onToChange={groupFilter.setTo} onClear={groupFilter.clear} />
+            <DaysFilter value={groupDays} onChange={setGroupDays} options={DEFAULT_DAY_OPTIONS} compact />
           </>}>
           {groupView === 'line' || groupView === 'area' ? (
             <CategoryTimeSeriesChart timeSeriesData={groupTimeSeries} type={groupView} storageKey="group" />
