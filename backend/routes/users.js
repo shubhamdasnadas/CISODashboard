@@ -62,6 +62,135 @@ router.post('/', authMiddleware, requireSuperAdmin, async (req, res) => {
       : [];
     const parsedAllowedPages = Array.isArray(allowed_pages) && allowed_pages.length > 0 ? allowed_pages : null;
 
+    // ─── CHECK IF USER WITH THIS EMAIL ALREADY EXISTS ───────────────────────
+    if (trimmedEmail) {
+      const existingRes = await centralPool.query(
+        `SELECT id, username, email, phone_number, role, organisation_id, org_ids,
+                is_active, status, password, password_setup_token, password_setup_expires_at
+         FROM users
+         WHERE LOWER(email) = $1 AND deleted_at IS NULL`,
+        [trimmedEmail]
+      );
+
+      if (existingRes.rows.length > 0) {
+        const existingUser = existingRes.rows[0];
+
+        if (parsedOrgIds.length === 0) {
+          return res.status(400).json({
+            error: `A user with email "${trimmedEmail}" already exists. Please select an organisation to assign them to.`,
+          });
+        }
+
+        const currentOrgIds = Array.isArray(existingUser.org_ids)
+          ? existingUser.org_ids.map(Number)
+          : (existingUser.organisation_id ? [Number(existingUser.organisation_id)] : []);
+
+        const targetOrgIdsToAdd = parsedOrgIds.filter((id) => !currentOrgIds.includes(id));
+        if (targetOrgIdsToAdd.length === 0) {
+          return res.status(400).json({
+            error: `User "${existingUser.username}" (${trimmedEmail}) is already assigned to the selected organisation(s).`,
+          });
+        }
+
+        const updatedOrgIds = Array.from(new Set([...currentOrgIds, ...parsedOrgIds]));
+
+        const { rows: updatedRows } = await centralPool.query(
+          `UPDATE users SET
+             org_ids = $1,
+             organisation_id = COALESCE(organisation_id, $2),
+             phone_number = COALESCE(phone_number, $3),
+             allowed_pages = COALESCE($4, allowed_pages),
+             updated_at = NOW()
+           WHERE id = $5
+           RETURNING id, username, email, phone_number, role, organisation_id, org_ids, is_active, status, password_setup_token`,
+          [
+            updatedOrgIds,
+            updatedOrgIds[0] || null,
+            trimmedPhone || null,
+            parsedAllowedPages,
+            existingUser.id,
+          ]
+        );
+
+        const updatedUser = updatedRows[0];
+
+        // Sync into org_users
+        for (const orgId of targetOrgIdsToAdd) {
+          try {
+            await centralPool.query(
+              `INSERT INTO org_users (org_id, name, email, password, role, is_active, allowed_pages)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               ON CONFLICT (email, org_id) DO UPDATE SET
+                 name = EXCLUDED.name,
+                 role = EXCLUDED.role,
+                 is_active = EXCLUDED.is_active,
+                 allowed_pages = EXCLUDED.allowed_pages,
+                 updated_at = NOW()`,
+              [
+                orgId,
+                existingUser.username || trimmedUsername,
+                trimmedEmail,
+                existingUser.password,
+                role === 'admin' ? 'org_admin' : 'org_user',
+                existingUser.is_active,
+                parsedAllowedPages,
+              ]
+            );
+          } catch (syncErr) {
+            console.warn(`[users] org_users sync warning for org ${orgId}:`, syncErr.message);
+          }
+        }
+
+        // Fetch org names
+        const orgNamesRes = await centralPool.query(
+          'SELECT org_name FROM organisations WHERE id = ANY($1::int[])',
+          [targetOrgIdsToAdd]
+        );
+        const addedOrgNames = orgNamesRes.rows.map((r) => r.org_name).join(', ') || 'Organisation';
+
+        // Send email
+        try {
+          let setupToken = existingUser.password_setup_token;
+          if (!setupToken || (existingUser.password_setup_expires_at && new Date(existingUser.password_setup_expires_at).getTime() < Date.now())) {
+            setupToken = crypto.randomBytes(32).toString('hex');
+            const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+            await centralPool.query(
+              `UPDATE users SET password_setup_token = $1, password_setup_expires_at = $2, updated_at = NOW() WHERE id = $3`,
+              [setupToken, expiresAt, existingUser.id]
+            );
+          }
+
+          await sendUserInviteEmail({
+            to: trimmedEmail,
+            name: existingUser.username || trimmedUsername,
+            phone: trimmedPhone || existingUser.phone_number || null,
+            token: setupToken,
+            invitedBy: req.user?.username || 'SuperAdmin',
+            role: role || existingUser.role || 'member',
+            orgName: addedOrgNames,
+          });
+        } catch (mailErr) {
+          console.error('[users] Error sending user invite email on multi-org add:', mailErr.message);
+        }
+
+        return res.status(200).json({
+          user: updatedUser,
+          message: `User "${existingUser.username}" (${trimmedEmail}) successfully added to organisation "${addedOrgNames}".`,
+          linkedExisting: true,
+        });
+      }
+    }
+
+    // ─── BRAND NEW USER CREATION ─────────────────────────────────────────────
+    let finalUsername = trimmedUsername;
+    const existingUsername = await centralPool.query(
+      'SELECT id FROM users WHERE LOWER(username) = $1 AND deleted_at IS NULL',
+      [trimmedUsername.toLowerCase()]
+    );
+    if (existingUsername.rows.length > 0) {
+      finalUsername = `${trimmedUsername}_${Math.floor(100 + Math.random() * 900)}`;
+    }
+
     let token = null;
     let expiresAt = null;
     let status = 'active';
@@ -81,18 +210,19 @@ router.post('/', authMiddleware, requireSuperAdmin, async (req, res) => {
 
     const result = await centralPool.query(
       `INSERT INTO users (
-         username, password, role, email, phone_number, org_ids, allowed_pages,
+         username, password, role, email, phone_number, org_ids, organisation_id, allowed_pages,
          is_active, status, password_setup_token, password_setup_expires_at, created_at, updated_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
-       RETURNING id, username, email, phone_number, role, org_ids, allowed_pages, is_active, status, password_setup_token, created_at`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+       RETURNING id, username, email, phone_number, role, org_ids, organisation_id, allowed_pages, is_active, status, password_setup_token, created_at`,
       [
-        trimmedUsername,
+        finalUsername,
         hashed,
         role,
         trimmedEmail,
         trimmedPhone,
         parsedOrgIds,
+        parsedOrgIds[0] || null,
         parsedAllowedPages,
         isActive,
         status,
@@ -118,7 +248,7 @@ router.post('/', authMiddleware, requireSuperAdmin, async (req, res) => {
                updated_at = NOW()`,
             [
               orgId,
-              trimmedUsername,
+              finalUsername,
               trimmedEmail,
               hashed,
               role === 'admin' ? 'org_admin' : 'org_user',
@@ -142,7 +272,7 @@ router.post('/', authMiddleware, requireSuperAdmin, async (req, res) => {
       try {
         await sendUserInviteEmail({
           to: trimmedEmail,
-          name: trimmedUsername,
+          name: finalUsername,
           phone: trimmedPhone,
           token,
           invitedBy: req.user?.username || 'SuperAdmin',
@@ -157,7 +287,7 @@ router.post('/', authMiddleware, requireSuperAdmin, async (req, res) => {
     return res.status(201).json({
       user: newUser,
       message: status === 'pending'
-        ? `User "${trimmedUsername}" created with status Pending. Invitation email sent to ${trimmedEmail}.`
+        ? `User "${finalUsername}" created with status Pending. Invitation email sent to ${trimmedEmail}.`
         : 'User created successfully.',
     });
   } catch (err) {
@@ -233,6 +363,11 @@ router.post('/:id/resend-invite', authMiddleware, requireSuperAdmin, async (req,
  * PUT /api/users/:id
  * superAdmin only — update user details, role, email, password, organisations, and page permissions
  */
+/**
+ * PUT /api/users/:id
+ * superAdmin only — update user details, role, email, password, organisations, and page permissions
+ * If email is changed, also sends a password setup email to the new address.
+ */
 router.put('/:id', authMiddleware, requireSuperAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
@@ -240,20 +375,17 @@ router.put('/:id', authMiddleware, requireSuperAdmin, async (req, res) => {
 
     const { username, email, phone_number, password, role, org_ids, allowed_pages } = req.body;
 
-    // Check existing
-    const existing = await centralPool.query('SELECT * FROM users WHERE id = $1', [id]);
+    // Check existing user
+    const existing = await centralPool.query('SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL', [id]);
     if (existing.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
     const current = existing.rows[0];
 
-    let hashed = current.password;
-    if (password && String(password).trim()) {
-      hashed = await bcrypt.hash(String(password).trim(), 10);
-    }
-
+    const currentEmail = (current.email || '').trim().toLowerCase();
+    const rawNewEmail = (email !== undefined && email !== null) ? String(email).trim().toLowerCase() : currentEmail;
+    const newEmail = rawNewEmail || null;
     const newUsername = username ? username.trim() : current.username;
-    const newEmail = email !== undefined ? (email ? email.trim() : null) : current.email;
     const newPhone = phone_number !== undefined ? (phone_number ? String(phone_number).trim() : null) : current.phone_number;
     const newRole = role && ['superAdmin', 'admin', 'member'].includes(role) ? role : current.role;
     const newOrgIds = org_ids !== undefined
@@ -262,6 +394,34 @@ router.put('/:id', authMiddleware, requireSuperAdmin, async (req, res) => {
     const newAllowedPages = allowed_pages !== undefined
       ? (Array.isArray(allowed_pages) && allowed_pages.length > 0 ? allowed_pages : null)
       : current.allowed_pages;
+
+    // Check if email changed
+    const emailChanged = Boolean(newEmail && newEmail !== currentEmail);
+
+    let token = null;
+    let expiresAt = null;
+    let newStatus = current.status;
+
+    if (emailChanged) {
+      // Check unique email across active users
+      const emailConflict = await centralPool.query(
+        'SELECT id FROM users WHERE LOWER(email) = $1 AND id != $2 AND deleted_at IS NULL',
+        [newEmail, id]
+      );
+      if (emailConflict.rows.length > 0) {
+        return res.status(400).json({ error: 'A user with this email address already exists' });
+      }
+
+      // Generate a fresh 32-byte setup token (valid for 24h)
+      token = crypto.randomBytes(32).toString('hex');
+      expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      newStatus = 'pending';
+    }
+
+    let hashed = current.password;
+    if (password && String(password).trim()) {
+      hashed = await bcrypt.hash(String(password).trim(), 10);
+    }
 
     const result = await centralPool.query(
       `UPDATE users
@@ -272,16 +432,38 @@ router.put('/:id', authMiddleware, requireSuperAdmin, async (req, res) => {
            phone_number = $5,
            org_ids = $6,
            allowed_pages = $7,
+           status = $8,
+           password_setup_token = CASE WHEN $9::text IS NOT NULL THEN $9::text ELSE password_setup_token END,
+           password_setup_expires_at = CASE WHEN $10::timestamptz IS NOT NULL THEN $10::timestamptz ELSE password_setup_expires_at END,
+           is_active = CASE WHEN $11::boolean = TRUE THEN FALSE ELSE is_active END,
            updated_at = NOW()
-       WHERE id = $8
-       RETURNING id, username, email, phone_number, role, org_ids, allowed_pages, is_active, status`,
-      [newUsername, hashed, newRole, newEmail, newPhone, newOrgIds, newAllowedPages, id]
+       WHERE id = $12 AND deleted_at IS NULL
+       RETURNING id, username, email, phone_number, role, org_ids, allowed_pages, is_active, status, password_setup_token`,
+      [
+        newUsername,
+        hashed,
+        newRole,
+        newEmail,
+        newPhone,
+        newOrgIds,
+        newAllowedPages,
+        newStatus,
+        token,
+        expiresAt,
+        emailChanged,
+        id,
+      ]
     );
+
+    const updatedUser = result.rows[0];
 
     // Sync org_users if email is present
     if (newEmail) {
-      // 1. Remove memberships for orgs that are no longer assigned
+      // 1. Remove memberships for orgs that are no longer assigned or old email
       try {
+        if (emailChanged && currentEmail) {
+          await centralPool.query('DELETE FROM org_users WHERE LOWER(email) = LOWER($1)', [currentEmail]);
+        }
         if (newOrgIds.length > 0) {
           await centralPool.query(
             'DELETE FROM org_users WHERE LOWER(email) = LOWER($1) AND org_id != ALL($2::int[])',
@@ -302,11 +484,11 @@ router.put('/:id', authMiddleware, requireSuperAdmin, async (req, res) => {
         try {
           await centralPool.query(
             `INSERT INTO org_users (org_id, name, email, password, role, is_active, allowed_pages)
-             VALUES ($1, $2, $3, $4, $5, TRUE, $6)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT (email, org_id) DO UPDATE SET
                name = EXCLUDED.name,
                role = EXCLUDED.role,
-               is_active = TRUE,
+               is_active = EXCLUDED.is_active,
                allowed_pages = EXCLUDED.allowed_pages,
                updated_at = NOW()`,
             [
@@ -315,6 +497,7 @@ router.put('/:id', authMiddleware, requireSuperAdmin, async (req, res) => {
               newEmail,
               hashed,
               newRole === 'admin' ? 'org_admin' : 'org_user',
+              emailChanged ? false : updatedUser.is_active,
               newAllowedPages,
             ]
           );
@@ -324,7 +507,41 @@ router.put('/:id', authMiddleware, requireSuperAdmin, async (req, res) => {
       }
     }
 
-    return res.json({ user: result.rows[0] });
+    // Send email ONLY IF email changed
+    let emailSent = false;
+    if (emailChanged && newEmail && token) {
+      let orgName = null;
+      if (newOrgIds.length > 0) {
+        const orgRes = await centralPool.query('SELECT org_name FROM organisations WHERE id = $1', [newOrgIds[0]]);
+        orgName = orgRes.rows[0]?.org_name || null;
+      }
+      try {
+        await sendUserInviteEmail({
+          to: newEmail,
+          name: newUsername,
+          phone: newPhone || null,
+          token,
+          invitedBy: req.user?.username || 'SuperAdmin',
+          role: newRole,
+          orgName,
+        });
+        emailSent = true;
+      } catch (mailErr) {
+        console.error('[users] Error sending user invite email on email change:', mailErr.message);
+      }
+    }
+
+    const message = emailChanged
+      ? `User updated successfully. Email changed to ${newEmail} and password setup email has been sent.`
+      : 'User updated successfully.';
+
+    return res.json({
+      success: true,
+      message,
+      user: updatedUser,
+      emailChanged,
+      emailSent,
+    });
   } catch (err) {
     if (err.code === '23505') {
       return res.status(409).json({ error: 'Username or email already exists' });

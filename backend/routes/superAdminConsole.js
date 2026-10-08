@@ -4,6 +4,13 @@ const crypto = require('crypto');
 const { centralPool, getOrgPool, generateUniqueSlug, createOrgDatabase } = require('../db');
 const { authMiddleware, requireSuperAdmin } = require('../middleware/authMiddleware');
 const { sendSuperAdminInviteEmail, sendUserInviteEmail } = require('../utils/mailer');
+const {
+  getDeploymentMode,
+  generateToken,
+  extendOrgToken,
+  applyOfflineLicense,
+  generateLicenseRequestCode,
+} = require('../services/tokenService');
 
 // Sync services
 const { syncSentinelOne } = require('../services/sentinelone');
@@ -39,18 +46,21 @@ async function logAudit(req, { target, target_type, action, details = {} }) {
 function computeOrgStatus(org) {
   if (org.deleted_at) return 'deleted';
   if (org.status === 'suspended' || org.is_active === false) return 'suspended';
+  if (org.token_status === 'revoked') return 'revoked';
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  if (org.start_date) {
-    const start = new Date(org.start_date);
+  const startVal = org.token_start_date || org.start_date;
+  if (startVal) {
+    const start = new Date(startVal);
     start.setHours(0, 0, 0, 0);
     if (start > today) return 'upcoming';
   }
 
-  if (org.end_date) {
-    const end = new Date(org.end_date);
+  const endVal = org.token_end_date || org.end_date;
+  if (endVal) {
+    const end = new Date(endVal);
     end.setHours(23, 59, 59, 999);
     if (end < today) return 'expired';
   }
@@ -111,9 +121,17 @@ router.get('/organisations', async (req, res) => {
 
     const whereSql = whereClauses.length ? `WHERE ${whereClauses.join(' AND ')}` : '';
 
-    // Fetch all matching rows with user count
+    // Fetch all matching rows with user count and latest token info
     const sql = `
       SELECT o.*,
+        t.license_id,
+        t.raw_token_preview,
+        t.status AS token_status,
+        t.start_date AS token_start_date,
+        t.end_date AS token_end_date,
+        t.last_extended_by,
+        t.last_extended_at,
+        t.expired_notified_at,
         (
           SELECT COUNT(*)::int
           FROM users u
@@ -128,6 +146,14 @@ router.get('/organisations', async (req, res) => {
             AND u.deleted_at IS NULL
         ) AS active_users_count
       FROM organisations o
+      LEFT JOIN LATERAL (
+        SELECT license_id, raw_token_preview, status, start_date, end_date,
+               last_extended_by, last_extended_at, expired_notified_at
+        FROM org_tokens
+        WHERE org_id = o.id
+        ORDER BY created_at DESC
+        LIMIT 1
+      ) t ON TRUE
       ${whereSql}
       ORDER BY o.${['id', 'org_name', 'created_at', 'start_date', 'end_date', 'plan'].includes(sortBy) ? sortBy : 'id'} ${sortOrder}
     `;
@@ -136,8 +162,9 @@ router.get('/organisations', async (req, res) => {
 
     // Compute derived status and expiring soon flag for every org
     const processed = rows.map((org) => {
+      const effectiveEndDate = org.token_end_date || org.end_date;
       const derivedStatus = computeOrgStatus(org);
-      const daysRemaining = computeDaysRemaining(org.end_date);
+      const daysRemaining = computeDaysRemaining(effectiveEndDate);
       const isExpiringSoon = daysRemaining !== null && daysRemaining >= 0 && daysRemaining <= 30;
       return {
         ...org,
@@ -206,7 +233,6 @@ router.post('/organisations', async (req, res) => {
       createAdminUser = false,
       adminName,
       adminEmail,
-      adminPasswordType = 'temp', // 'temp' or 'invite'
     } = req.body;
 
     if (!org_name || !org_name.trim()) {
@@ -317,18 +343,47 @@ router.post('/organisations', async (req, res) => {
       }
     }
 
+    // Auto-generate license token for the new organisation
+    let tokenResult = null;
+    try {
+      tokenResult = await generateToken({
+        orgId: newOrg.id,
+        orgName: newOrg.org_name,
+        slug: newOrg.slug,
+        startDate: newOrg.start_date,
+        endDate: newOrg.end_date,
+        issuedBy: req.user?.username || 'SuperAdmin',
+      });
+    } catch (tokenErr) {
+      console.error('[superadmin/organisations] Token generation warning:', tokenErr.message);
+    }
+
     await logAudit(req, {
       target: newOrg.org_name,
       target_type: 'organisation',
       action: 'CREATE_ORGANISATION',
-      details: { orgId: newOrg.id, slug: newOrg.slug, plan: newOrg.plan, createdAdmin: !!createdAdmin },
+      details: {
+        orgId: newOrg.id,
+        slug: newOrg.slug,
+        plan: newOrg.plan,
+        createdAdmin: !!createdAdmin,
+        licenseId: tokenResult?.licenseId,
+      },
     });
 
     return res.status(201).json({
       success: true,
       message: 'Organisation created successfully',
       organisation: newOrg,
-      adminUser: createdAdmin ? { ...createdAdmin, temporaryPassword: tempPassword } : null,
+      licenseToken: tokenResult ? {
+        rawToken: tokenResult.rawToken,
+        licenseId: tokenResult.licenseId,
+        preview: tokenResult.tokenRecord?.raw_token_preview,
+        startDate: newOrg.start_date,
+        endDate: newOrg.end_date,
+        deploymentMode: tokenResult.deploymentMode,
+      } : null,
+      adminUser: createdAdmin ? { ...createdAdmin } : null,
     });
   } catch (err) {
     console.error('[superadmin/organisations] create error:', err);
@@ -443,15 +498,17 @@ router.patch('/organisations/:id/status', async (req, res) => {
 });
 
 /**
+ * PATCH /api/superadmin/orgs/:id/token/extend
+ * PATCH /api/superadmin/organisations/:id/token/extend
  * POST /api/superadmin/organisations/:id/extend
- * Extend validity (update end_date)
+ * Extend validity (SuperAdmin only in online mode)
  */
-router.post('/organisations/:id/extend', async (req, res) => {
+async function handleExtendToken(req, res) {
   try {
     const orgId = parseInt(req.params.id, 10);
-    const { new_end_date, extend_months } = req.body;
+    const { newEndDate, new_end_date, reason, extend_months } = req.body;
 
-    let targetDate = new_end_date;
+    let targetDate = newEndDate || new_end_date;
 
     if (!targetDate && extend_months) {
       const months = parseInt(extend_months, 10) || 12;
@@ -462,39 +519,140 @@ router.post('/organisations/:id/extend', async (req, res) => {
     }
 
     if (!targetDate) {
-      return res.status(400).json({ error: 'New end date is required' });
+      return res.status(400).json({ error: 'New end date is required (YYYY-MM-DD)' });
     }
 
-    const { rows } = await centralPool.query(
-      `UPDATE organisations SET
-         end_date = $1,
-         status = CASE WHEN status = 'suspended' THEN 'suspended' ELSE 'active' END,
-         is_active = CASE WHEN status = 'suspended' THEN FALSE ELSE TRUE END,
-         updated_at = NOW()
-       WHERE id = $2 AND deleted_at IS NULL
-       RETURNING *`,
-      [targetDate, orgId]
+    const result = await extendOrgToken({
+      orgId,
+      newEndDate: targetDate,
+      reason: reason || 'Validity extended by SuperAdmin',
+      actor: req.user?.username || 'SuperAdmin',
+    });
+
+    const { rows: updatedOrg } = await centralPool.query(
+      'SELECT * FROM organisations WHERE id = $1',
+      [orgId]
     );
 
-    if (rows.length === 0) {
+    return res.json({
+      success: true,
+      message: result.message,
+      tokenRecord: result.tokenRecord,
+      organisation: updatedOrg[0],
+    });
+  } catch (err) {
+    console.error('[superadmin/token/extend] error:', err);
+    return res.status(400).json({ error: err.message });
+  }
+}
+
+router.patch('/orgs/:id/token/extend', handleExtendToken);
+router.patch('/organisations/:id/token/extend', handleExtendToken);
+router.post('/organisations/:id/extend', handleExtendToken);
+
+/**
+ * POST /api/superadmin/orgs/:id/token/generate
+ * POST /api/superadmin/organisations/:id/token/generate
+ * Generate / Regenerate a license token for an organisation.
+ * Returns raw token ONCE for the SuperAdmin to copy.
+ */
+async function handleGenerateToken(req, res) {
+  try {
+    const orgId = parseInt(req.params.id, 10);
+    const { rows: orgRows } = await centralPool.query(
+      'SELECT id, org_name, slug, start_date, end_date FROM organisations WHERE id = $1 AND deleted_at IS NULL',
+      [orgId]
+    );
+
+    if (orgRows.length === 0) {
       return res.status(404).json({ error: 'Organisation not found' });
     }
 
+    const org = orgRows[0];
+    const gen = await generateToken({
+      orgId: org.id,
+      orgName: org.org_name,
+      slug: org.slug,
+      startDate: org.start_date || new Date(),
+      endDate: org.end_date || new Date(Date.now() + 365 * 86400000),
+      issuedBy: req.user?.username || 'SuperAdmin',
+    });
+
     await logAudit(req, {
-      target: rows[0].org_name,
-      target_type: 'organisation',
-      action: 'EXTEND_ORGANISATION_VALIDITY',
-      details: { orgId, new_end_date: targetDate },
+      target: org.org_name,
+      target_type: 'ORGANISATION_TOKEN',
+      action: 'GENERATE_TOKEN',
+      details: { orgId: org.id, licenseId: gen.licenseId, deploymentMode: gen.deploymentMode },
     });
 
     return res.json({
       success: true,
-      message: 'Organisation validity extended successfully',
-      organisation: rows[0],
+      message: 'License token generated successfully',
+      rawToken: gen.rawToken,
+      licenseId: gen.licenseId,
+      preview: gen.tokenRecord?.raw_token_preview,
+      startDate: gen.tokenRecord?.start_date,
+      endDate: gen.tokenRecord?.end_date,
+      deploymentMode: gen.deploymentMode,
     });
   } catch (err) {
-    console.error('[superadmin/organisations] extend error:', err);
-    return res.status(500).json({ error: 'Failed to extend validity', detail: err.message });
+    console.error('[superadmin/token/generate] error:', err);
+    return res.status(500).json({ error: 'Failed to generate token', detail: err.message });
+  }
+}
+
+router.post('/orgs/:id/token/generate', handleGenerateToken);
+router.post('/organisations/:id/token/generate', handleGenerateToken);
+
+/**
+ * GET /api/superadmin/license/config
+ * Returns deployment mode and license engine configuration.
+ */
+router.get('/license/config', (_req, res) => {
+  const deploymentMode = getDeploymentMode();
+  return res.json({
+    deploymentMode,
+    hasPublicKey: !!process.env.LICENSE_PUBLIC_KEY,
+    hasPrivateKey: !!process.env.LICENSE_PRIVATE_KEY,
+    vendorEmail: process.env.VENDOR_SUPERADMIN_EMAIL || null,
+  });
+});
+
+/**
+ * POST /api/superadmin/license/apply
+ * Upload / paste a signed offline license token.
+ */
+router.post('/license/apply', async (req, res) => {
+  try {
+    const { signedLicense } = req.body;
+    if (!signedLicense) {
+      return res.status(400).json({ error: 'signedLicense string is required' });
+    }
+
+    const result = await applyOfflineLicense({
+      signedLicense,
+      actor: req.user?.username || 'Admin',
+    });
+
+    return res.json(result);
+  } catch (err) {
+    console.error('[superadmin/license/apply] error:', err);
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/superadmin/license/request-code/:orgId
+ * Generate offline license request code blob for the organisation.
+ */
+router.get('/license/request-code/:orgId', async (req, res) => {
+  try {
+    const orgId = parseInt(req.params.orgId, 10);
+    const result = await generateLicenseRequestCode(orgId);
+    return res.json(result);
+  } catch (err) {
+    console.error('[superadmin/license/request-code] error:', err);
+    return res.status(400).json({ error: err.message });
   }
 });
 
@@ -571,6 +729,17 @@ router.get('/organisations/:id/details', async (req, res) => {
     const derivedStatus = computeOrgStatus(org);
     const daysRemaining = computeDaysRemaining(org.end_date);
     const isExpiringSoon = daysRemaining !== null && daysRemaining >= 0 && daysRemaining <= 30;
+
+    // 0. Fetch latest token info
+    const tokenRes = await centralPool.query(
+      `SELECT license_id, raw_token_preview, status, start_date, end_date,
+              issued_by, issued_at, last_extended_by, last_extended_at, expired_notified_at
+       FROM org_tokens
+       WHERE org_id = $1
+       ORDER BY created_at DESC LIMIT 1`,
+      [orgId]
+    );
+    const tokenRecord = tokenRes.rows[0] || null;
 
     // 1. Users statistics & latest 5 users
     const userStatsRes = await centralPool.query(
@@ -660,6 +829,8 @@ router.get('/organisations/:id/details', async (req, res) => {
         derived_status: derivedStatus,
         days_remaining: daysRemaining,
         is_expiring_soon: isExpiringSoon,
+        token: tokenRecord,
+        deploymentMode: getDeploymentMode(),
       },
       users: {
         stats: userStats,
@@ -767,7 +938,7 @@ router.get('/users', async (req, res) => {
 
 /**
  * POST /api/superadmin/users
- * Add new user with Password Setup Email Invitation flow (Image #22 & #23 flow)
+ * Add new user or assign existing user (by email) to an organisation with Password Setup Email Invitation flow
  */
 router.post('/users', async (req, res) => {
   try {
@@ -778,6 +949,7 @@ router.post('/users', async (req, res) => {
       phone_number,
       phone_no,
       organisation_id,
+      org_ids,
       role = 'member',
       confirmPassword,
       allowed_pages,
@@ -802,22 +974,168 @@ router.post('/users', async (req, res) => {
       }
     }
 
-    // Check unique email
+    const orgIdNum = organisation_id ? parseInt(organisation_id, 10) : null;
+    const requestedOrgIds = Array.isArray(org_ids)
+      ? org_ids.map((id) => parseInt(id, 10)).filter((n) => !isNaN(n))
+      : (orgIdNum ? [orgIdNum] : []);
+
+    // ─── CHECK IF USER WITH THIS EMAIL ALREADY EXISTS ───────────────────────
     const existing = await centralPool.query(
-      'SELECT id FROM users WHERE LOWER(email) = $1 AND deleted_at IS NULL',
+      `SELECT id, username, email, phone_number, role, organisation_id, org_ids,
+              is_active, status, password, password_setup_token, password_setup_expires_at
+       FROM users
+       WHERE LOWER(email) = $1 AND deleted_at IS NULL`,
       [userEmail]
     );
+
     if (existing.rows.length > 0) {
-      return res.status(400).json({ error: 'A user with this email address already exists' });
+      const existingUser = existing.rows[0];
+
+      // If user exists, we assign / link the requested organisation(s) to this user
+      if (requestedOrgIds.length === 0 && !orgIdNum) {
+        return res.status(400).json({
+          error: `A user with email "${userEmail}" already exists. Please select an organisation to add them to.`,
+        });
+      }
+
+      const currentOrgIds = Array.isArray(existingUser.org_ids)
+        ? existingUser.org_ids.map(Number)
+        : (existingUser.organisation_id ? [Number(existingUser.organisation_id)] : []);
+
+      // Check if user is already assigned to all requested orgs
+      const targetOrgIdsToAdd = requestedOrgIds.filter((id) => !currentOrgIds.includes(id));
+      if (targetOrgIdsToAdd.length === 0) {
+        let orgName = 'this organisation';
+        if (orgIdNum) {
+          const oRes = await centralPool.query('SELECT org_name FROM organisations WHERE id = $1', [orgIdNum]);
+          orgName = oRes.rows[0]?.org_name || 'this organisation';
+        }
+        return res.status(400).json({
+          error: `User "${existingUser.username}" (${userEmail}) is already a member of ${orgName}.`,
+        });
+      }
+
+      // Merge new org IDs into the user's org_ids array
+      const updatedOrgIds = Array.from(new Set([...currentOrgIds, ...requestedOrgIds]));
+
+      const { rows: updatedRows } = await centralPool.query(
+        `UPDATE users SET
+           org_ids = $1,
+           organisation_id = COALESCE(organisation_id, $2),
+           phone_number = COALESCE($3, phone_number),
+           allowed_pages = COALESCE($4, allowed_pages),
+           updated_at = NOW()
+         WHERE id = $5
+         RETURNING id, username, email, phone_number, role, organisation_id, org_ids, is_active, status, password_setup_token`,
+        [
+          updatedOrgIds,
+          orgIdNum || updatedOrgIds[0] || null,
+          userPhone || null,
+          Array.isArray(allowed_pages) ? allowed_pages : null,
+          existingUser.id,
+        ]
+      );
+
+      const updatedUser = updatedRows[0];
+
+      // Sync into org_users table for all new orgs
+      for (const orgId of targetOrgIdsToAdd) {
+        try {
+          await centralPool.query(
+            `INSERT INTO org_users (org_id, name, email, password, role, is_active, allowed_pages)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT (email, org_id) DO UPDATE SET
+               name = EXCLUDED.name,
+               role = EXCLUDED.role,
+               is_active = EXCLUDED.is_active,
+               allowed_pages = EXCLUDED.allowed_pages,
+               updated_at = NOW()`,
+            [
+              orgId,
+              existingUser.username || userName,
+              userEmail,
+              existingUser.password,
+              role === 'admin' ? 'org_admin' : 'org_user',
+              existingUser.is_active,
+              Array.isArray(allowed_pages) ? allowed_pages : null,
+            ]
+          );
+        } catch (syncErr) {
+          console.warn(`[superadmin/users] org_users sync warning for org ${orgId}:`, syncErr.message);
+        }
+      }
+
+      // Fetch org names for display/notification
+      const orgNamesRes = await centralPool.query(
+        'SELECT org_name FROM organisations WHERE id = ANY($1::int[])',
+        [targetOrgIdsToAdd]
+      );
+      const addedOrgNames = orgNamesRes.rows.map((r) => r.org_name).join(', ') || 'Organisation';
+
+      // Send email notification:
+      // If user status is pending, send/resend password setup invitation.
+      // If user status is active, send welcome/added to org notification.
+      try {
+        let setupToken = existingUser.password_setup_token;
+        if (!setupToken || (existingUser.password_setup_expires_at && new Date(existingUser.password_setup_expires_at).getTime() < Date.now())) {
+          setupToken = crypto.randomBytes(32).toString('hex');
+          const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+          await centralPool.query(
+            `UPDATE users SET password_setup_token = $1, password_setup_expires_at = $2, updated_at = NOW() WHERE id = $3`,
+            [setupToken, expiresAt, existingUser.id]
+          );
+        }
+
+        await sendUserInviteEmail({
+          to: userEmail,
+          name: existingUser.username || userName,
+          phone: userPhone || existingUser.phone_number || null,
+          token: setupToken,
+          invitedBy: req.user?.username || 'SuperAdmin',
+          role: role || existingUser.role || 'member',
+          orgName: addedOrgNames,
+        });
+      } catch (mailErr) {
+        console.error('[superadmin/users] Failed to send email on adding existing user to org:', mailErr.message);
+      }
+
+      await logAudit(req, {
+        target: existingUser.username,
+        target_type: 'user',
+        action: 'ADD_USER_TO_ORGANISATION',
+        details: {
+          userId: existingUser.id,
+          email: userEmail,
+          role,
+          addedOrgIds: targetOrgIdsToAdd,
+          allOrgIds: updatedOrgIds,
+          orgNames: addedOrgNames,
+        },
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: `User "${existingUser.username}" (${userEmail}) has been successfully added to organisation "${addedOrgNames}".`,
+        user: updatedUser,
+        linkedExisting: true,
+      });
+    }
+
+    // ─── BRAND NEW USER CREATION ─────────────────────────────────────────────
+    // Handle username conflict if a different email already used this exact username
+    let finalUsername = userName;
+    const existingUsername = await centralPool.query(
+      'SELECT id FROM users WHERE LOWER(username) = $1 AND deleted_at IS NULL',
+      [userName.toLowerCase()]
+    );
+    if (existingUsername.rows.length > 0) {
+      finalUsername = `${userName}_${Math.floor(100 + Math.random() * 900)}`;
     }
 
     // Generate secure 32-byte setup token & placeholder hash
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
-
-    const orgIdNum = organisation_id ? parseInt(organisation_id, 10) : null;
-    const orgIdsArray = orgIdNum ? [orgIdNum] : [];
 
     const { rows } = await centralPool.query(
       `INSERT INTO users (
@@ -827,13 +1145,13 @@ router.post('/users', async (req, res) => {
        ) VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE, 'pending', $8, $9, $10, NOW(), NOW())
        RETURNING id, username, email, phone_number, role, organisation_id, org_ids, is_active, status, password_setup_token, created_at`,
       [
-        userName,
+        finalUsername,
         userEmail,
         userPhone || null,
         placeholderHash,
         role || 'member',
         orgIdNum,
-        orgIdsArray,
+        requestedOrgIds,
         token,
         expiresAt,
         Array.isArray(allowed_pages) ? allowed_pages : null,
@@ -861,7 +1179,7 @@ router.post('/users', async (req, res) => {
              updated_at = NOW()`,
           [
             orgIdNum,
-            userName,
+            finalUsername,
             userEmail,
             placeholderHash,
             role === 'admin' ? 'org_admin' : 'org_user',
@@ -877,7 +1195,7 @@ router.post('/users', async (req, res) => {
     try {
       await sendUserInviteEmail({
         to: userEmail,
-        name: userName,
+        name: finalUsername,
         phone: userPhone || null,
         token,
         invitedBy: req.user?.username || 'SuperAdmin',
@@ -897,7 +1215,7 @@ router.post('/users', async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: `User "${userName}" created with status Pending. Invitation email sent to ${userEmail}.`,
+      message: `User "${finalUsername}" created with status Pending. Invitation email sent to ${userEmail}.`,
       user: newUser,
     });
   } catch (err) {
@@ -972,52 +1290,213 @@ router.post('/users/:id/resend-invite', async (req, res) => {
 
 /**
  * PUT /api/superadmin/users/:id
- * Edit user
+ * Edit user — if email is changed, also send a password setup email to the new email address
  */
 router.put('/users/:id', async (req, res) => {
   try {
     const userId = parseInt(req.params.id, 10);
-    const { username, email, role, organisation_id, is_active, allowed_pages } = req.body;
+    if (isNaN(userId)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
 
-    const orgIdNum = organisation_id ? parseInt(organisation_id, 10) : null;
-    const orgIdsArray = orgIdNum ? [orgIdNum] : [];
+    const {
+      username,
+      name,
+      email,
+      phone_number,
+      phone_no,
+      role,
+      organisation_id,
+      org_ids,
+      is_active,
+      allowed_pages,
+    } = req.body;
 
-    const { rows } = await centralPool.query(
+    // 1. Fetch current user
+    const { rows: existingRows } = await centralPool.query(
+      `SELECT id, username, email, phone_number, role, organisation_id, org_ids, is_active, status, password
+       FROM users
+       WHERE id = $1 AND deleted_at IS NULL`,
+      [userId]
+    );
+
+    if (existingRows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const currentUser = existingRows[0];
+    const currentEmail = (currentUser.email || '').trim().toLowerCase();
+    const rawNewEmail = (email !== undefined && email !== null) ? String(email).trim().toLowerCase() : currentEmail;
+    const newEmail = rawNewEmail || null;
+    const newUsername = (username || name) ? String(username || name).trim() : currentUser.username;
+    const newPhone = (phone_number !== undefined || phone_no !== undefined)
+      ? ((phone_number || phone_no) ? String(phone_number || phone_no).trim() : null)
+      : currentUser.phone_number;
+    const newRole = role || currentUser.role;
+
+    const orgIdNum = organisation_id !== undefined
+      ? (organisation_id ? parseInt(organisation_id, 10) : null)
+      : currentUser.organisation_id;
+    const orgIdsArray = Array.isArray(org_ids)
+      ? org_ids.map((x) => parseInt(x, 10)).filter((n) => !isNaN(n))
+      : (orgIdNum ? [orgIdNum] : (currentUser.org_ids || []));
+
+    const newIsActive = typeof is_active === 'boolean' ? is_active : currentUser.is_active;
+    const newAllowedPages = allowed_pages !== undefined
+      ? (Array.isArray(allowed_pages) ? allowed_pages : null)
+      : currentUser.allowed_pages;
+
+    // Determine if email has changed
+    const emailChanged = Boolean(newEmail && newEmail !== currentEmail);
+
+    let token = null;
+    let expiresAt = null;
+    let newStatus = currentUser.status;
+
+    if (emailChanged) {
+      // Check unique email across users
+      const emailConflict = await centralPool.query(
+        'SELECT id FROM users WHERE LOWER(email) = $1 AND id != $2 AND deleted_at IS NULL',
+        [newEmail, userId]
+      );
+      if (emailConflict.rows.length > 0) {
+        return res.status(400).json({ error: 'A user with this email address already exists' });
+      }
+
+      // Generate a fresh 32-byte password setup token and 24h expiration
+      token = crypto.randomBytes(32).toString('hex');
+      expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      newStatus = 'pending';
+    }
+
+    // 2. Perform DB update
+    const { rows: updatedRows } = await centralPool.query(
       `UPDATE users SET
-         username = COALESCE($1, username),
-         email = COALESCE($2, email),
-         role = COALESCE($3, role),
-         organisation_id = $4,
-         org_ids = $5,
-         is_active = COALESCE($6, is_active),
-         allowed_pages = $7,
+         username = $1,
+         email = $2,
+         phone_number = $3,
+         role = $4,
+         organisation_id = $5,
+         org_ids = $6,
+         is_active = $7,
+         status = $8,
+         password_setup_token = CASE WHEN $9::text IS NOT NULL THEN $9::text ELSE password_setup_token END,
+         password_setup_expires_at = CASE WHEN $10::timestamptz IS NOT NULL THEN $10::timestamptz ELSE password_setup_expires_at END,
+         allowed_pages = $11,
          updated_at = NOW()
-       WHERE id = $8 AND deleted_at IS NULL
-       RETURNING id, username, email, role, organisation_id, org_ids, is_active`,
+       WHERE id = $12 AND deleted_at IS NULL
+       RETURNING id, username, email, phone_number, role, organisation_id, org_ids, is_active, status, password_setup_token`,
       [
-        username ? username.trim() : null,
-        email ? email.trim().toLowerCase() : null,
-        role || null,
+        newUsername,
+        newEmail,
+        newPhone,
+        newRole,
         orgIdNum,
         orgIdsArray,
-        typeof is_active === 'boolean' ? is_active : null,
-        Array.isArray(allowed_pages) ? allowed_pages : null,
+        emailChanged ? false : newIsActive,
+        newStatus,
+        token,
+        expiresAt,
+        newAllowedPages,
         userId,
       ]
     );
 
-    if (rows.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
+    const updatedUser = updatedRows[0];
+
+    // 3. Sync into org_users table
+    if (newEmail && orgIdNum) {
+      try {
+        if (emailChanged && currentEmail) {
+          await centralPool.query('DELETE FROM org_users WHERE LOWER(email) = LOWER($1)', [currentEmail]);
+        }
+
+        await centralPool.query(
+          `INSERT INTO org_users (org_id, name, email, password, role, is_active, allowed_pages)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (email, org_id) DO UPDATE SET
+             name = EXCLUDED.name,
+             role = EXCLUDED.role,
+             is_active = EXCLUDED.is_active,
+             allowed_pages = EXCLUDED.allowed_pages,
+             updated_at = NOW()`,
+          [
+            orgIdNum,
+            newUsername,
+            newEmail,
+            currentUser.password || '',
+            newRole === 'admin' ? 'org_admin' : 'org_user',
+            emailChanged ? false : newIsActive,
+            newAllowedPages,
+          ]
+        );
+      } catch (syncErr) {
+        console.warn('[superadmin/users] org_users sync warning:', syncErr.message);
+      }
     }
 
+    // 4. Send password setup email ONLY IF email changed
+    let emailSent = false;
+    if (emailChanged && newEmail && token) {
+      try {
+        if (newRole === 'superAdmin') {
+          await sendSuperAdminInviteEmail({
+            to: newEmail,
+            name: newUsername,
+            phone: newPhone || null,
+            token,
+            invitedBy: req.user?.username || 'SuperAdmin',
+          });
+          emailSent = true;
+        } else {
+          let orgName = null;
+          if (orgIdNum) {
+            const orgRes = await centralPool.query('SELECT org_name FROM organisations WHERE id = $1', [orgIdNum]);
+            orgName = orgRes.rows[0]?.org_name || null;
+          }
+          await sendUserInviteEmail({
+            to: newEmail,
+            name: newUsername,
+            phone: newPhone || null,
+            token,
+            invitedBy: req.user?.username || 'SuperAdmin',
+            role: newRole,
+            orgName,
+          });
+          emailSent = true;
+        }
+      } catch (mailErr) {
+        console.error('[superadmin/users] Failed to send invite email on email change:', mailErr.message);
+      }
+    }
+
+    // 5. Audit log
     await logAudit(req, {
-      target: rows[0].username,
-      target_type: 'user',
-      action: 'UPDATE_USER',
-      details: { userId, role: rows[0].role, orgId: orgIdNum },
+      target: updatedUser.username,
+      target_type: newRole === 'superAdmin' ? 'superAdmin' : 'user',
+      action: emailChanged ? 'UPDATE_USER_EMAIL' : 'UPDATE_USER',
+      details: {
+        userId,
+        oldEmail: currentEmail,
+        newEmail,
+        emailChanged,
+        emailSent,
+        role: updatedUser.role,
+        orgId: orgIdNum,
+      },
     });
 
-    return res.json({ success: true, message: 'User updated successfully', user: rows[0] });
+    const responseMsg = emailChanged
+      ? `User updated successfully. Email changed to ${newEmail} and password setup email has been sent.`
+      : 'User updated successfully.';
+
+    return res.json({
+      success: true,
+      message: responseMsg,
+      user: updatedUser,
+      emailChanged,
+      emailSent,
+    });
   } catch (err) {
     console.error('[superadmin/users] update error:', err);
     return res.status(500).json({ error: 'Failed to update user', detail: err.message });
@@ -1219,8 +1698,6 @@ router.post('/admins', async (req, res) => {
       phone_number,
       org_ids,
       confirmPassword,
-      passwordType = 'invite',
-      customPassword,
     } = req.body;
 
     const superAdminName = (name || username || '').trim();

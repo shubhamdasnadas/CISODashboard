@@ -154,6 +154,12 @@ export default function SuperAdminConsole() {
   const [syncWarningTarget, setSyncWarningTarget] = useState(null);
   const [syncingOrgId, setSyncingOrgId] = useState(null);
 
+  // License & Token Modals & Config
+  const [tokenModalOrg, setTokenModalOrg] = useState(null);
+  const [generatedTokenData, setGeneratedTokenData] = useState(null);
+  const [showOfflineUploadModal, setShowOfflineUploadModal] = useState(false);
+  const [licenseConfig, setLicenseConfig] = useState({ deploymentMode: 'online' });
+
   // ─── TAB 2: USERS STATE ─────────────────────────────────────────────────────
   const [users, setUsers] = useState([]);
   const [userPagination, setUserPagination] = useState({ page: 1, limit: 10, total: 0, pages: 1 });
@@ -265,6 +271,38 @@ export default function SuperAdminConsole() {
       fetchSuperAdmins();
     }
   }, [fetchSuperAdmins, activeTab]);
+
+  // ─── FETCH LICENSE CONFIG ───────────────────────────────────────────────────
+  const fetchLicenseConfig = useCallback(async () => {
+    try {
+      const { data } = await api.get('/superadmin/license/config');
+      if (data) setLicenseConfig(data);
+    } catch (err) {
+      console.warn('Failed to load license config:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchLicenseConfig();
+  }, [fetchLicenseConfig]);
+
+  // ─── ACTIONS: GENERATE / VIEW TOKEN ─────────────────────────────────────────
+  const handleGenerateToken = async (org) => {
+    try {
+      const { data } = await api.post(`/superadmin/orgs/${org.id}/token/generate`);
+      setGeneratedTokenData({
+        org,
+        rawToken: data.rawToken,
+        token: data.token,
+        signedLicense: data.token?.signed_license,
+        deploymentMode: data.deploymentMode || licenseConfig.deploymentMode,
+      });
+      showToast(`Token generated successfully for ${org.org_name}`);
+      fetchOrganisations();
+    } catch (err) {
+      showToast(err.response?.data?.error || 'Failed to generate token', 'error');
+    }
+  };
 
   // ─── ACTIONS: ORG CONTEXT SYNC & SWITCH ──────────────────────────────────────
   const handleExecuteOrgSync = async (org) => {
@@ -479,19 +517,30 @@ export default function SuperAdminConsole() {
 
             {/* Primary Tab Action Button */}
             {activeTab === 'organisations' && (
-              <button
-                type="button"
-                onClick={() => {
-                  setEditingOrg(null);
-                  setShowAddOrgModal(true);
-                }}
-                className="flex items-center gap-2.5 px-6 py-3 rounded-2xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold text-sm sm:text-base shadow-lg shadow-indigo-600/30 transition-all cursor-pointer active:scale-98"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-                Add Organisation
-              </button>
+              <div className="flex items-center gap-2 sm:gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowOfflineUploadModal(true)}
+                  className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 text-purple-300 font-bold text-sm sm:text-base transition-all cursor-pointer shadow-sm active:scale-98"
+                  title="Apply or update a cryptographically signed license token"
+                >
+                  <span>🔑</span>
+                  <span className="hidden sm:inline">Apply License</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingOrg(null);
+                    setShowAddOrgModal(true);
+                  }}
+                  className="flex items-center gap-2.5 px-6 py-3 rounded-2xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold text-sm sm:text-base shadow-lg shadow-indigo-600/30 transition-all cursor-pointer active:scale-98"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  Add Organisation
+                </button>
+              </div>
             )}
 
             {activeTab === 'users' && (
@@ -832,6 +881,18 @@ export default function SuperAdminConsole() {
                               >
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                </svg>
+                              </button>
+
+                              {/* License Token Button */}
+                              <button
+                                type="button"
+                                title="Generate / View License Token"
+                                onClick={() => handleGenerateToken(org)}
+                                className="p-2 rounded-xl text-amber-400 hover:bg-amber-500/15 transition-colors cursor-pointer"
+                              >
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
                                 </svg>
                               </button>
 
@@ -1441,9 +1502,38 @@ export default function SuperAdminConsole() {
       {extendOrgTarget && (
         <ExtendValidityModal
           org={extendOrgTarget}
+          licenseConfig={licenseConfig}
           onClose={() => setExtendOrgTarget(null)}
+          onOpenApplyLicense={() => {
+            setExtendOrgTarget(null);
+            setShowOfflineUploadModal(true);
+          }}
           onSuccess={(msg) => {
             setExtendOrgTarget(null);
+            showToast(msg);
+            fetchOrganisations();
+          }}
+        />
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────────────── */}
+      {/* MODAL: GENERATED TOKEN DISPLAY (ONE-TIME VIEW & COPY)                   */}
+      {/* ─────────────────────────────────────────────────────────────────────── */}
+      {generatedTokenData && (
+        <TokenResultModal
+          data={generatedTokenData}
+          onClose={() => setGeneratedTokenData(null)}
+        />
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────────────── */}
+      {/* MODAL: APPLY OFFLINE SIGNED LICENSE                                     */}
+      {/* ─────────────────────────────────────────────────────────────────────── */}
+      {showOfflineUploadModal && (
+        <OfflineLicenseUploadModal
+          onClose={() => setShowOfflineUploadModal(false)}
+          onSuccess={(msg) => {
+            setShowOfflineUploadModal(false);
             showToast(msg);
             fetchOrganisations();
           }}
@@ -2023,99 +2113,470 @@ function OrgFormModal({ editingOrg, onClose, onSuccess }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SUB-COMPONENT: EXTEND VALIDITY MODAL
+// SUB-COMPONENT: EXTEND VALIDITY MODAL (ONLINE & OFFLINE AWARE)
 // ─────────────────────────────────────────────────────────────────────────────
-function ExtendValidityModal({ org, onClose, onSuccess }) {
-  const [customDate, setCustomDate] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+function ExtendValidityModal({ org, licenseConfig, onClose, onSuccess, onOpenApplyLicense }) {
+  const isOffline = licenseConfig?.deploymentMode === 'offline';
 
-  const handleExtend = async (months = null, specificDate = null) => {
+  // Calculate default new end date (+30 days from current end date or today)
+  const computeInitialDate = () => {
+    try {
+      const base = org.end_date ? new Date(org.end_date) : new Date();
+      const current = isNaN(base.getTime()) ? new Date() : base;
+      const target = new Date(current.getTime() + 30 * 24 * 60 * 60 * 1000);
+      return target.toISOString().split('T')[0];
+    } catch {
+      return new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    }
+  };
+
+  const [newEndDate, setNewEndDate] = useState(computeInitialDate());
+  const [reason, setReason] = useState('Enterprise subscription extension');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleApplyPreset = (days) => {
+    try {
+      const base = org.end_date ? new Date(org.end_date) : new Date();
+      const current = isNaN(base.getTime()) ? new Date() : base;
+      const target = new Date(current.getTime() + days * 24 * 60 * 60 * 1000);
+      setNewEndDate(target.toISOString().split('T')[0]);
+      setError('');
+    } catch {
+      // fallback
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+
+    if (!newEndDate) {
+      setError('Please select a new validity end date.');
+      return;
+    }
+
+    if (org.end_date) {
+      const currentEnd = new Date(org.end_date.split('T')[0]);
+      const nextEnd = new Date(newEndDate);
+      if (nextEnd <= currentEnd) {
+        setError(`New End Date (${newEndDate}) must be strictly after Current Expiry (${formatDate(org.end_date)}).`);
+        return;
+      }
+    }
+
+    if (!reason.trim()) {
+      setError('Please provide a reason/note for this validity extension.');
+      return;
+    }
+
     setSubmitting(true);
     try {
-      await api.post(`/superadmin/organisations/${org.id}/extend`, {
-        extend_months: months,
-        new_end_date: specificDate || customDate || null,
+      const { data } = await api.patch(`/superadmin/orgs/${org.id}/token/extend`, {
+        newEndDate,
+        reason: reason.trim(),
       });
-      onSuccess(`Validity extended for ${org.org_name}`);
+      onSuccess(data.message || `Validity extended successfully for ${org.org_name}`);
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to extend validity');
+      setError(err.response?.data?.error || err.message || 'Failed to extend validity');
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-lg bg-[var(--card-bg)] border border-[var(--card-border)] rounded-3xl p-7 space-y-6 shadow-2xl animate-scaleUp">
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="w-full max-w-lg bg-[var(--card-bg)] border border-purple-500/30 rounded-3xl p-7 space-y-6 shadow-2xl animate-scaleUp">
+        {/* Header */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3.5">
             <span className="w-12 h-12 rounded-2xl bg-purple-500/20 text-purple-400 flex items-center justify-center text-2xl shadow-sm">
               📅
             </span>
             <div>
-              <h3 className="text-xl font-bold text-[var(--foreground)]">Extend Validity</h3>
-              <p className="text-sm text-[var(--muted)]">{org.org_name}</p>
+              <h3 className="text-xl font-bold text-[var(--foreground)]">Extend License Validity</h3>
+              <p className="text-xs sm:text-sm text-[var(--muted)]">{org.org_name} ({org.slug})</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 rounded-xl text-[var(--muted)] hover:text-[var(--foreground)] text-lg">
+          <button onClick={onClose} className="p-2 rounded-xl text-[var(--muted)] hover:text-[var(--foreground)] text-lg cursor-pointer">
             ✕
           </button>
         </div>
 
-        <div className="p-4 rounded-2xl bg-[var(--muted-bg)] border border-[var(--card-border)] text-sm space-y-2">
-          <div className="flex justify-between">
-            <span className="text-[var(--muted)]">Current Expiry:</span>
-            <span className="font-bold text-[var(--foreground)]">{formatDate(org.end_date)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-[var(--muted)]">Derived Status:</span>
-            <span className="font-bold capitalize text-indigo-400">{org.derived_status}</span>
-          </div>
-        </div>
-
-        {/* Quick presets */}
-        <div className="space-y-3">
-          <label className="text-xs sm:text-sm font-bold text-[var(--foreground)] uppercase">Quick Extend</label>
-          <div className="grid grid-cols-2 gap-3">
-            {[
-              { label: '+30 Days', months: 1 },
-              { label: '+90 Days', months: 3 },
-              { label: '+6 Months', months: 6 },
-              { label: '+1 Year', months: 12 },
-            ].map((p) => (
+        {/* Offline Mode Notice */}
+        {isOffline && (
+          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs space-y-2">
+            <div className="flex items-center gap-2 font-bold text-amber-200">
+              <span>🔒</span>
+              <span>Offline / On-Premise Installation</span>
+            </div>
+            <p className="leading-relaxed">
+              Direct validity extension on client servers is locked to prevent tampering. To extend, please apply a cryptographically signed license token string or file issued by your vendor SuperAdmin.
+            </p>
+            <div className="pt-1">
               <button
-                key={p.label}
                 type="button"
-                disabled={submitting}
-                onClick={() => handleExtend(p.months)}
-                className="py-3 px-4 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 text-purple-300 text-sm font-bold transition-all cursor-pointer disabled:opacity-50"
+                onClick={onOpenApplyLicense}
+                className="px-3.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 font-semibold text-xs transition border border-amber-500/40 cursor-pointer"
               >
-                {p.label}
+                Upload / Apply Signed License →
               </button>
-            ))}
+            </div>
           </div>
+        )}
+
+        {/* Current Validity Summary */}
+        <div className="p-4 rounded-2xl bg-[var(--muted-bg)] border border-[var(--card-border)] text-xs sm:text-sm space-y-2">
+          <div className="flex justify-between">
+            <span className="text-[var(--muted)]">Current Expiry Date:</span>
+            <span className="font-bold text-rose-400">{formatDate(org.end_date)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-[var(--muted)]">Current Status:</span>
+            <span className="font-bold capitalize text-indigo-400">{org.derived_status || org.status}</span>
+          </div>
+          {org.license_id && (
+            <div className="flex justify-between">
+              <span className="text-[var(--muted)]">License ID:</span>
+              <span className="font-mono text-purple-300 font-semibold">{org.license_id}</span>
+            </div>
+          )}
         </div>
 
-        {/* Custom date option */}
-        <div className="space-y-3 pt-3 border-t border-[var(--card-border)]">
-          <label className="text-xs sm:text-sm font-bold text-[var(--foreground)] uppercase">Or Choose Custom End Date</label>
-          <div className="flex gap-3">
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {error && (
+            <div className="p-3.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs font-semibold">
+              ⚠️ {error}
+            </div>
+          )}
+
+          {/* Quick presets */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-[var(--foreground)] uppercase tracking-wider">Quick Extend Presets</label>
+            <div className="grid grid-cols-4 gap-2">
+              {[
+                { label: '+30 Days', days: 30 },
+                { label: '+90 Days', days: 90 },
+                { label: '+6 Months', days: 180 },
+                { label: '+1 Year', days: 365 },
+              ].map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => handleApplyPreset(p.days)}
+                  className="py-2.5 px-2 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 text-purple-300 text-xs font-bold transition cursor-pointer text-center active:scale-95"
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* New End Date Input */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-[var(--foreground)] uppercase tracking-wider block">
+              New Validity End Date *
+            </label>
             <input
               type="date"
-              value={customDate}
-              onChange={(e) => setCustomDate(e.target.value)}
-              className="flex-1 px-4 py-3 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl text-sm sm:text-base text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-purple-500"
+              required
+              value={newEndDate}
+              onChange={(e) => setNewEndDate(e.target.value)}
+              className="w-full px-4 py-3 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl text-sm font-semibold text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-purple-500"
             />
+          </div>
+
+          {/* Reason / Notes */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-[var(--foreground)] uppercase tracking-wider block">
+              Reason / Extension Note *
+            </label>
+            <input
+              type="text"
+              required
+              placeholder="e.g. Annual renewal, contract extension, demo evaluation..."
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              className="w-full px-4 py-2.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl text-xs sm:text-sm text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-purple-500"
+            />
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-[var(--card-border)]">
             <button
               type="button"
-              disabled={!customDate || submitting}
-              onClick={() => handleExtend(null, customDate)}
-              className="px-5 py-3 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold disabled:opacity-50 transition-all cursor-pointer shadow-md shadow-purple-600/30"
+              onClick={onClose}
+              className="px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold bg-[var(--muted-bg)] text-[var(--foreground)] hover:bg-[var(--card-border)] cursor-pointer transition"
             >
-              Apply
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="px-6 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs sm:text-sm font-bold shadow-md shadow-purple-600/30 disabled:opacity-50 transition cursor-pointer active:scale-95"
+            >
+              {submitting ? 'Extending...' : 'Confirm & Extend'}
             </button>
           </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUB-COMPONENT: TOKEN RESULT MODAL (ONE-TIME RAW TOKEN & SIGNED TOKEN DISPLAY)
+// ─────────────────────────────────────────────────────────────────────────────
+function TokenResultModal({ data, onClose }) {
+  const [copied, setCopied] = useState(false);
+  const { org, rawToken, token, signedLicense, deploymentMode } = data || {};
+
+  const tokenString = rawToken || signedLicense || '';
+  const isSigned = !!signedLicense;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(tokenString);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 3000);
+    } catch {
+      // fallback
+    }
+  };
+
+  const handleDownloadLicenseFile = () => {
+    if (!tokenString) return;
+    const blob = new Blob([tokenString], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${org?.slug || 'ciso'}-license-${token?.license_id || 'key'}.lic`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+      <div className="w-full max-w-xl bg-[var(--card-bg)] border border-indigo-500/40 rounded-3xl p-7 sm:p-8 space-y-6 shadow-2xl animate-scaleUp">
+        <div className="flex items-center justify-between pb-2 border-b border-[var(--card-border)]">
+          <div className="flex items-center gap-3">
+            <span className="w-12 h-12 rounded-2xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-2xl shadow-sm">
+              🔑
+            </span>
+            <div>
+              <h3 className="text-xl font-bold text-[var(--foreground)]">Enterprise License Token</h3>
+              <p className="text-xs text-[var(--muted)]">{org?.org_name} ({org?.slug})</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-xl text-[var(--muted)] hover:text-[var(--foreground)] text-lg cursor-pointer">
+            ✕
+          </button>
         </div>
+
+        {/* Token Details Summary */}
+        <div className="p-4 rounded-2xl bg-[var(--muted-bg)] border border-[var(--card-border)] text-xs space-y-2">
+          <div className="flex justify-between">
+            <span className="text-[var(--muted)]">License ID:</span>
+            <span className="font-mono text-indigo-400 font-semibold">{token?.license_id || '—'}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-[var(--muted)]">Validity Period:</span>
+            <span className="font-bold text-[var(--foreground)]">{formatDate(token?.start_date)} → {formatDate(token?.end_date)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-[var(--muted)]">Deployment Mode:</span>
+            <span className="font-bold uppercase text-purple-400">{deploymentMode || 'online'}</span>
+          </div>
+        </div>
+
+        {/* Token Display Area */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-bold text-[var(--foreground)] uppercase tracking-wider">
+              {isSigned ? 'Cryptographically Signed License Token' : 'Generated License Token (Raw)'}
+            </label>
+            <span className="text-[11px] text-amber-400 font-semibold">
+              {!isSigned && '⚠️ Shown only once'}
+            </span>
+          </div>
+
+          <div className="relative">
+            <textarea
+              readOnly
+              rows={isSigned ? 5 : 3}
+              value={tokenString}
+              className="w-full p-3.5 bg-slate-950 border border-indigo-500/30 rounded-xl text-xs font-mono text-indigo-300 select-all focus:outline-none resize-none break-all"
+            />
+          </div>
+        </div>
+
+        {/* Security Warning Notice */}
+        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5">
+          <span className="text-base flex-shrink-0">⚠️</span>
+          <span className="leading-relaxed">
+            {isSigned
+              ? 'This token is cryptographically signed with your private key and verified with the public key on the client install.'
+              : 'For security, this raw token is hashed with SHA-256 in the central database and cannot be retrieved again. Please copy and store it safely.'}
+          </span>
+        </div>
+
+        {/* Modal Buttons */}
+        <div className="flex flex-wrap items-center justify-end gap-3 pt-2">
+          {isSigned && (
+            <button
+              type="button"
+              onClick={handleDownloadLicenseFile}
+              className="px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition cursor-pointer"
+            >
+              📥 Download .lic File
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/30 transition cursor-pointer active:scale-95 flex items-center gap-1.5"
+          >
+            {copied ? (
+              <>
+                <span>✓</span>
+                <span>Copied to Clipboard!</span>
+              </>
+            ) : (
+              <>
+                <span>📋</span>
+                <span>Copy Token</span>
+              </>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold bg-[var(--muted-bg)] text-[var(--foreground)] hover:bg-[var(--card-border)] cursor-pointer"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUB-COMPONENT: OFFLINE LICENSE UPLOAD MODAL
+// ─────────────────────────────────────────────────────────────────────────────
+function OfflineLicenseUploadModal({ onClose, onSuccess }) {
+  const [tokenInput, setTokenInput] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!tokenInput.trim()) {
+      setError('Please enter or upload a valid signed license token string.');
+      return;
+    }
+
+    setSubmitting(true);
+    setError('');
+    try {
+      const { data } = await api.post('/superadmin/license/apply', {
+        signedLicense: tokenInput.trim(),
+      });
+      onSuccess(data.message || 'Signed license applied successfully!');
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Failed to apply license token');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+      <div className="w-full max-w-xl bg-[var(--card-bg)] border border-purple-500/40 rounded-3xl p-7 sm:p-8 space-y-6 shadow-2xl animate-scaleUp">
+        {/* Header */}
+        <div className="flex items-center justify-between pb-2 border-b border-[var(--card-border)]">
+          <div className="flex items-center gap-3">
+            <span className="w-12 h-12 rounded-2xl bg-purple-500/20 text-purple-400 flex items-center justify-center text-2xl shadow-sm">
+              🔑
+            </span>
+            <div>
+              <h3 className="text-xl font-bold text-[var(--foreground)]">Apply Signed License</h3>
+              <p className="text-xs text-[var(--muted)]">Upload or paste a vendor-signed license token</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-xl text-[var(--muted)] hover:text-[var(--foreground)] text-lg cursor-pointer">
+            ✕
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {error && (
+            <div className="p-3.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs font-semibold">
+              ⚠️ {error}
+            </div>
+          )}
+
+          <p className="text-xs text-[var(--muted)] leading-relaxed">
+            Paste the cryptographically signed JWT token string or upload the <code className="text-purple-300">.lic</code> license file issued by TechSec Vendor SuperAdmin.
+          </p>
+
+          <div>
+            <label className="block text-xs font-bold text-[var(--foreground)] uppercase mb-1.5">
+              Signed License Token String *
+            </label>
+            <textarea
+              rows={5}
+              required
+              placeholder="eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+              value={tokenInput}
+              onChange={(e) => setTokenInput(e.target.value)}
+              className="w-full p-3 bg-slate-950 border border-[var(--input-border)] rounded-xl text-xs font-mono text-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none break-all"
+            />
+          </div>
+
+          {/* File Upload Selector */}
+          <div>
+            <label className="block text-xs font-bold text-[var(--foreground)] uppercase mb-1.5">
+              Or Upload License File (.lic / .txt / .jwt)
+            </label>
+            <input
+              type="file"
+              accept=".lic,.txt,.json,.jwt"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  const reader = new FileReader();
+                  reader.onload = (evt) => {
+                    setTokenInput(String(evt.target?.result || ''));
+                  };
+                  reader.readAsText(file);
+                }
+              }}
+              className="w-full text-xs text-[var(--muted)] file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-purple-600 file:text-white hover:file:bg-purple-500 cursor-pointer"
+            />
+          </div>
+
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-[var(--card-border)]">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold bg-[var(--muted-bg)] text-[var(--foreground)] hover:bg-[var(--card-border)] cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="px-6 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs sm:text-sm font-bold shadow-md shadow-purple-600/30 disabled:opacity-50 transition cursor-pointer active:scale-95"
+            >
+              {submitting ? 'Verifying & Applying...' : 'Verify & Apply License'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
@@ -2222,7 +2683,7 @@ function UserFormModal({ editingUser, organisations = [], lockedOrgId = null, on
     setSubmitting(true);
     try {
       if (isEdit) {
-        await api.put(`/superadmin/users/${editingUser.id}`, {
+        const { data } = await api.put(`/superadmin/users/${editingUser.id}`, {
           username: form.name.trim(),
           email: form.email.trim(),
           phone_number: form.phone_number.trim(),
@@ -2230,7 +2691,7 @@ function UserFormModal({ editingUser, organisations = [], lockedOrgId = null, on
           role: form.role,
           is_active: form.is_active,
         });
-        onSuccess('User updated successfully');
+        onSuccess(data?.message || 'User updated successfully');
       } else {
         const { data } = await api.post('/superadmin/users', {
           name: form.name.trim(),
@@ -2319,6 +2780,11 @@ function UserFormModal({ editingUser, organisations = [], lockedOrgId = null, on
                 onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
                 className="w-full px-4 py-3 sm:py-3.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl text-sm sm:text-base text-[var(--foreground)] focus:ring-2 focus:ring-indigo-500 focus:outline-none"
               />
+              {isEdit && form.email.trim().toLowerCase() !== (editingUser?.email || '').trim().toLowerCase() && (
+                <p className="text-xs text-amber-400 mt-1.5 flex items-center gap-1.5 font-medium">
+                  <span>✉️</span> Changing the email address will send a new password setup invitation link to this address.
+                </p>
+              )}
             </div>
 
             {/* Phone Number */}
@@ -2437,7 +2903,15 @@ function UserFormModal({ editingUser, organisations = [], lockedOrgId = null, on
               disabled={submitting}
               className="px-6 py-3 rounded-xl text-sm sm:text-base font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-600/30 disabled:opacity-50 transition-all cursor-pointer"
             >
-              {submitting ? 'Sending Invite...' : isEdit ? 'Save Changes' : 'Send Invite'}
+              {submitting
+                ? isEdit
+                  ? form.email.trim().toLowerCase() !== (editingUser?.email || '').trim().toLowerCase()
+                    ? 'Saving & Sending Invite...'
+                    : 'Saving Changes...'
+                  : 'Sending Invite...'
+                : isEdit
+                  ? 'Save Changes'
+                  : 'Send Invite'}
             </button>
           </div>
         </form>

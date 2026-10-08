@@ -1129,47 +1129,6 @@ function MultiViewChart({
         </div>
       );
 
-    case 'line':
-      return (
-        <div style={{ height }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData} margin={{ top: 10, right: 16, left: 0, bottom: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-              <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={0} angle={-20} textAnchor="end" height={45} />
-              <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} />
-              <Line type="monotone" dataKey="value" name="Count" stroke={colors[0]} strokeWidth={2.5}
-                dot={(props) => { const { cx, cy, payload } = props; const c = payload.fill || colors[0]; return <circle cx={cx} cy={cy} r={4} fill={c} stroke={c} strokeWidth={2} />; }}
-                activeDot={{ r: 6, cursor: 'pointer' }} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      );
-
-    case 'area':
-      return (
-        <div style={{ height }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 10, right: 16, left: 0, bottom: 8 }}>
-              <defs>
-                <linearGradient id={`areaGrad-${colors[0]?.replace('#', '')}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={colors[0]} stopOpacity={0.5} />
-                  <stop offset="95%" stopColor={colors[0]} stopOpacity={0.05} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-              <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--muted)' }} interval={0} angle={-20} textAnchor="end" height={45} />
-              <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} allowDecimals={false} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} />
-              <Area type="monotone" dataKey="value" name="Count" stroke={colors[0]} strokeWidth={2}
-                fill={`url(#areaGrad-${colors[0]?.replace('#', '')})`}
-                dot={(props) => { const { cx, cy, payload } = props; const c = payload.fill || colors[0]; return <circle cx={cx} cy={cy} r={3} fill={c} stroke={c} strokeWidth={2} />; }}
-                activeDot={{ r: 6, cursor: 'pointer' }} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      );
-
     case 'comparison':
       return (
         <div style={{ height }}>

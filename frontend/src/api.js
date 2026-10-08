@@ -108,6 +108,18 @@ api.interceptors.response.use(
         window.location.href = '/login';
       }
     }
+
+    // ── License Expired Interception (403 with code TOKEN_EXPIRED) ─────────────
+    if (status === 403 && err.response?.data?.code === 'TOKEN_EXPIRED') {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('ciso:license_expired', {
+            detail: err.response.data,
+          })
+        );
+      }
+    }
+
     return Promise.reject(err);
   }
 );

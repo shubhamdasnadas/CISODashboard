@@ -86,12 +86,69 @@ The seeder sets passwords to:
 | Radhesh  | Radhesh@123  | member      | 1    |
 | Raju     | Raju@123     | member      | 2    |
 
-## Important behaviors implemented
+## Enterprise Token & License Management System
 
-1. **Real-time username check** — Login page debounces 500ms and calls `/api/auth/check-username`; org chips appear below the username field once it exists.
-2. **Org chips come from DB join** — backend `check-username` joins `users.org_ids` with `organisations`.
-3. **Background polling** — `node-cron` job in `server.js` runs every 5 minutes and refreshes every row in `api_tokens`.
-4. **Cached responses** — Dashboard reads from `api_responses`, so users see immediately-fetched data on login.
-5. **Role-based access** — `superAdmin` sees everything; `admin`/`member` see only their orgs; `Users` page is superAdmin-only.
-6. **bcrypt hashes** — passwords stored hashed (seeded via `seed-users.js`).
-7. **JWT** — 8-hour expiry (configurable via `JWT_EXPIRES_IN`).
+The application includes an Enterprise License & Token management system designed for multi-tenant architecture with support for both **Online (Hosted SaaS)** and **Offline (Client On-Premise Install)** deployments.
+
+### Deployment Modes (`DEPLOYMENT_MODE`)
+
+Configured via environment variable `DEPLOYMENT_MODE=online|offline`.
+
+#### Mode 1: Online (Hosted SaaS)
+1. **Token Generation & Security**:
+   - Every organisation is issued a unique license token bound to its organisation name, slug, start date, and end date.
+   - Raw tokens (`ciso_lic_<hex>`) are hashed using **SHA-256** and stored securely in `org_tokens`. Raw tokens are displayed only once on creation.
+2. **Access Control & Middleware**:
+   - `orgMiddleware` and `validateOrgToken` automatically enforce validity on every request for non-superadmin users.
+   - If a license expires (`end_date < today`), requests return HTTP `403 Forbidden` with `{ code: 'TOKEN_EXPIRED' }`, rendering the `LicenseExpiredBarrier` overlay. SuperAdmins are never blocked.
+3. **Automated Maintenance & Notifications**:
+   - A daily background job transitions expired tokens from `active` to `expired`.
+   - Sends dark-themed email alerts to SuperAdmins upon expiry with deduplication (`expired_notified_at`), as well as proactive pre-expiry warnings at **30, 15, and 7 days** before expiry.
+4. **Validity Extension**:
+   - SuperAdmins can extend validity via the SuperAdmin Console (`PATCH /api/superadmin/orgs/:id/token/extend`).
+   - Requires `newEndDate > currentEndDate` and a reason/note. On extension, access is restored immediately, notification flags are reset, and an audit trail entry is logged in `superadmin_audit_logs`.
+
+#### Mode 2: Offline (Client On-Premise Install)
+1. **Tamper-Proof Cryptographic Signing**:
+   - Offline licenses are cryptographically signed using **RS256** (RSA-2048) with our vendor private key (`LICENSE_PRIVATE_KEY`).
+   - The client install includes only the public key (`LICENSE_PUBLIC_KEY`) and verifies the signature at startup and on every request.
+2. **Clock-Tampering & Rollback Protection**:
+   - Tracks monotonically increasing timestamps in `license_clock_state`. If the system date goes backwards (> 5 minutes skew), validation is immediately blocked with `CLOCK_ROLLBACK_DETECTED`.
+3. **Client Renewal Workflow**:
+   - Client admins cannot manually extend dates.
+   - On expiry, users see the License Expired Barrier with a **"Copy License Request Code"** button.
+   - The client shares the request code with the vendor SuperAdmin.
+   - The vendor SuperAdmin issues a signed `.lic` file or token using `node backend/scripts/issue-offline-license.js`.
+   - The client admin uploads/pastes the signed token via the **"Upload / Paste New Token"** modal (`POST /api/superadmin/license/apply`), verifying the signature, advancing validity, and restoring access.
+4. **Offline Notification Queue**:
+   - If SMTP is unreachable on the client server, notification emails are queued in `pending_notifications` and retried automatically.
+
+### Key Environment Variables (`.env`)
+
+```env
+# Deployment mode: online or offline
+DEPLOYMENT_MODE=online
+
+# Vendor superadmin contact email for license alerts
+VENDOR_SUPERADMIN_EMAIL=support@techsec.com
+
+# Pre-expiry warning alert thresholds in days
+TOKEN_WARN_DAYS=30,15,7
+
+# RSA-2048 keys for offline signed licenses
+LICENSE_PUBLIC_KEY=
+LICENSE_PRIVATE_KEY=
+```
+
+### Key CLI Scripts
+
+```bash
+# Generate RSA key pair for offline licenses
+node backend/scripts/generate-license-keys.js
+
+# Issue a cryptographically signed offline license token
+node backend/scripts/issue-offline-license.js --org "Acme Corp" --slug "acme-corp" --end "2027-10-08"
+
+# Run token service test suite
+node --test backend/tests/tokenService.test.js
+```

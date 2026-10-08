@@ -7,6 +7,7 @@ const cron = require('node-cron');
 const { centralPool, ensureOrgDatabases, getOrgPool, shutdownAllPools } = require('./db');
 const { runMigration } = require('./migrate');
 const { runSeedData } = require('./seed-data');
+const { initLicenseCron } = require('./services/licenseCron');
 
 const authRoutes = require('./routes/auth');
 const auth2faRoutes = require('./routes/auth2fa');
@@ -377,6 +378,7 @@ async function main() {
   await runMigration();
   await runSeedData();
   await ensureCentral2faSchema();
+  initLicenseCron();
 
   // 4. Start the HTTP server.
   const PORT = process.env.PORT || 3000;

@@ -21,6 +21,7 @@ import ApiResponses from './pages/ApiResponses.jsx';
 import Osint from './pages/Osint.jsx';
 import Settings from './pages/Settings.jsx';
 import AppLayout from './components/AppLayout.jsx';
+import LicenseExpiredBarrier from './components/LicenseExpiredBarrier.jsx';
 
 // Security (SentinelOne)
 import SecurityPage from './pages/security/SecurityPage.jsx';
@@ -91,7 +92,7 @@ function OrgGate({ children }) {
   const user = session.getUser();
   if (user?.role === 'superAdmin') return children;
 
-  const { loading, currentOrg } = useOrg();
+  const { loading, currentOrg, licenseExpiredInfo } = useOrg();
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[var(--background)] text-[var(--muted)]">
@@ -101,6 +102,9 @@ function OrgGate({ children }) {
   }
   if (!currentOrg) {
     return <Navigate to="/select-organisation" replace />;
+  }
+  if (licenseExpiredInfo) {
+    return <LicenseExpiredBarrier expiredDetails={licenseExpiredInfo} />;
   }
   return children;
 }

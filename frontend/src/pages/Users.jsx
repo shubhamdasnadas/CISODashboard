@@ -261,8 +261,8 @@ export default function Users() {
         payload.password = editForm.password.trim();
       }
 
-      await api.put(`/users/${editUser.id}`, payload);
-      showNotice('success', `User "${editForm.username}" updated successfully`);
+      const { data } = await api.put(`/users/${editUser.id}`, payload);
+      showNotice('success', data?.message || `User "${editForm.username}" updated successfully`);
       setEditUser(null);
       loadData();
     } catch (err) {
