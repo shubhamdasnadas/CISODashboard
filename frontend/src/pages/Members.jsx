@@ -87,7 +87,7 @@ function getSessionDuration(loginTime, logoutTime) {
   return `${secs}s`;
 }
 
-export default function Members() {
+export default function Members({ embedded = false }) {
   const { currentOrg } = useOrg();
   const user = session.getUser();
   const isSuperAdmin = user.role === 'superAdmin';
@@ -397,7 +397,7 @@ export default function Members() {
 
   if (loading) {
     return (
-      <div className="p-6 lg:p-8 space-y-6 max-w-7xl mx-auto">
+      <div className={embedded ? 'space-y-6 w-full' : 'p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto'}>
         <div className="grid grid-cols-3 gap-4">
           {[0, 1, 2].map((i) => (
             <div key={i} className="card-surface border border-[var(--card-border)] rounded-2xl p-4 shadow-sm">
@@ -416,7 +416,7 @@ export default function Members() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto">
+    <div className={embedded ? 'space-y-6 w-full' : 'p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto'}>
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
