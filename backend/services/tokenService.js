@@ -110,10 +110,25 @@ function computeTokenStatus(startDate, endDate, isRevoked = false) {
 }
 
 /**
+ * Format PEM string to handle escaped newlines (\n) and surrounding quotes.
+ */
+function formatPemKey(key) {
+  if (!key || typeof key !== 'string') return null;
+  let formatted = key.trim();
+  if (
+    (formatted.startsWith('"') && formatted.endsWith('"')) ||
+    (formatted.startsWith("'") && formatted.endsWith("'"))
+  ) {
+    formatted = formatted.slice(1, -1);
+  }
+  return formatted.replace(/\\n/g, '\n').replace(/\\r/g, '');
+}
+
+/**
  * Sign an offline license token using RSA/Ed25519 private key or fallback secret.
  */
 function signOfflineLicense(payload) {
-  const privateKey = process.env.LICENSE_PRIVATE_KEY;
+  const privateKey = formatPemKey(process.env.LICENSE_PRIVATE_KEY);
   if (privateKey) {
     try {
       return jwt.sign(payload, privateKey, { algorithm: 'RS256', expiresIn: '10y' });
@@ -130,23 +145,60 @@ function signOfflineLicense(payload) {
  * Verify an offline signed license token using public key or fallback secret.
  */
 function verifyOfflineLicenseSignature(signedLicense) {
-  const publicKey = process.env.LICENSE_PUBLIC_KEY;
-  if (publicKey) {
+  if (!signedLicense || typeof signedLicense !== 'string') {
+    return { valid: false, error: 'License token string is required' };
+  }
+
+  const cleanToken = signedLicense.trim();
+  let header = null;
+  try {
+    const decodedWithHeader = jwt.decode(cleanToken, { complete: true });
+    header = decodedWithHeader?.header;
+  } catch (decodeErr) {
+    return { valid: false, error: 'Malformed JWT token structure' };
+  }
+
+  const publicKey = formatPemKey(process.env.LICENSE_PUBLIC_KEY);
+  const privateKey = formatPemKey(process.env.LICENSE_PRIVATE_KEY);
+
+  // 1. If token is RS256 and RSA public key is available, verify with RSA public key
+  if (header?.alg === 'RS256' && publicKey) {
     try {
-      const decoded = jwt.verify(signedLicense, publicKey, { algorithms: ['RS256'] });
+      const decoded = jwt.verify(cleanToken, publicKey, { algorithms: ['RS256'] });
       return { valid: true, payload: decoded };
     } catch (err) {
       return { valid: false, error: err.message };
     }
   }
-  // Fallback verification in dev
-  const secret = process.env.LICENSE_SECRET || process.env.JWT_SECRET || 'ciso-enterprise-license-secret-key-2026';
-  try {
-    const decoded = jwt.verify(signedLicense, secret);
-    return { valid: true, payload: decoded };
-  } catch (err) {
-    return { valid: false, error: err.message };
+
+  // 2. If token is RS256 and private key is present (e.g. local single-machine dev setup)
+  if (header?.alg === 'RS256' && privateKey) {
+    try {
+      const decoded = jwt.verify(cleanToken, privateKey, { algorithms: ['RS256'] });
+      return { valid: true, payload: decoded };
+    } catch (err) {
+      // Continue to try fallback
+    }
   }
+
+  // 3. Fallback verification with HMAC candidate secrets (HS256)
+  const candidateSecrets = [
+    process.env.LICENSE_SECRET,
+    process.env.JWT_SECRET,
+    'ciso-enterprise-license-secret-key-2026',
+  ].filter(Boolean);
+
+  let lastError = 'Invalid signature';
+  for (const secret of candidateSecrets) {
+    try {
+      const decoded = jwt.verify(cleanToken, secret);
+      return { valid: true, payload: decoded };
+    } catch (err) {
+      lastError = err.message;
+    }
+  }
+
+  return { valid: false, error: lastError };
 }
 
 /**
@@ -507,14 +559,30 @@ async function applyOfflineLicense({
     throw new Error('License payload missing organisation identifier (slug or org_id)');
   }
 
-  // Find matching organisation
+  // Find matching organisation by org_id, slug, or org_name
   let org;
   if (org_id) {
     const { rows } = await client.query('SELECT * FROM organisations WHERE id = $1', [org_id]);
     org = rows[0];
   }
   if (!org && slug) {
-    const { rows } = await client.query('SELECT * FROM organisations WHERE slug = $1', [slug]);
+    const cleanSlug = slug.toLowerCase().replace(/^\/+/, '');
+    const { rows } = await client.query(
+      `SELECT * FROM organisations
+       WHERE LOWER(slug) = $1
+          OR LOWER(slug) = $2
+          OR LOWER(REPLACE(slug, '-', '_')) = LOWER(REPLACE($1, '-', '_'))
+          OR (LENGTH($3) > 0 AND LOWER(org_name) = LOWER($3))
+       LIMIT 1`,
+      [cleanSlug, `/${cleanSlug}`, org_name || '']
+    );
+    org = rows[0];
+  }
+  if (!org && org_name) {
+    const { rows } = await client.query(
+      'SELECT * FROM organisations WHERE LOWER(org_name) = LOWER($1) LIMIT 1',
+      [org_name.trim()]
+    );
     org = rows[0];
   }
 

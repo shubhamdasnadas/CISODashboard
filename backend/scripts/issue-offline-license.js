@@ -12,6 +12,25 @@ const path = require('path');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 
+// Load .env from backend directory
+try {
+  require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+} catch {
+  // dotenv optional if env vars are already loaded in process
+}
+
+function formatPemKey(key) {
+  if (!key || typeof key !== 'string') return null;
+  let formatted = key.trim();
+  if (
+    (formatted.startsWith('"') && formatted.endsWith('"')) ||
+    (formatted.startsWith("'") && formatted.endsWith("'"))
+  ) {
+    formatted = formatted.slice(1, -1);
+  }
+  return formatted.replace(/\\n/g, '\n').replace(/\\r/g, '');
+}
+
 // Parse CLI args
 const args = process.argv.slice(2);
 function getArg(flag, defaultValue) {
@@ -30,10 +49,11 @@ const installId = getArg('--install-id', 'ANY');
 const issuedBy = getArg('--issuer', 'TechSec SuperAdmin');
 
 // Read private key from env or argument
-let privateKey = process.env.LICENSE_PRIVATE_KEY;
-if (!privateKey && getArg('--key-file')) {
-  privateKey = fs.readFileSync(path.resolve(getArg('--key-file')), 'utf8');
+let rawPrivateKey = process.env.LICENSE_PRIVATE_KEY;
+if (!rawPrivateKey && getArg('--key-file')) {
+  rawPrivateKey = fs.readFileSync(path.resolve(getArg('--key-file')), 'utf8');
 }
+const privateKey = formatPemKey(rawPrivateKey);
 
 const licenseId = `LIC-${slug.toUpperCase()}-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
 

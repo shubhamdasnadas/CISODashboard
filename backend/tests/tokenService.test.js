@@ -267,7 +267,7 @@ test('generateLicenseRequestCode creates decodable client request blob', async (
     query: async (sql) => {
       if (sql.includes('FROM organisations')) {
         return {
-          rows: [{ id: 5, org_name: 'Delta Corp', slug: 'delta-corp', end_date: '2026-10-01' }],
+          rows: [{ id: 5, org_name: 'Delta Corp', slug: 'delta-corp', end_date: '2026-10-01', license_id: 'LIC-DELTA-99' }],
         };
       }
       if (sql.includes('FROM org_tokens')) {
