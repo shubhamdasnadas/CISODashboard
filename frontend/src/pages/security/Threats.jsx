@@ -12,7 +12,7 @@ import {
   MultiViewChart, ChartViewDropdown, DaysFilter, DEFAULT_DAY_OPTIONS, useViewState,
   rangeComparison, withinRange,
   CategoryTimeSeriesChart, categoryTimeSeries,
-  KpiCard, parseRecordDate,
+  KpiCard, parseRecordDate, getMaxMs,
 } from './widgetViews.jsx';
 
 const CHART_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
@@ -329,7 +329,7 @@ export default function Threats() {
     const validDates = threats.map(dateOf).filter(Boolean);
     let ref = new Date();
     if (validDates.length > 0) {
-      const maxMs = Math.max(...validDates.map((d) => d.getTime()));
+      const maxMs = getMaxMs(validDates);
       if (validDates.every((d) => d.getTime() < ref.getTime() - numDays * 86400000)) {
         ref = new Date(maxMs);
         ref.setHours(23, 59, 59, 999);

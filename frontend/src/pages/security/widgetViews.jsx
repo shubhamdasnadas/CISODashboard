@@ -38,6 +38,37 @@ export function parseRecordDate(v) {
   return null;
 }
 
+export function getMaxMs(dates) {
+  if (!dates || dates.length === 0) return 0;
+  let max = -Infinity;
+  for (let i = 0; i < dates.length; i++) {
+    const d = dates[i];
+    if (!d) continue;
+    const ms = d instanceof Date ? d.getTime() : typeof d === 'number' ? d : new Date(d).getTime();
+    if (!isNaN(ms) && ms > max) max = ms;
+  }
+  return max === -Infinity ? 0 : max;
+}
+
+export function getMinMaxMs(dates) {
+  if (!dates || dates.length === 0) return { minMs: 0, maxMs: 0 };
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i < dates.length; i++) {
+    const d = dates[i];
+    if (!d) continue;
+    const ms = d instanceof Date ? d.getTime() : typeof d === 'number' ? d : new Date(d).getTime();
+    if (!isNaN(ms)) {
+      if (ms < min) min = ms;
+      if (ms > max) max = ms;
+    }
+  }
+  return {
+    minMs: min === Infinity ? 0 : min,
+    maxMs: max === -Infinity ? 0 : max,
+  };
+}
+
 export const tooltipStyle = {
   background: 'var(--card-bg)',
   border: '1px solid var(--card-border)',
@@ -133,7 +164,7 @@ export function categoryTimeSeries(events, { keyOf, dateOf, days = 30, refDate, 
     .map((e) => (dateOf ? parseRecordDate(dateOf(e)) : null))
     .filter(Boolean);
   if (dates.length > 0) {
-    const latest = new Date(Math.max(...dates.map((d) => d.getTime())));
+    const latest = new Date(getMaxMs(dates));
     const hasInWindow = dates.some((d) => d >= start && d <= ref);
     if (!hasInWindow) {
       ref = new Date(latest);
@@ -303,7 +334,7 @@ export function rangeComparison(rows, options = {}) {
       return dates.some((d) => keys.has(dayKey(d)));
     };
     if (!has(curStart)) {
-      ref = new Date(Math.max(...dates.map((d) => d.getTime())));
+      ref = new Date(getMaxMs(dates));
       curStart = new Date(ref);
       curStart.setDate(curStart.getDate() - numDays);
       prevStart = new Date(curStart);
@@ -376,8 +407,7 @@ export function withinRange(rows, dateOf, days = 30, refDate) {
     return rows.slice(0, count);
   }
 
-  const minMs = Math.min(...validDates.map((d) => d.getTime()));
-  const maxMs = Math.max(...validDates.map((d) => d.getTime()));
+  const { minMs, maxMs } = getMinMaxMs(validDates);
   const spanDays = (maxMs - minMs) / (1000 * 60 * 60 * 24);
 
   // If all records have virtually the same timestamp (span < 2 days) but dataset has multiple items,

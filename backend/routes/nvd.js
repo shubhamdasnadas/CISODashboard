@@ -13,10 +13,23 @@ function parseDate(v) {
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-// Loose YYYY-MM-DD validator — keeps arbitrary SQL text out of the query.
-function isValidDateString(v) {
-  if (typeof v !== 'string' || !v) return false;
-  return /^\d{4}-\d{2}-\d{2}$/.test(v) && !isNaN(new Date(v + 'T00:00:00Z').getTime());
+// Loose date string normalizer — handles YYYY-MM-DD, DD-MM-YYYY, MM/DD/YYYY, and ISO strings.
+function normalizeToYmd(v) {
+  if (!v || typeof v !== 'string') return null;
+  const s = v.trim();
+  if (!s || s === '-' || s.toLowerCase() === 'all' || s.toLowerCase() === 'undefined') return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const d = new Date(s + 'T00:00:00Z');
+    return isNaN(d.getTime()) ? null : s;
+  }
+  if (/^(\d{2})[-/](\d{2})[-/](\d{4})$/.test(s)) {
+    const m = s.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+    const ymd = `${m[3]}-${m[2]}-${m[1]}`;
+    const d = new Date(ymd + 'T00:00:00Z');
+    return isNaN(d.getTime()) ? null : ymd;
+  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
 
 // Extract first English / Spanish description from the descriptions array.
@@ -334,66 +347,90 @@ const handleListCves = async (req, res) => {
 
     const conditions = [];
     const params = [];
-    if (severity) {
-      params.push(severity);
-      conditions.push(`cvss_base_severity = $${params.length}`);
+    if (severity && severity.trim()) {
+      params.push(severity.trim().toUpperCase());
+      conditions.push(`UPPER(COALESCE(NULLIF(TRIM(cvss_base_severity), ''), CASE WHEN cvss_base_score >= 9.0 THEN 'CRITICAL' WHEN cvss_base_score >= 7.0 THEN 'HIGH' WHEN cvss_base_score >= 4.0 THEN 'MEDIUM' WHEN cvss_base_score > 0 THEN 'LOW' ELSE 'LOW' END)) = $${params.length}`);
     }
-    if (status) {
-      params.push(status);
-      conditions.push(`vuln_status = $${params.length}`);
+    if (status && status.trim()) {
+      params.push(status.trim());
+      conditions.push(`UPPER(COALESCE(NULLIF(TRIM(vuln_status), ''), 'ANALYZED')) = UPPER($${params.length})`);
     }
-    if (search) {
-      params.push(`%${search}%`);
-      conditions.push(`(description_en ILIKE $${params.length} OR cve_id ILIKE $${params.length})`);
+    if (search && search.trim()) {
+      params.push(`%${search.trim()}%`);
+      conditions.push(`(
+        cve_id ILIKE $${params.length}
+        OR description_en ILIKE $${params.length}
+        OR description_es ILIKE $${params.length}
+        OR weaknesses ILIKE $${params.length}
+        OR source_identifier ILIKE $${params.length}
+        OR vuln_status ILIKE $${params.length}
+        OR cvss_base_severity ILIKE $${params.length}
+        OR cvss_base_score::text ILIKE $${params.length}
+      )`);
     }
     // Per-column search filters (plain text search across the whole database, not just current page)
-    if (cve) {
-      params.push(`%${cve}%`);
+    if (cve && cve.trim()) {
+      params.push(`%${cve.trim()}%`);
       conditions.push(`cve_id ILIKE $${params.length}`);
     }
-    if (published) {
-      const pub = published.trim().toLowerCase();
-      if (pub) {
-        params.push(`%${pub}%`);
-        conditions.push(`to_char(published, 'YYYY-MM-DD') ILIKE $${params.length} OR to_char(published, 'Mon DD, YYYY') ILIKE $${params.length}`);
+    if (published && published.trim()) {
+      params.push(`%${published.trim()}%`);
+      conditions.push(`(
+        to_char(COALESCE(published, last_modified, synced_at), 'YYYY-MM-DD') ILIKE $${params.length}
+        OR to_char(COALESCE(published, last_modified, synced_at), 'Mon DD, YYYY') ILIKE $${params.length}
+        OR to_char(COALESCE(published, last_modified, synced_at), 'Month DD, YYYY') ILIKE $${params.length}
+        OR to_char(COALESCE(published, last_modified, synced_at), 'DD-MM-YYYY') ILIKE $${params.length}
+        OR to_char(COALESCE(published, last_modified, synced_at), 'MM/DD/YYYY') ILIKE $${params.length}
+      )`);
+    }
+    if (severityLike && severityLike.trim()) {
+      params.push(`%${severityLike.trim().toUpperCase()}%`);
+      conditions.push(`(cvss_base_severity ILIKE $${params.length} OR UPPER(COALESCE(NULLIF(TRIM(cvss_base_severity), ''), CASE WHEN cvss_base_score >= 9.0 THEN 'CRITICAL' WHEN cvss_base_score >= 7.0 THEN 'HIGH' WHEN cvss_base_score >= 4.0 THEN 'MEDIUM' WHEN cvss_base_score > 0 THEN 'LOW' ELSE 'LOW' END)) ILIKE $${params.length})`);
+    }
+    if (score && score.trim()) {
+      const s = score.trim();
+      const opMatch = s.match(/^(>=|<=|>|<|=)\s*([0-9.]+)/);
+      if (opMatch) {
+        const op = opMatch[1];
+        const val = parseFloat(opMatch[2]);
+        if (!isNaN(val)) {
+          params.push(val);
+          conditions.push(`cvss_base_score ${op === '=' ? '=' : op} $${params.length}`);
+        }
+      } else {
+        params.push(`%${s}%`);
+        const val = parseFloat(s);
+        if (!isNaN(val)) {
+          params.push(val);
+          conditions.push(`(cvss_base_score::text ILIKE $${params.length - 1} OR cvss_base_score = $${params.length})`);
+        } else {
+          conditions.push(`cvss_base_score::text ILIKE $${params.length}`);
+        }
       }
     }
-    if (severityLike) {
-      params.push(`%${severityLike}%`);
-      conditions.push(`cvss_base_severity ILIKE $${params.length}`);
+    if (weakness && weakness.trim()) {
+      params.push(`%${weakness.trim()}%`);
+      conditions.push(`(weaknesses ILIKE $${params.length} OR COALESCE(weaknesses, 'NVD-CWE-Other') ILIKE $${params.length} OR source_identifier ILIKE $${params.length})`);
     }
-    if (score) {
-      const scoreNum = parseFloat(score);
-      if (!isNaN(scoreNum)) {
-        params.push(scoreNum);
-        conditions.push(`cvss_base_score = $${params.length}`);
-      }
+    if (statusLike && statusLike.trim()) {
+      params.push(`%${statusLike.trim()}%`);
+      conditions.push(`(vuln_status ILIKE $${params.length} OR (vuln_status IS NULL AND 'Analyzed' ILIKE $${params.length}))`);
     }
-    if (weakness) {
-      params.push(`%${weakness}%`);
-      conditions.push(`weaknesses ILIKE $${params.length}`);
+    if (description && description.trim()) {
+      params.push(`%${description.trim()}%`);
+      conditions.push(`(description_en ILIKE $${params.length} OR description_es ILIKE $${params.length})`);
     }
-    if (statusLike) {
-      params.push(`%${statusLike}%`);
-      conditions.push(`vuln_status ILIKE $${params.length}`);
+    // Date-range filter on `published` (or last_modified/synced_at fallback)
+    // Accepts YYYY-MM-DD or DD-MM-YYYY; `from` is inclusive, `to` is inclusive to end-of-day.
+    const normFrom = normalizeToYmd(from);
+    const normTo = normalizeToYmd(to);
+    if (normFrom) {
+      params.push(normFrom);
+      conditions.push(`COALESCE(published, last_modified, synced_at) >= $${params.length}::date`);
     }
-    if (description) {
-      params.push(`%${description}%`);
-      conditions.push(`description_en ILIKE $${params.length}`);
-    }
-    // Date-range filter on `published` (used by the Analytics day preset).
-    // Accepts YYYY-MM-DD; `from` is inclusive, `to` is inclusive to end-of-day.
-    if (from) {
-      if (isValidDateString(from)) {
-        params.push(from);
-        conditions.push(`published >= $${params.length}::date`);
-      }
-    }
-    if (to) {
-      if (isValidDateString(to)) {
-        params.push(to);
-        conditions.push(`published < ($${params.length}::date + INTERVAL '1 day')`);
-      }
+    if (normTo) {
+      params.push(normTo);
+      conditions.push(`COALESCE(published, last_modified, synced_at) < ($${params.length}::date + INTERVAL '1 day')`);
     }
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -446,24 +483,49 @@ router.get('/db/:cve_id', async (req, res) => {
 });
 
 // GET /api/nvd/stats — summary counts for dashboard header.
-// Accepts optional from/to (YYYY-MM-DD) to scope counts to a published-date window
-// (used by the Analytics NVD day filter). Without them, returns all-time totals.
+// Accepts optional from/to (YYYY-MM-DD or DD-MM-YYYY) to scope counts to a date window.
+// Without them, returns all-time totals.
 router.get('/stats', async (req, res) => {
   try {
     const { from, to } = req.query;
     const rangeParams = [];
     let rangeCond = '';
-    if (from && isValidDateString(from)) { rangeParams.push(from); rangeCond += ` AND published >= $${rangeParams.length}::date`; }
-    if (to && isValidDateString(to)) { rangeParams.push(to); rangeCond += ` AND published < ($${rangeParams.length}::date + INTERVAL '1 day')`; }
+    const normFrom = normalizeToYmd(from);
+    const normTo = normalizeToYmd(to);
+    if (normFrom) {
+      rangeParams.push(normFrom);
+      rangeCond += ` AND COALESCE(published, last_modified, synced_at) >= $${rangeParams.length}::date`;
+    }
+    if (normTo) {
+      rangeParams.push(normTo);
+      rangeCond += ` AND COALESCE(published, last_modified, synced_at) < ($${rangeParams.length}::date + INTERVAL '1 day')`;
+    }
 
     const sev = await req.orgPool.query(
-      `SELECT cvss_base_severity AS severity, COUNT(*)::int AS count
-         FROM nvd WHERE true ${rangeCond} GROUP BY cvss_base_severity`,
+      `SELECT
+         UPPER(COALESCE(
+           NULLIF(TRIM(cvss_base_severity), ''),
+           CASE
+             WHEN cvss_base_score >= 9.0 THEN 'CRITICAL'
+             WHEN cvss_base_score >= 7.0 THEN 'HIGH'
+             WHEN cvss_base_score >= 4.0 THEN 'MEDIUM'
+             WHEN cvss_base_score > 0 THEN 'LOW'
+             ELSE 'LOW'
+           END
+         )) AS severity,
+         COUNT(*)::int AS count
+       FROM nvd
+       WHERE true ${rangeCond}
+       GROUP BY 1`,
       rangeParams
     );
     const statusRes = await req.orgPool.query(
-      `SELECT vuln_status AS status, COUNT(*)::int AS count
-         FROM nvd WHERE true ${rangeCond} GROUP BY vuln_status`,
+      `SELECT
+         COALESCE(NULLIF(TRIM(vuln_status), ''), 'Analyzed') AS status,
+         COUNT(*)::int AS count
+       FROM nvd
+       WHERE true ${rangeCond}
+       GROUP BY 1`,
       rangeParams
     );
     const totalRes = await req.orgPool.query(
@@ -490,7 +552,7 @@ router.get('/stats', async (req, res) => {
 router.get('/analytics-rows', async (req, res) => {
   try {
     const result = await req.orgPool.query(
-      `SELECT cve_id, published, last_modified, synced_at,
+      `SELECT cve_id, source_identifier, published, last_modified, synced_at,
               cvss_base_severity, cvss_base_score, vuln_status, weaknesses
          FROM nvd
         ORDER BY published DESC NULLS LAST`
@@ -513,5 +575,6 @@ module.exports.extractDescriptions = extractDescriptions;
 module.exports.extractCvss = extractCvss;
 module.exports.extractWeakness = extractWeakness;
 module.exports.parseDate = parseDate;
+module.exports.normalizeToYmd = normalizeToYmd;
 module.exports.NVD_URL = NVD_URL;
 module.exports.sleep = sleep;

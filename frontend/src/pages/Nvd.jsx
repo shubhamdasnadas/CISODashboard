@@ -7,11 +7,23 @@ import {
   useViewState,
   DaysFilter,
   categoryTimeSeries,
+  rangeComparison,
   withinRange,
-  tooltipStyle,
   KpiCard,
-  DeltaBadge,
 } from './security/widgetViews.jsx';
+
+function useDebounce(value, delay = 250) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+  return debouncedValue;
+}
 
 const SEVERITY_COLORS = {
   CRITICAL: '#a855f7',
@@ -177,15 +189,18 @@ export default function Nvd() {
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState(null);
 
+  // ── Page-Level Common Days & Date Filters ─────────────────────────────────
+  const [commonDays, setCommonDays] = useState('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+
   const [stats, setStats] = useState(null);
   const [prevStats, setPrevStats] = useState(null);
   const [vulns, setVulns] = useState([]);
   const [allVulns, setAllVulns] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [limit] = useState(50);
+  const [limit, setLimit] = useState(20);
   const [loadingList, setLoadingList] = useState(true);
 
   // Table filters & sorting
@@ -203,6 +218,18 @@ export default function Nvd() {
   const [colWeakness, setColWeakness] = useState('');
   const [colStatus, setColStatus] = useState('');
   const [colDescription, setColDescription] = useState('');
+
+  // Debounced search queries to avoid excessive DB calls and network race conditions
+  const debouncedSearch = useDebounce(search, 250);
+  const debouncedColCve = useDebounce(colCve, 250);
+  const debouncedColPublished = useDebounce(colPublished, 250);
+  const debouncedColSeverity = useDebounce(colSeverity, 250);
+  const debouncedColScore = useDebounce(colScore, 250);
+  const debouncedColWeakness = useDebounce(colWeakness, 250);
+  const debouncedColStatus = useDebounce(colStatus, 250);
+  const debouncedColDescription = useDebounce(colDescription, 250);
+
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   // Modal inspection detail state
   const [detail, setDetail] = useState(null);
@@ -276,26 +303,101 @@ export default function Nvd() {
     } catch { /* ignore */ }
   }, [dateFrom, dateTo]);
 
+  // Use allVulns or fallback dataset for rich visuals
+  const baseDataset = useMemo(() => {
+    if (allVulns.length > 0) return allVulns;
+    if (vulns.length > 0) return vulns;
+    return [];
+  }, [allVulns, vulns]);
+
+  // Compute reference anchor date: anchors to now if recent data exists, otherwise anchors to latest date in dataset
+  const refDate = useMemo(() => {
+    const now = new Date();
+    if (baseDataset.length === 0) return now;
+    let latestMs = -Infinity;
+    for (let i = 0; i < baseDataset.length; i++) {
+      const d = getCveDate(baseDataset[i]);
+      if (d) {
+        const ms = d.getTime();
+        if (ms > latestMs) latestMs = ms;
+      }
+    }
+    if (latestMs === -Infinity) return now;
+    if (Math.abs(now.getTime() - latestMs) < 90 * 86400000 && latestMs <= now.getTime()) {
+      return now;
+    }
+    const anchor = new Date(latestMs);
+    anchor.setHours(23, 59, 59, 999);
+    return anchor;
+  }, [baseDataset]);
+
+  // Page-level baseline dataset filtered by page commonDays or dateFrom/dateTo
+  const pageDataset = useMemo(() => {
+    if (dateFrom || dateTo) {
+      const s = dateFrom ? new Date(dateFrom + 'T00:00:00') : new Date(0);
+      const e = dateTo ? new Date(dateTo + 'T23:59:59.999') : new Date();
+      return baseDataset.filter((c) => {
+        const d = getCveDate(c);
+        if (!d) return false;
+        return d >= s && d <= e;
+      });
+    }
+    if (commonDays !== 'all') {
+      return withinRange(baseDataset, getCveDate, commonDays, refDate);
+    }
+    return baseDataset;
+  }, [baseDataset, dateFrom, dateTo, commonDays, refDate]);
+
   const curKpis = useMemo(() => {
-    if (!stats) return { total: 0, critical: 0, high: 0, medium: 0, low: 0, analyzed: 0 };
-    const getSev = (s) => stats.severityCounts?.find((x) => x.severity === s)?.count || 0;
-    const analyzed = stats.statusCounts?.find((x) => x.status === 'Analyzed')?.count ?? (stats.total ? Math.round(stats.total * 0.85) : 0);
-    return {
-      total: stats.total || 0,
-      critical: getSev('CRITICAL'),
-      high: getSev('HIGH'),
-      medium: getSev('MEDIUM'),
-      low: getSev('LOW'),
-      analyzed,
-    };
-  }, [stats]);
+    if (stats && stats.severityCounts && stats.severityCounts.length > 0) {
+      const getSev = (s) => {
+        const target = s.toUpperCase();
+        return stats.severityCounts
+          ?.filter((x) => String(x.severity || '').toUpperCase() === target)
+          ?.reduce((acc, curr) => acc + Number(curr.count || 0), 0) || 0;
+      };
+      const total = Number(stats.total || 0);
+      const analyzed = stats.statusCounts?.find((x) => String(x.status || '').toLowerCase() === 'analyzed')?.count
+        ?? (stats.statusCounts?.reduce((acc, curr) => String(curr.status || '').toLowerCase() === 'analyzed' ? acc + Number(curr.count) : acc, 0) || (total ? Math.round(total * 0.85) : 0));
+      return {
+        total,
+        critical: getSev('CRITICAL'),
+        high: getSev('HIGH'),
+        medium: getSev('MEDIUM'),
+        low: getSev('LOW'),
+        analyzed,
+      };
+    }
+    if (pageDataset.length > 0) {
+      let critical = 0, high = 0, medium = 0, low = 0, analyzed = 0;
+      pageDataset.forEach((c) => {
+        const sev = String(c.cvss_base_severity || '').toUpperCase();
+        const score = parseFloat(c.cvss_base_score);
+        if (sev === 'CRITICAL' || score >= 9.0) critical++;
+        else if (sev === 'HIGH' || score >= 7.0) high++;
+        else if (sev === 'MEDIUM' || score >= 4.0) medium++;
+        else low++;
+
+        if (String(c.vuln_status || '').toLowerCase() === 'analyzed') analyzed++;
+      });
+      return { total: pageDataset.length, critical, high, medium, low, analyzed };
+    }
+    return { total: 0, critical: 0, high: 0, medium: 0, low: 0, analyzed: 0 };
+  }, [stats, pageDataset]);
 
   const prevKpis = useMemo(() => {
     if (!prevStats || (!dateFrom && !dateTo)) return null;
-    const getSev = (s) => prevStats.severityCounts?.find((x) => x.severity === s)?.count || 0;
-    const analyzed = prevStats.statusCounts?.find((x) => x.status === 'Analyzed')?.count ?? (prevStats.total ? Math.round(prevStats.total * 0.85) : 0);
+    const getSev = (s) => {
+      const target = s.toUpperCase();
+      return prevStats.severityCounts
+        ?.filter((x) => String(x.severity || '').toUpperCase() === target)
+        ?.reduce((acc, curr) => acc + Number(curr.count || 0), 0) || 0;
+    };
+    const total = Number(prevStats.total || 0);
+    const analyzed = prevStats.statusCounts?.find((x) => String(x.status || '').toLowerCase() === 'analyzed')?.count
+      ?? (prevStats.statusCounts?.reduce((acc, curr) => String(curr.status || '').toLowerCase() === 'analyzed' ? acc + Number(curr.count) : acc, 0) || (total ? Math.round(total * 0.85) : 0));
     return {
-      total: prevStats.total || 0,
+      total,
       critical: getSev('CRITICAL'),
       high: getSev('HIGH'),
       medium: getSev('MEDIUM'),
@@ -305,33 +407,98 @@ export default function Nvd() {
   }, [prevStats, dateFrom, dateTo]);
 
   const loadList = useCallback(async () => {
-    setLoadingList(true);
-    try {
-      const params = new URLSearchParams({ page, limit, sort });
-      if (severity) params.set('severity', severity);
-      if (status) params.set('status', status);
-      if (search) params.set('search', search);
-      // Per-column filters
-      if (colCve) params.set('cve', colCve);
-      if (colPublished) params.set('published', colPublished);
-      if (colSeverity) params.set('severityLike', colSeverity);
-      if (colScore) params.set('score', colScore);
-      if (colWeakness) params.set('weakness', colWeakness);
-      if (colStatus) params.set('statusLike', colStatus);
-      if (colDescription) params.set('description', colDescription);
-      const r = await api.get(`/nvd/db?${params.toString()}`);
-      const items = Array.isArray(r.data?.vulnerabilities)
-        ? r.data.vulnerabilities
-        : Array.isArray(r.data?.data)
-          ? r.data.data
-          : [];
-      setVulns(items);
-      setTotal(r.data?.total || items.length);
-    } catch { /* ignore */ }
-    finally { setLoadingList(false); }
-  }, [page, limit, sort, severity, status, search, colCve, colPublished, colSeverity, colScore, colWeakness, colStatus, colDescription]);
+    setRefreshTrigger((c) => c + 1);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const fetchList = async () => {
+      setLoadingList(true);
+      try {
+        const params = new URLSearchParams({ page, limit, sort });
+        if (severity) params.set('severity', severity);
+        if (status) params.set('status', status);
+        if (debouncedSearch) params.set('search', debouncedSearch);
+        // Per-column filters
+        if (debouncedColCve) params.set('cve', debouncedColCve);
+        if (debouncedColPublished) params.set('published', debouncedColPublished);
+        if (debouncedColSeverity) params.set('severityLike', debouncedColSeverity);
+        if (debouncedColScore) params.set('score', debouncedColScore);
+        if (debouncedColWeakness) params.set('weakness', debouncedColWeakness);
+        if (debouncedColStatus) params.set('statusLike', debouncedColStatus);
+        if (debouncedColDescription) params.set('description', debouncedColDescription);
+
+        // Apply effective date filter (tableDays overrides, otherwise fallback to page dateFrom/dateTo)
+        let effFrom = dateFrom;
+        let effTo = dateTo;
+        if (tableDays !== 'all') {
+          const numDays = parseInt(tableDays, 10);
+          if (!isNaN(numDays) && numDays > 0) {
+            const toD = new Date();
+            const fromD = new Date();
+            fromD.setDate(fromD.getDate() - numDays);
+            effFrom = fromD.toISOString().slice(0, 10);
+            effTo = toD.toISOString().slice(0, 10);
+          }
+        }
+        if (effFrom) params.set('from', effFrom);
+        if (effTo) params.set('to', effTo);
+
+        const r = await api.get(`/nvd/db?${params.toString()}`);
+        if (!active) return;
+        const items = Array.isArray(r.data?.vulnerabilities)
+          ? r.data.vulnerabilities
+          : Array.isArray(r.data?.data)
+            ? r.data.data
+            : [];
+        setVulns(items);
+        setTotal(r.data?.total || items.length);
+      } catch { /* ignore */ }
+      finally {
+        if (active) setLoadingList(false);
+      }
+    };
+
+    fetchList();
+    return () => {
+      active = false;
+    };
+  }, [
+    page,
+    limit,
+    sort,
+    severity,
+    status,
+    debouncedSearch,
+    debouncedColCve,
+    debouncedColPublished,
+    debouncedColSeverity,
+    debouncedColScore,
+    debouncedColWeakness,
+    debouncedColStatus,
+    debouncedColDescription,
+    dateFrom,
+    dateTo,
+    tableDays,
+    refreshTrigger,
+  ]);
 
   const loadAllForCharts = useCallback(async () => {
+    try {
+      const r = await api.get('/nvd/analytics-rows');
+      const items = Array.isArray(r.data?.rows)
+        ? r.data.rows
+        : Array.isArray(r.data?.vulnerabilities)
+          ? r.data.vulnerabilities
+          : Array.isArray(r.data?.data)
+            ? r.data.data
+            : [];
+      if (items.length > 0) {
+        setAllVulns(items);
+        return;
+      }
+    } catch { /* fallback to db */ }
+
     try {
       const r = await api.get('/nvd/db?limit=500&sort=published');
       const items = Array.isArray(r.data?.vulnerabilities)
@@ -352,7 +519,6 @@ export default function Nvd() {
 
   useEffect(() => { loadCreds(); }, [loadCreds]);
   useEffect(() => { loadStats(); }, [loadStats]);
-  useEffect(() => { loadList(); }, [loadList]);
   useEffect(() => { loadAllForCharts(); }, [loadAllForCharts]);
   useEffect(() => { loadCpeStats(); }, [loadCpeStats]);
 
@@ -502,36 +668,15 @@ export default function Nvd() {
 
   const closeDetail = () => setDetail(null);
 
-  // Use allVulns or fallback dataset for rich visuals
-  const baseDataset = useMemo(() => {
-    if (allVulns.length > 0) return allVulns;
-    if (vulns.length > 0) return vulns;
-    return [];
-  }, [allVulns, vulns]);
-
-  // Compute reference anchor date: anchors to now if recent data exists, otherwise anchors to latest date in dataset
-  const refDate = useMemo(() => {
-    const now = new Date();
-    if (baseDataset.length === 0) return now;
-    const dates = baseDataset.map(getCveDate).filter(Boolean);
-    if (dates.length === 0) return now;
-    const latestMs = Math.max(...dates.map((d) => d.getTime()));
-    if (Math.abs(now.getTime() - latestMs) < 90 * 86400000 && latestMs <= now.getTime()) {
-      return now;
-    }
-    const anchor = new Date(latestMs);
-    anchor.setHours(23, 59, 59, 999);
-    return anchor;
-  }, [baseDataset]);
-
   // 1. Severity Distribution
   const filteredSeveritySet = useMemo(() => {
-    return withinRange(baseDataset, getCveDate, severityDays, refDate);
-  }, [baseDataset, severityDays, refDate]);
+    if (severityDays === 'all') return pageDataset;
+    return withinRange(pageDataset.length > 0 ? pageDataset : baseDataset, getCveDate, severityDays, refDate);
+  }, [pageDataset, baseDataset, severityDays, refDate]);
 
   const severityChartData = useMemo(() => {
     const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
-    const dataset = filteredSeveritySet.length > 0 ? filteredSeveritySet : (severityDays === 'all' ? baseDataset : []);
+    const dataset = filteredSeveritySet.length > 0 ? filteredSeveritySet : baseDataset;
     dataset.forEach((c) => {
       const sev = String(c.cvss_base_severity || c.severity || '').toUpperCase();
       if (counts[sev] !== undefined) counts[sev] = counts[sev] + 1;
@@ -545,7 +690,16 @@ export default function Nvd() {
       value,
       fill: SEVERITY_COLORS[name] || '#64748b',
     }));
-  }, [filteredSeveritySet, severityDays, baseDataset]);
+  }, [filteredSeveritySet, baseDataset]);
+
+  const severityComparison = useMemo(() => {
+    return rangeComparison(pageDataset.length > 0 ? pageDataset : baseDataset, {
+      keyOf: (c) => String(c.cvss_base_severity || (c.cvss_base_score >= 9 ? 'CRITICAL' : c.cvss_base_score >= 7 ? 'HIGH' : c.cvss_base_score >= 4 ? 'MEDIUM' : 'LOW')).toUpperCase(),
+      dateOf: getCveDate,
+      days: severityDays,
+      refDate,
+    });
+  }, [pageDataset, baseDataset, severityDays, refDate]);
 
   const severityTimeSeries = useMemo(() => {
     const dataset = filteredSeveritySet.length > 0 ? filteredSeveritySet : baseDataset;
@@ -559,12 +713,13 @@ export default function Nvd() {
 
   // 2. Publication & Analysis Status
   const filteredStatusSet = useMemo(() => {
-    return withinRange(baseDataset, getCveDate, statusDays, refDate);
-  }, [baseDataset, statusDays, refDate]);
+    if (statusDays === 'all') return pageDataset;
+    return withinRange(pageDataset.length > 0 ? pageDataset : baseDataset, getCveDate, statusDays, refDate);
+  }, [pageDataset, baseDataset, statusDays, refDate]);
 
   const statusChartData = useMemo(() => {
     const counts = {};
-    const dataset = filteredStatusSet.length > 0 ? filteredStatusSet : (statusDays === 'all' ? baseDataset : []);
+    const dataset = filteredStatusSet.length > 0 ? filteredStatusSet : baseDataset;
     dataset.forEach((c) => {
       const st = c.vuln_status || 'Analyzed';
       counts[st] = (counts[st] || 0) + 1;
@@ -575,7 +730,16 @@ export default function Nvd() {
       fill: STATUS_COLORS[name] || '#64748b',
     })).sort((a, b) => b.value - a.value);
     return list.length > 0 ? list : [{ name: 'Analyzed', value: 0, fill: STATUS_COLORS['Analyzed'] }];
-  }, [filteredStatusSet, statusDays, baseDataset]);
+  }, [filteredStatusSet, baseDataset]);
+
+  const statusComparison = useMemo(() => {
+    return rangeComparison(pageDataset.length > 0 ? pageDataset : baseDataset, {
+      keyOf: (c) => c.vuln_status || 'Analyzed',
+      dateOf: getCveDate,
+      days: statusDays,
+      refDate,
+    });
+  }, [pageDataset, baseDataset, statusDays, refDate]);
 
   const statusTimeSeries = useMemo(() => {
     const dataset = filteredStatusSet.length > 0 ? filteredStatusSet : baseDataset;
@@ -589,8 +753,9 @@ export default function Nvd() {
 
   // 3. CVSS Impact Score Ranges
   const filteredScoreSet = useMemo(() => {
-    return withinRange(baseDataset, getCveDate, scoreDays, refDate);
-  }, [baseDataset, scoreDays, refDate]);
+    if (scoreDays === 'all') return pageDataset;
+    return withinRange(pageDataset.length > 0 ? pageDataset : baseDataset, getCveDate, scoreDays, refDate);
+  }, [pageDataset, baseDataset, scoreDays, refDate]);
 
   const scoreChartData = useMemo(() => {
     const counts = {
@@ -600,7 +765,7 @@ export default function Nvd() {
       'Low (0.1 - 3.9)': 0,
       'Unscored / Pending': 0,
     };
-    const dataset = filteredScoreSet.length > 0 ? filteredScoreSet : (scoreDays === 'all' ? baseDataset : []);
+    const dataset = filteredScoreSet.length > 0 ? filteredScoreSet : baseDataset;
     dataset.forEach((c) => {
       const bucket = getCvssScoreCategory(c.cvss_base_score, c.cvss_base_severity);
       counts[bucket] = (counts[bucket] || 0) + 1;
@@ -610,7 +775,16 @@ export default function Nvd() {
       value,
       fill: SEVERITY_COLORS[name] || '#64748b',
     }));
-  }, [filteredScoreSet, scoreDays, baseDataset]);
+  }, [filteredScoreSet, baseDataset]);
+
+  const scoreComparison = useMemo(() => {
+    return rangeComparison(pageDataset.length > 0 ? pageDataset : baseDataset, {
+      keyOf: (c) => getCvssScoreCategory(c.cvss_base_score, c.cvss_base_severity),
+      dateOf: getCveDate,
+      days: scoreDays,
+      refDate,
+    });
+  }, [pageDataset, baseDataset, scoreDays, refDate]);
 
   const scoreTimeSeries = useMemo(() => {
     const dataset = filteredScoreSet.length > 0 ? filteredScoreSet : baseDataset;
@@ -624,12 +798,13 @@ export default function Nvd() {
 
   // 4. Common Weakness Types (Top CWEs)
   const filteredCweSet = useMemo(() => {
-    return withinRange(baseDataset, getCveDate, cweDays, refDate);
-  }, [baseDataset, cweDays, refDate]);
+    if (cweDays === 'all') return pageDataset;
+    return withinRange(pageDataset.length > 0 ? pageDataset : baseDataset, getCveDate, cweDays, refDate);
+  }, [pageDataset, baseDataset, cweDays, refDate]);
 
   const cweChartData = useMemo(() => {
     const counts = {};
-    const dataset = filteredCweSet.length > 0 ? filteredCweSet : (cweDays === 'all' ? baseDataset : []);
+    const dataset = filteredCweSet.length > 0 ? filteredCweSet : baseDataset;
     dataset.forEach((c) => {
       const cwe = extractCwe(c.weaknesses);
       counts[cwe] = (counts[cwe] || 0) + 1;
@@ -640,13 +815,22 @@ export default function Nvd() {
     const data = top.map(([name, value], i) => ({
       name,
       value,
-      fill: ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4'][i % 6],
+      fill: ['#a855f7', '#ef4444', '#f59e0b', '#3b82f6', '#10b981', '#06b6d4'][i % 6],
     }));
     if (otherCount > 0) {
       data.push({ name: 'Other CWEs', value: otherCount, fill: '#64748b' });
     }
-    return data.length > 0 ? data : [{ name: 'No Weaknesses', value: 0, fill: '#64748b' }];
-  }, [filteredCweSet, cweDays, baseDataset]);
+    return data.length > 0 ? data : [{ name: 'NVD-CWE-Other', value: 0, fill: '#64748b' }];
+  }, [filteredCweSet, baseDataset]);
+
+  const cweComparison = useMemo(() => {
+    return rangeComparison(pageDataset.length > 0 ? pageDataset : baseDataset, {
+      keyOf: (c) => extractCwe(c.weaknesses),
+      dateOf: getCveDate,
+      days: cweDays,
+      refDate,
+    });
+  }, [pageDataset, baseDataset, cweDays, refDate]);
 
   const cweTimeSeries = useMemo(() => {
     const dataset = filteredCweSet.length > 0 ? filteredCweSet : baseDataset;
@@ -661,12 +845,13 @@ export default function Nvd() {
 
   // 5. Top CNA Assigning Authorities / Sources
   const filteredSourceSet = useMemo(() => {
-    return withinRange(baseDataset, getCveDate, sourceDays, refDate);
-  }, [baseDataset, sourceDays, refDate]);
+    if (sourceDays === 'all') return pageDataset;
+    return withinRange(pageDataset.length > 0 ? pageDataset : baseDataset, getCveDate, sourceDays, refDate);
+  }, [pageDataset, baseDataset, sourceDays, refDate]);
 
   const sourceChartData = useMemo(() => {
     const counts = {};
-    const dataset = filteredSourceSet.length > 0 ? filteredSourceSet : (sourceDays === 'all' ? baseDataset : []);
+    const dataset = filteredSourceSet.length > 0 ? filteredSourceSet : baseDataset;
     dataset.forEach((c) => {
       const src = normalizeCnaSource(c.source_identifier);
       counts[src] = (counts[src] || 0) + 1;
@@ -683,7 +868,16 @@ export default function Nvd() {
       data.push({ name: 'Other CNAs', value: rest, fill: '#64748b' });
     }
     return data.length > 0 ? data : [{ name: 'NVD / NIST', value: 0, fill: '#64748b' }];
-  }, [filteredSourceSet, sourceDays, baseDataset]);
+  }, [filteredSourceSet, baseDataset]);
+
+  const sourceComparison = useMemo(() => {
+    return rangeComparison(pageDataset.length > 0 ? pageDataset : baseDataset, {
+      keyOf: (c) => normalizeCnaSource(c.source_identifier),
+      dateOf: getCveDate,
+      days: sourceDays,
+      refDate,
+    });
+  }, [pageDataset, baseDataset, sourceDays, refDate]);
 
   const sourceTimeSeries = useMemo(() => {
     const dataset = filteredSourceSet.length > 0 ? filteredSourceSet : baseDataset;
@@ -698,8 +892,9 @@ export default function Nvd() {
 
   // 6. Vulnerability Aging & Recency Index
   const filteredAgingSet = useMemo(() => {
-    return withinRange(baseDataset, getCveDate, agingDays, refDate);
-  }, [baseDataset, agingDays, refDate]);
+    if (agingDays === 'all') return pageDataset;
+    return withinRange(pageDataset.length > 0 ? pageDataset : baseDataset, getCveDate, agingDays, refDate);
+  }, [pageDataset, baseDataset, agingDays, refDate]);
 
   const agingChartData = useMemo(() => {
     const counts = {
@@ -709,7 +904,7 @@ export default function Nvd() {
       '91-180 Days': 0,
       '180+ Days': 0,
     };
-    const dataset = filteredAgingSet.length > 0 ? filteredAgingSet : (agingDays === 'all' ? baseDataset : []);
+    const dataset = filteredAgingSet.length > 0 ? filteredAgingSet : baseDataset;
     dataset.forEach((c) => {
       const bucket = getCveAgeBucket(c.published);
       counts[bucket] = (counts[bucket] || 0) + 1;
@@ -719,7 +914,16 @@ export default function Nvd() {
       value,
       fill: AGING_COLORS[name] || '#64748b',
     }));
-  }, [filteredAgingSet, agingDays, baseDataset]);
+  }, [filteredAgingSet, baseDataset]);
+
+  const agingComparison = useMemo(() => {
+    return rangeComparison(pageDataset.length > 0 ? pageDataset : baseDataset, {
+      keyOf: (c) => getCveAgeBucket(c.published),
+      dateOf: getCveDate,
+      days: agingDays,
+      refDate,
+    });
+  }, [pageDataset, baseDataset, agingDays, refDate]);
 
   const agingTimeSeries = useMemo(() => {
     const dataset = filteredAgingSet.length > 0 ? filteredAgingSet : baseDataset;
@@ -731,13 +935,23 @@ export default function Nvd() {
     });
   }, [filteredAgingSet, baseDataset, agingDays, refDate]);
 
-  // Filtered table dataset responding to table days filter
-  const filteredTableVulns = useMemo(() => {
-    if (tableDays === 'all') return vulns;
-    return withinRange(vulns, getCveDate, tableDays, refDate);
-  }, [vulns, tableDays, refDate]);
+  const totalPages = Math.max(1, Math.ceil(total / limit));
 
-  const totalPages = Math.ceil(total / limit);
+  const getPageNumbers = () => {
+    const pages = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      if (page <= 4) {
+        pages.push(1, 2, 3, 4, 5, '...', totalPages);
+      } else if (page >= totalPages - 3) {
+        pages.push(1, '...', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages);
+      } else {
+        pages.push(1, '...', page - 1, page, page + 1, '...', totalPages);
+      }
+    }
+    return pages;
+  };
 
   return (
     <div className="p-4 sm:p-6 space-y-6">
@@ -781,35 +995,35 @@ export default function Nvd() {
         <div className="flex flex-wrap items-center gap-2.5 pt-1">
           <button
             onClick={saveCreds}
-            className="px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-gray-600 hover:bg-gray-700 transition-colors"
+            className="px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-gray-600 hover:bg-gray-700 transition-colors cursor-pointer"
           >
             Save API Key
           </button>
           <button
             onClick={runSync}
             disabled={syncing || (!creds.apiKey && !hasCreds)}
-            className="px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
           >
             {syncing ? 'Syncing…' : 'Sync (0–2000)'}
           </button>
           <button
             onClick={runCpeSync}
             disabled={cpeSyncing}
-            className="px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
           >
             {cpeSyncing ? 'CPE Sync starting…' : 'Sync CPE Match'}
           </button>
           <button
             onClick={runUpdateCve}
             disabled={updatingCve || !creds.apiKey}
-            className="px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
           >
             {updatingCve ? 'Updating CVEs…' : 'Update CVE (24h)'}
           </button>
           <button
             onClick={runUpdateCpe}
             disabled={updatingCpe || !creds.apiKey}
-            className="px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
           >
             {updatingCpe ? 'Updating CPEs…' : 'Update CPE (24h)'}
           </button>
@@ -818,6 +1032,12 @@ export default function Nvd() {
         {syncMsg && (
           <div className={`text-xs px-3 py-2 rounded-lg ${syncMsg.type === 'success' ? 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300' : 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300'}`}>
             {syncMsg.text}
+          </div>
+        )}
+
+        {cpeMsg && (
+          <div className={`text-xs px-3 py-2 rounded-lg ${cpeMsg.type === 'success' ? 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300' : 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300'}`}>
+            {cpeMsg.text}
           </div>
         )}
 
@@ -845,7 +1065,7 @@ export default function Nvd() {
         )}
       </div>
 
-      {/* Header + Global Date Filter for KPIs */}
+      {/* ── Header + Whole Page Common Days & Date Filter ─────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -864,64 +1084,70 @@ export default function Nvd() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-lg p-0.5">
-            {[
-              { label: '7D', days: 7 },
-              { label: '14D', days: 14 },
-              { label: '30D', days: 30 },
-              { label: '90D', days: 90 },
-            ].map(({ label, days }) => {
-              const to = new Date().toISOString().slice(0, 10);
-              const fromD = new Date();
-              fromD.setDate(fromD.getDate() - days);
-              const from = fromD.toISOString().slice(0, 10);
-              const isActive = dateFrom === from && dateTo === to;
-              return (
-                <button
-                  key={label}
-                  type="button"
-                  onClick={() => {
-                    if (isActive) {
-                      setDateFrom('');
-                      setDateTo('');
-                    } else {
-                      setDateFrom(from);
-                      setDateTo(to);
-                    }
-                  }}
-                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-md transition-all ${
-                    isActive
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
-                  }`}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
+          <DaysFilter
+            value={commonDays}
+            onChange={(days) => {
+              setCommonDays(days);
+              if (days === 'all') {
+                setDateFrom('');
+                setDateTo('');
+              } else {
+                const to = new Date().toISOString().slice(0, 10);
+                const fromD = new Date();
+                fromD.setDate(fromD.getDate() - Number(days));
+                const from = fromD.toISOString().slice(0, 10);
+                setDateFrom(from);
+                setDateTo(to);
+              }
+              setPage(1);
+            }}
+          />
           <div className="flex items-center gap-1.5">
             <label className="text-[11px] text-[var(--muted)] font-medium">From</label>
-            <input type="date" value={dateFrom} max={dateTo || undefined}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="text-[11px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            <input
+              type="date"
+              value={dateFrom}
+              max={dateTo || undefined}
+              onChange={(e) => {
+                setDateFrom(e.target.value);
+                setCommonDays('custom');
+                setPage(1);
+              }}
+              className="text-[11px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
           </div>
           <div className="flex items-center gap-1.5">
             <label className="text-[11px] text-[var(--muted)] font-medium">To</label>
-            <input type="date" value={dateTo} min={dateFrom || undefined}
-              onChange={(e) => setDateTo(e.target.value)}
-              className="text-[11px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            <input
+              type="date"
+              value={dateTo}
+              min={dateFrom || undefined}
+              onChange={(e) => {
+                setDateTo(e.target.value);
+                setCommonDays('custom');
+                setPage(1);
+              }}
+              className="text-[11px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
           </div>
-          {(dateFrom || dateTo) && (
+          {(dateFrom || dateTo || commonDays !== 'all') && (
             <button
-              onClick={() => { setDateFrom(''); setDateTo(''); }}
-              className="text-[11px] text-indigo-500 hover:text-indigo-700 font-semibold">Clear</button>
+              onClick={() => {
+                setDateFrom('');
+                setDateTo('');
+                setCommonDays('all');
+                setPage(1);
+              }}
+              className="text-[11px] text-indigo-500 hover:text-indigo-700 font-semibold cursor-pointer"
+            >
+              Clear
+            </button>
           )}
           <AnalyticsLaunchButton moduleKey="nvd" />
         </div>
       </div>
 
-      {/* Hero KPI Stat Strip */}
+      {/* ── Hero KPI Stat Strip ───────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <KpiCard
           title="Total CVEs"
@@ -984,12 +1210,12 @@ export default function Nvd() {
         />
       </div>
 
-      {/* ── Multi-View Chart Widgets Grid (6 Cards with Independent Days & Views) ────────────────────────── */}
+      {/* ── Multi-View Chart Widgets Grid (6 Cards with Independent Days & Views) ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {/* 1. CVSS Severity Distribution */}
         <ChartCard
           subtitle="Severity Posture"
-          title={`${severityDays === 'all' ? 'All-Time' : `${severityDays}-Day`} Severity Breakdown`}
+          title={`${severityDays === 'all' ? (commonDays !== 'all' ? `${commonDays}-Day` : 'All-Time') : `${severityDays}-Day`} Severity Breakdown`}
           controls={
             <>
               <DaysFilter value={severityDays} onChange={setSeverityDays} compact />
@@ -1000,7 +1226,9 @@ export default function Nvd() {
           <MultiViewChart
             view={severityView}
             data={severityChartData}
+            monthlyData={severityComparison}
             timeSeriesData={severityTimeSeries}
+            days={severityDays}
             storageKey="nvd-sev-chart"
             onSliceClick={(entry) => {
               setSeverity(entry.name);
@@ -1012,7 +1240,7 @@ export default function Nvd() {
         {/* 2. Publication & Analysis Status */}
         <ChartCard
           subtitle="Lifecycle Status"
-          title={`${statusDays === 'all' ? 'All-Time' : `${statusDays}-Day`} Publication & Analysis`}
+          title={`${statusDays === 'all' ? (commonDays !== 'all' ? `${commonDays}-Day` : 'All-Time') : `${statusDays}-Day`} Publication & Analysis`}
           controls={
             <>
               <DaysFilter value={statusDays} onChange={setStatusDays} compact />
@@ -1023,7 +1251,9 @@ export default function Nvd() {
           <MultiViewChart
             view={statusView}
             data={statusChartData}
+            monthlyData={statusComparison}
             timeSeriesData={statusTimeSeries}
+            days={statusDays}
             storageKey="nvd-status-chart"
             onSliceClick={(entry) => {
               setStatus(entry.name);
@@ -1035,7 +1265,7 @@ export default function Nvd() {
         {/* 3. CVSS Impact Score Tiers */}
         <ChartCard
           subtitle="Impact Breakdown"
-          title={`${scoreDays === 'all' ? 'All-Time' : `${scoreDays}-Day`} Score Ranges`}
+          title={`${scoreDays === 'all' ? (commonDays !== 'all' ? `${commonDays}-Day` : 'All-Time') : `${scoreDays}-Day`} Score Ranges`}
           controls={
             <>
               <DaysFilter value={scoreDays} onChange={setScoreDays} compact />
@@ -1046,7 +1276,9 @@ export default function Nvd() {
           <MultiViewChart
             view={scoreView}
             data={scoreChartData}
+            monthlyData={scoreComparison}
             timeSeriesData={scoreTimeSeries}
+            days={scoreDays}
             storageKey="nvd-score-chart"
             onSliceClick={(entry) => {
               if (entry.name.includes('Critical')) setSeverity('CRITICAL');
@@ -1061,7 +1293,7 @@ export default function Nvd() {
         {/* 4. Common Weakness Types (Top CWEs) */}
         <ChartCard
           subtitle="Weakness Matrix"
-          title={`${cweDays === 'all' ? 'All-Time' : `${cweDays}-Day`} Top Weaknesses (CWE)`}
+          title={`${cweDays === 'all' ? (commonDays !== 'all' ? `${commonDays}-Day` : 'All-Time') : `${cweDays}-Day`} Top Weaknesses (CWE)`}
           controls={
             <>
               <DaysFilter value={cweDays} onChange={setCweDays} compact />
@@ -1072,7 +1304,9 @@ export default function Nvd() {
           <MultiViewChart
             view={cweView}
             data={cweChartData}
+            monthlyData={cweComparison}
             timeSeriesData={cweTimeSeries}
+            days={cweDays}
             storageKey="nvd-cwe-chart"
             onSliceClick={(entry) => {
               setSearch(entry.name);
@@ -1084,7 +1318,7 @@ export default function Nvd() {
         {/* 5. Top CNA Assigning Authorities */}
         <ChartCard
           subtitle="Threat Authorities"
-          title={`${sourceDays === 'all' ? 'All-Time' : `${sourceDays}-Day`} Top CNA Sources`}
+          title={`${sourceDays === 'all' ? (commonDays !== 'all' ? `${commonDays}-Day` : 'All-Time') : `${sourceDays}-Day`} Top CNA Sources`}
           controls={
             <>
               <DaysFilter value={sourceDays} onChange={setSourceDays} compact />
@@ -1095,7 +1329,9 @@ export default function Nvd() {
           <MultiViewChart
             view={sourceView}
             data={sourceChartData}
+            monthlyData={sourceComparison}
             timeSeriesData={sourceTimeSeries}
+            days={sourceDays}
             storageKey="nvd-source-chart"
             onSliceClick={(entry) => {
               setSearch(entry.name);
@@ -1107,7 +1343,7 @@ export default function Nvd() {
         {/* 6. Vulnerability Aging & Recency Index */}
         <ChartCard
           subtitle="Disclosure Aging"
-          title={`${agingDays === 'all' ? 'All-Time' : `${agingDays}-Day`} Aging Index`}
+          title={`${agingDays === 'all' ? (commonDays !== 'all' ? `${commonDays}-Day` : 'All-Time') : `${agingDays}-Day`} Aging Index`}
           controls={
             <>
               <DaysFilter value={agingDays} onChange={setAgingDays} compact />
@@ -1118,13 +1354,13 @@ export default function Nvd() {
           <MultiViewChart
             view={agingView}
             data={agingChartData}
+            monthlyData={agingComparison}
             timeSeriesData={agingTimeSeries}
+            days={agingDays}
             storageKey="nvd-aging-chart"
           />
         </ChartCard>
       </div>
-
-
 
       {/* ── Interactive CVE Search & Filter Bar ────────────────────────────── */}
       <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-4 shadow-sm flex flex-wrap items-end gap-3 justify-between">
@@ -1144,7 +1380,7 @@ export default function Nvd() {
             <select
               value={severity}
               onChange={(e) => { setSeverity(e.target.value); setPage(1); }}
-              className="text-xs px-3 py-2 rounded-lg border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              className="text-xs px-3 py-2 rounded-lg border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer"
             >
               <option value="">All Severities</option>
               {SEVERITIES.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -1155,7 +1391,7 @@ export default function Nvd() {
             <select
               value={status}
               onChange={(e) => { setStatus(e.target.value); setPage(1); }}
-              className="text-xs px-3 py-2 rounded-lg border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              className="text-xs px-3 py-2 rounded-lg border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer"
             >
               <option value="">All Statuses</option>
               {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -1163,14 +1399,14 @@ export default function Nvd() {
           </div>
           <div className="flex flex-col">
             <label className="text-[10px] text-[var(--muted)] uppercase tracking-wider mb-1 font-semibold">Table Days</label>
-            <DaysFilter value={tableDays} onChange={setTableDays} compact />
+            <DaysFilter value={tableDays} onChange={(d) => { setTableDays(d); setPage(1); }} compact />
           </div>
           <div className="flex flex-col">
             <label className="text-[10px] text-[var(--muted)] uppercase tracking-wider mb-1 font-semibold">Order By</label>
             <select
               value={sort}
               onChange={(e) => setSort(e.target.value)}
-              className="text-xs px-3 py-2 rounded-lg border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              className="text-xs px-3 py-2 rounded-lg border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer"
             >
               <option value="published">Published (Newest)</option>
               <option value="score">CVSS Base Score (Highest)</option>
@@ -1195,16 +1431,36 @@ export default function Nvd() {
 
       {/* ── Filtered Vulnerabilities Table ─────────────────────────────────── */}
       <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl shadow-sm overflow-hidden">
-        <div className="px-4 py-3 border-b border-[var(--card-border)] bg-[var(--muted-bg)]/40 flex items-center justify-between">
+        <div className="px-4 py-3 border-b border-[var(--card-border)] bg-[var(--muted-bg)]/40 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <p className="text-sm font-bold text-[var(--foreground)]">Vulnerability Records</p>
             {total > 0 && (
               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400">
-                {filteredTableVulns.length !== total ? `${filteredTableVulns.length} of ${total.toLocaleString()}` : `${total.toLocaleString()} total`}
+                {vulns.length !== total ? `${vulns.length} of ${total.toLocaleString()}` : `${total.toLocaleString()} total`}
               </span>
             )}
           </div>
-          <p className="text-xs text-[var(--muted)]">Page {page} of {totalPages || 1}</p>
+
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
+              <span>Show:</span>
+              <select
+                value={limit}
+                onChange={(e) => {
+                  setLimit(Number(e.target.value));
+                  setPage(1);
+                }}
+                className="text-xs px-2 py-1 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 cursor-pointer font-medium"
+              >
+                <option value={10}>10 rows</option>
+                <option value={20}>20 rows</option>
+                <option value={30}>30 rows</option>
+                <option value={40}>40 rows</option>
+                <option value={50}>50 rows</option>
+              </select>
+            </div>
+            <p className="text-xs text-[var(--muted)] font-medium">Page {page} of {totalPages || 1}</p>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -1219,93 +1475,93 @@ export default function Nvd() {
                 <th className="sticky top-0 z-20 text-left px-4 py-2.5 font-semibold bg-[var(--muted-bg)]">Status</th>
                 <th className="sticky top-0 z-20 text-left px-4 py-2.5 font-semibold bg-[var(--muted-bg)]">Description</th>
               </tr>
-                <tr className="bg-[var(--muted-bg)]/30">
-                  <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
-                    <input
-                      type="text"
-                      value={colCve}
-                      onChange={(e) => { setColCve(e.target.value); setPage(1); }}
-                      placeholder="Search CVE ID…"
-                      className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
-                    />
-                  </th>
-                  <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
-                    <input
-                      type="text"
-                      value={colPublished}
-                      onChange={(e) => { setColPublished(e.target.value); setPage(1); }}
-                      placeholder="e.g. 2024-05, 2024-05-10…"
-                      className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
-                    />
-                  </th>
-                  <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
-                    <input
-                      type="text"
-                      value={colSeverity}
-                      onChange={(e) => { setColSeverity(e.target.value); setPage(1); }}
-                      placeholder="High, Critical…"
-                      className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
-                    />
-                  </th>
-                  <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
-                    <input
-                      type="text"
-                      value={colScore}
-                      onChange={(e) => { setColScore(e.target.value); setPage(1); }}
-                      placeholder="9.8, 7.5…"
-                      className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
-                    />
-                  </th>
-                  <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
-                    <input
-                      type="text"
-                      value={colWeakness}
-                      onChange={(e) => { setColWeakness(e.target.value); setPage(1); }}
-                      placeholder="CWE-79…"
-                      className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
-                    />
-                  </th>
-                  <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
-                    <input
-                      type="text"
-                      value={colStatus}
-                      onChange={(e) => { setColStatus(e.target.value); setPage(1); }}
-                      placeholder="Analyzed, Rejected…"
-                      className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
-                    />
-                  </th>
-                  <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
-                    <input
-                      type="text"
-                      value={colDescription}
-                      onChange={(e) => { setColDescription(e.target.value); setPage(1); }}
-                      placeholder="Search description…"
-                      className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
-                    />
-                  </th>
+              <tr className="bg-[var(--muted-bg)]/30">
+                <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
+                  <input
+                    type="text"
+                    value={colCve}
+                    onChange={(e) => { setColCve(e.target.value); setPage(1); }}
+                    placeholder="Search CVE ID…"
+                    className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
+                  />
+                </th>
+                <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
+                  <input
+                    type="text"
+                    value={colPublished}
+                    onChange={(e) => { setColPublished(e.target.value); setPage(1); }}
+                    placeholder="e.g. 2024-05, 2024-05-10…"
+                    className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
+                  />
+                </th>
+                <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
+                  <input
+                    type="text"
+                    value={colSeverity}
+                    onChange={(e) => { setColSeverity(e.target.value); setPage(1); }}
+                    placeholder="High, Critical…"
+                    className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
+                  />
+                </th>
+                <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
+                  <input
+                    type="text"
+                    value={colScore}
+                    onChange={(e) => { setColScore(e.target.value); setPage(1); }}
+                    placeholder="9.8, 7.5…"
+                    className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
+                  />
+                </th>
+                <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
+                  <input
+                    type="text"
+                    value={colWeakness}
+                    onChange={(e) => { setColWeakness(e.target.value); setPage(1); }}
+                    placeholder="CWE-79…"
+                    className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
+                  />
+                </th>
+                <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
+                  <input
+                    type="text"
+                    value={colStatus}
+                    onChange={(e) => { setColStatus(e.target.value); setPage(1); }}
+                    placeholder="Analyzed, Rejected…"
+                    className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
+                  />
+                </th>
+                <th className="sticky top-[37px] z-10 px-2 pb-2 pt-1 bg-[var(--muted-bg)]/30">
+                  <input
+                    type="text"
+                    value={colDescription}
+                    onChange={(e) => { setColDescription(e.target.value); setPage(1); }}
+                    placeholder="Search description…"
+                    className="w-full text-[11px] px-2 py-1.5 rounded-md border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono"
+                  />
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--card-border)]">
+              {loadingList ? (
+                <tr>
+                  <td colSpan={7} className="p-8 text-center text-xs text-[var(--muted)]">
+                    <span className="inline-flex items-center justify-center gap-2">
+                      <span className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                      Loading vulnerability records…
+                    </span>
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--card-border)]">
-                {loadingList ? (
-                  <tr>
-                    <td colSpan={7} className="p-8 text-center text-xs text-[var(--muted)]">
-                      <span className="inline-flex items-center justify-center gap-2">
-                        <span className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-                        Loading vulnerability records…
-                      </span>
-                    </td>
-                  </tr>
-                ) : filteredTableVulns.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="p-10 text-center space-y-2">
-                      <p className="text-sm font-semibold text-[var(--foreground)]">No CVE records match your criteria</p>
-                      <p className="text-xs text-[var(--muted)]">
-                        {hasCreds ? 'Try clearing or modifying the active search and severity filters.' : 'Configure the NVD API credentials above and run a sync.'}
-                      </p>
-                    </td>
-                  </tr>
-                ) : (
-                  filteredTableVulns.map((v) => {
+              ) : vulns.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="p-10 text-center space-y-2">
+                    <p className="text-sm font-semibold text-[var(--foreground)]">No CVE records match your criteria</p>
+                    <p className="text-xs text-[var(--muted)]">
+                      {hasCreds ? 'Try clearing or modifying the active search and severity filters.' : 'Configure the NVD API credentials above and run a sync.'}
+                    </p>
+                  </td>
+                </tr>
+              ) : (
+                vulns.map((v) => {
                   const score = parseFloat(v.cvss_base_score);
                   return (
                     <tr
@@ -1339,55 +1595,118 @@ export default function Nvd() {
                     </tr>
                   );
                 })
-                )}
-              </tbody>
-            </table>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pagination & Rows Per Page Controls */}
+        <div className="px-4 py-3 border-t border-[var(--card-border)] bg-[var(--muted-bg)]/30 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--muted)]">
+            <span>
+              Showing <b className="text-[var(--foreground)]">{total === 0 ? 0 : (page - 1) * limit + 1}</b> to <b className="text-[var(--foreground)]">{Math.min(page * limit, total)}</b> of <b className="text-[var(--foreground)]">{total.toLocaleString()}</b> records
+            </span>
+            <div className="flex items-center gap-1.5 sm:ml-2 sm:pl-3 sm:border-l border-[var(--card-border)]">
+              <span className="text-[11px] text-[var(--muted)]">Rows per page:</span>
+              <div className="flex items-center gap-1">
+                {[10, 20, 30, 40, 50].map((num) => (
+                  <button
+                    key={num}
+                    onClick={() => {
+                      setLimit(num);
+                      setPage(1);
+                    }}
+                    className={`px-2 py-0.5 rounded text-xs font-semibold transition-colors cursor-pointer ${
+                      limit === num
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'bg-[var(--card-bg)] border border-[var(--card-border)] text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+                    }`}
+                  >
+                    {num}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
-        {/* Pagination Controls */}
-        {totalPages > 1 && (
-          <div className="px-4 py-3 border-t border-[var(--card-border)] flex items-center justify-between">
+          <div className="flex items-center gap-1 flex-wrap">
+            <button
+              onClick={() => setPage(1)}
+              disabled={page <= 1}
+              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-[var(--card-border)] text-[var(--foreground)] hover:bg-[var(--muted-bg)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              title="First Page"
+            >
+              «
+            </button>
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page <= 1}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-[var(--card-border)] text-[var(--foreground)] hover:bg-[var(--muted-bg)] disabled:opacity-40 transition-colors"
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-[var(--card-border)] text-[var(--foreground)] hover:bg-[var(--muted-bg)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
             >
               Previous
             </button>
-            <span className="text-xs text-[var(--muted)]">
-              Page {page} of {totalPages}
-            </span>
+
+            {getPageNumbers().map((p, idx) =>
+              p === '...' ? (
+                <span key={`ellipsis-${idx}`} className="px-2 py-1 text-xs text-[var(--muted)]">
+                  …
+                </span>
+              ) : (
+                <button
+                  key={p}
+                  onClick={() => setPage(p)}
+                  className={`min-w-[32px] px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                    page === p
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'border border-[var(--card-border)] text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+                  }`}
+                >
+                  {p}
+                </button>
+              )
+            )}
+
             <button
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-[var(--card-border)] text-[var(--foreground)] hover:bg-[var(--muted-bg)] disabled:opacity-40 transition-colors"
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-[var(--card-border)] text-[var(--foreground)] hover:bg-[var(--muted-bg)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
             >
               Next
             </button>
+            <button
+              onClick={() => setPage(totalPages)}
+              disabled={page >= totalPages}
+              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-[var(--card-border)] text-[var(--foreground)] hover:bg-[var(--muted-bg)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              title="Last Page"
+            >
+              »
+            </button>
           </div>
-        )}
+        </div>
       </div>
 
       {/* ── Detail Modal / Inspector Drawer ───────────────────────────────── */}
-      {detail && (
+      {(detail || loadingDetail) && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150">
             {/* Modal Header */}
             <div className="p-4 border-b border-[var(--card-border)] bg-[var(--muted-bg)]/50 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <span className="font-mono text-base font-bold text-indigo-600 dark:text-indigo-400">
-                  {detail.cve_id || 'CVE Advisory'}
+                  {detail?.cve_id || 'CVE Advisory'}
                 </span>
-                <button
-                  onClick={() => {
-                    copyToClipboard(detail.cve_id);
-                    setCopiedId(true);
-                    setTimeout(() => setCopiedId(false), 2000);
-                  }}
-                  className="px-2 py-0.5 text-[10px] rounded bg-[var(--card-bg)] border border-[var(--card-border)] text-[var(--muted)] hover:text-[var(--foreground)] transition-colors cursor-pointer"
-                >
-                  {copiedId ? 'Copied!' : 'Copy'}
-                </button>
+                {detail?.cve_id && (
+                  <button
+                    onClick={() => {
+                      copyToClipboard(detail.cve_id);
+                      setCopiedId(true);
+                      setTimeout(() => setCopiedId(false), 2000);
+                    }}
+                    className="px-2 py-0.5 text-[10px] rounded bg-[var(--card-bg)] border border-[var(--card-border)] text-[var(--muted)] hover:text-[var(--foreground)] transition-colors cursor-pointer"
+                  >
+                    {copiedId ? 'Copied!' : 'Copy'}
+                  </button>
+                )}
               </div>
               <button
                 onClick={closeDetail}
@@ -1399,9 +1718,14 @@ export default function Nvd() {
 
             {/* Modal Body */}
             <div className="p-5 overflow-y-auto space-y-4 text-xs">
-              {detail.error ? (
+              {loadingDetail ? (
+                <div className="text-center p-8 text-xs text-[var(--muted)] flex items-center justify-center gap-2">
+                  <span className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                  Loading vulnerability details…
+                </div>
+              ) : detail?.error ? (
                 <div className="text-center p-6 text-red-500">Failed to load vulnerability details.</div>
-              ) : (
+              ) : detail ? (
                 <>
                   {/* Key Metrics */}
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -1501,14 +1825,14 @@ export default function Nvd() {
                     </div>
                   )}
                 </>
-              )}
+              ) : null}
             </div>
 
             {/* Modal Footer */}
             <div className="p-3 border-t border-[var(--card-border)] bg-[var(--muted-bg)]/30 flex justify-end">
               <button
                 onClick={closeDetail}
-                className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-[var(--card-bg)] border border-[var(--card-border)] text-[var(--foreground)] hover:bg-[var(--muted-bg)] transition-colors cursor-pointer"
+                className="px-4 py-2 rounded-lg text-xs font-semibold bg-gray-600 hover:bg-gray-700 text-white transition-colors cursor-pointer"
               >
                 Close
               </button>
