@@ -256,26 +256,77 @@ function Sidebar({ mobileOpen, onClose, allowedPages, collapsed = false, onToggl
 }
 
 function TopBar({ onMenuClick }) {
-  const { organisations, currentOrg, switchOrg } = useOrg();
+  const { organisations, currentOrg, switchOrg, setCurrentOrg } = useOrg();
   const { theme, toggleTheme } = useTheme();
   const user = session.getUser();
   const [open, setOpen] = useState(false);
+  const [alertModal, setAlertModal] = useState({
+    open: false,
+    type: 'expired',
+    title: '',
+    badge: '',
+    message: '',
+    orgName: '',
+  });
   const ref = useRef(null);
 
   useEffect(() => {
-    const handler = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const handler = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
   const liveOrgs = organisations.filter(Boolean);
 
+  const handleOrgClick = (org) => {
+    const isSusp = org.is_suspended || org.license_status === 'suspended';
+    const isExp = org.is_expired || org.license_status === 'expired';
+
+    if (isSusp) {
+      setOpen(false);
+      setAlertModal({
+        open: true,
+        type: 'suspended',
+        title: 'Organisation Suspended',
+        badge: 'Organisation Suspended',
+        orgName: org.org_name,
+        message:
+          org.block_reason ||
+          `Your organisation "${org.org_name}" has been suspended. Please contact your administrator.`,
+      });
+      return;
+    }
+
+    if (isExp) {
+      setOpen(false);
+      setAlertModal({
+        open: true,
+        type: 'expired',
+        title: 'Subscription / License Expired',
+        badge: 'Organisation Expired',
+        orgName: org.org_name,
+        message:
+          org.block_reason ||
+          `Your organisation "${org.org_name}" subscription / license has expired. Please contact your administrator.`,
+      });
+      return;
+    }
+
+    setOpen(false);
+    switchOrg(org.id);
+  };
+
   return (
     <div className="h-14 topbar-surface flex items-center justify-between px-4 sm:px-6 flex-shrink-0 z-30 transition-colors duration-200">
       {/* Left */}
       <div className="flex items-center gap-3">
         {/* Mobile menu button */}
-        <button onClick={onMenuClick} className="lg:hidden p-2 rounded-lg hover:bg-[var(--muted-bg)] text-[var(--muted)] hover:text-[var(--foreground)] transition-colors">
+        <button
+          onClick={onMenuClick}
+          className="lg:hidden p-2 rounded-lg hover:bg-[var(--muted-bg)] text-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+        >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
           </svg>
@@ -284,8 +335,8 @@ function TopBar({ onMenuClick }) {
         {liveOrgs.length > 0 && (
           <div className="relative" ref={ref}>
             <button
-              onClick={() => setOpen(v => !v)}
-              className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg border border-[var(--card-border)] hover:bg-[var(--muted-bg)] text-sm font-medium text-[var(--foreground)] min-w-[200px] transition-colors"
+              onClick={() => setOpen((v) => !v)}
+              className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg border border-[var(--card-border)] hover:bg-[var(--muted-bg)] text-sm font-medium text-[var(--foreground)] min-w-[200px] transition-colors cursor-pointer"
             >
               {currentOrg ? (
                 <span className="w-6 h-6 rounded-md flex items-center justify-center text-white text-xs font-bold flex-shrink-0 bg-indigo-600">
@@ -299,29 +350,68 @@ function TopBar({ onMenuClick }) {
                 </span>
               )}
               <span className="flex-1 truncate text-left">{currentOrg?.org_name || 'Select Organization'}</span>
-              <svg className={`w-4 h-4 text-[var(--muted)] flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg
+                className={`w-4 h-4 text-[var(--muted)] flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
               </svg>
             </button>
 
             {open && (
-              <div className="absolute top-full left-0 mt-1.5 w-72 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl shadow-xl z-50 overflow-hidden">
-                <div className="px-4 pt-3 pb-2">
+              <div className="absolute top-full left-0 mt-1.5 w-80 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl shadow-xl z-50 overflow-hidden">
+                <div className="px-4 pt-3 pb-2 border-b border-[var(--card-border)]/50">
                   <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider">Organizations</p>
                 </div>
-                <div className="max-h-64 overflow-y-auto">
-                  {liveOrgs.map(org => {
+                <div className="max-h-64 overflow-y-auto divide-y divide-[var(--card-border)]/40">
+                  {liveOrgs.map((org) => {
                     const isSelected = currentOrg?.id === org.id;
+                    const isSusp = org.is_suspended || org.license_status === 'suspended';
+                    const isExp = org.is_expired || org.license_status === 'expired';
+                    const isBlocked = isSusp || isExp;
+
                     return (
-                      <button key={org.id} onClick={() => { setOpen(false); switchOrg(org.id); }}
-                        className={`w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--muted-bg)] transition-colors text-left ${isSelected ? 'bg-indigo-50 dark:bg-indigo-900/30' : ''}`}>
-                        <span className="w-7 h-7 rounded-lg flex items-center justify-center text-white text-sm font-bold flex-shrink-0 bg-indigo-600">
+                      <button
+                        key={org.id}
+                        onClick={() => handleOrgClick(org)}
+                        className={`w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--muted-bg)] transition-colors text-left cursor-pointer ${
+                          isSelected ? 'bg-indigo-50 dark:bg-indigo-900/30' : ''
+                        }`}
+                      >
+                        <span
+                          className={`w-7 h-7 rounded-lg flex items-center justify-center text-white text-xs font-bold flex-shrink-0 ${
+                            isSusp ? 'bg-amber-600' : isExp ? 'bg-rose-600' : 'bg-indigo-600'
+                          }`}
+                        >
                           {org.org_name?.[0]?.toUpperCase()}
                         </span>
                         <span className="flex-1 min-w-0">
-                          <span className={`block text-sm font-medium truncate ${isSelected ? 'text-indigo-600 dark:text-indigo-400' : 'text-[var(--foreground)]'}`}>{org.org_name}</span>
+                          <span
+                            className={`block text-sm font-medium truncate ${
+                              isBlocked
+                                ? 'text-rose-600 dark:text-rose-400'
+                                : isSelected
+                                ? 'text-indigo-600 dark:text-indigo-400 font-semibold'
+                                : 'text-[var(--foreground)]'
+                            }`}
+                          >
+                            {org.org_name}
+                          </span>
+                          {isBlocked && (
+                            <span
+                              className={`inline-block px-1.5 py-0.2 rounded text-[9px] font-bold uppercase tracking-wider ${
+                                isSusp
+                                  ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                                  : 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
+                              }`}
+                            >
+                              {isSusp ? 'Suspended' : 'Expired'}
+                            </span>
+                          )}
                         </span>
-                        {isSelected && (
+                        {isSelected && !isBlocked && (
                           <svg className="w-4 h-4 text-indigo-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
                           </svg>
@@ -335,6 +425,76 @@ function TopBar({ onMenuClick }) {
           </div>
         )}
       </div>
+
+      {/* Alert Pop-up Modal for Expired / Suspended Organisations from Header Switcher */}
+      {alertModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-[var(--card-bg)] border border-red-500/30 rounded-2xl shadow-2xl p-6 text-center relative animate-in zoom-in-95 duration-200">
+            <div
+              className={`w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg ${
+                alertModal.type === 'suspended'
+                  ? 'bg-amber-500/10 border border-amber-500/20 text-amber-500 shadow-amber-500/10'
+                  : 'bg-rose-500/10 border border-rose-500/20 text-rose-500 shadow-rose-500/10'
+              }`}
+            >
+              <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+
+            <h2 className="text-lg font-bold text-[var(--foreground)] mb-1">
+              {alertModal.title}
+            </h2>
+            <span
+              className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold mb-4 border ${
+                alertModal.type === 'suspended'
+                  ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                  : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+              }`}
+            >
+              {alertModal.badge}
+            </span>
+
+            <div
+              className={`border rounded-xl p-3.5 text-left mb-5 ${
+                alertModal.type === 'suspended'
+                  ? 'bg-amber-500/5 border-amber-500/20'
+                  : 'bg-rose-500/5 border-rose-500/20'
+              }`}
+            >
+              <p
+                className={`font-semibold text-xs mb-1 ${
+                  alertModal.type === 'suspended'
+                    ? 'text-amber-500 dark:text-amber-400'
+                    : 'text-rose-500 dark:text-rose-400'
+                }`}
+              >
+                Organisation: {alertModal.orgName}
+              </p>
+              <p className="text-[var(--foreground)] text-xs leading-relaxed">
+                {alertModal.message}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                setAlertModal({
+                  open: false,
+                  type: 'expired',
+                  title: '',
+                  badge: '',
+                  message: '',
+                  orgName: '',
+                })
+              }
+              className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs transition-colors shadow-md shadow-indigo-600/20 cursor-pointer"
+            >
+              Understood
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Right */}
       <div className="flex items-center gap-3">
@@ -432,6 +592,36 @@ export default function AppLayout() {
       .catch(() => { if (!cancelled) setAllowedPages(null); }); // fail open
     return () => { cancelled = true; };
   }, [isSuperAdmin, currentOrg?.id]);
+
+  // Proactive session heartbeat to ensure revoked/deactivated accounts lose access immediately
+  useEffect(() => {
+    let timer = null;
+    const verifyUserSession = async () => {
+      const token = session.getToken();
+      if (!token) return;
+      try {
+        await api.get('/auth/me');
+      } catch {
+        // Handled by axios 401 interceptor which clears session and redirects to /login
+      }
+    };
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        verifyUserSession();
+      }
+    };
+
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    timer = setInterval(verifyUserSession, 30000);
+
+    return () => {
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      if (timer) clearInterval(timer);
+    };
+  }, []);
 
   // Re-mount the routed page whenever the active organisation changes so that
   // every page re-fetches its data against the new X-Org-Id automatically —

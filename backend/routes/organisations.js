@@ -13,19 +13,89 @@ const router = express.Router();
 router.get('/', authMiddleware, async (req, res) => {
   try {
     const { role, org_ids } = req.user;
+    const cleanOrgIds = Array.isArray(org_ids)
+      ? Array.from(new Set(org_ids.map((id) => parseInt(id, 10)).filter((n) => !isNaN(n))))
+      : [];
+
     let result;
     if (role === 'superAdmin') {
-      result = await centralPool.query('SELECT * FROM organisations ORDER BY id ASC');
+      result = await centralPool.query(`
+        SELECT o.*,
+               t.token_status,
+               t.token_end_date,
+               t.license_id
+        FROM organisations o
+        LEFT JOIN LATERAL (
+          SELECT status AS token_status, end_date AS token_end_date, license_id
+          FROM org_tokens
+          WHERE org_id = o.id
+          ORDER BY id DESC
+          LIMIT 1
+        ) t ON true
+        WHERE o.deleted_at IS NULL
+        ORDER BY o.id ASC
+      `);
     } else {
-      if (!org_ids || org_ids.length === 0) {
+      if (cleanOrgIds.length === 0) {
         return res.json({ organisations: [] });
       }
-      result = await centralPool.query(
-        'SELECT * FROM organisations WHERE id = ANY($1::int[]) ORDER BY id ASC',
-        [org_ids]
-      );
+      result = await centralPool.query(`
+        SELECT o.*,
+               t.token_status,
+               t.token_end_date,
+               t.license_id
+        FROM organisations o
+        LEFT JOIN LATERAL (
+          SELECT status AS token_status, end_date AS token_end_date, license_id
+          FROM org_tokens
+          WHERE org_id = o.id
+          ORDER BY id DESC
+          LIMIT 1
+        ) t ON true
+        WHERE o.id = ANY($1::int[]) AND o.deleted_at IS NULL
+        ORDER BY o.id ASC
+      `, [cleanOrgIds]);
     }
-    return res.json({ organisations: result.rows });
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const seenIds = new Set();
+    const enrichedOrgs = [];
+
+    for (const org of (result.rows || [])) {
+      if (seenIds.has(org.id)) continue;
+      seenIds.add(org.id);
+
+      const isSuspended = org.is_active === false || org.status === 'suspended';
+      const effectiveEndDate = org.token_end_date || org.end_date;
+      const isDateExpired = effectiveEndDate && new Date(effectiveEndDate) < today;
+      const isStatusExpired = org.status === 'expired' || org.token_status === 'expired';
+      const isExpired = !isSuspended && (isDateExpired || isStatusExpired);
+
+      let licenseStatus = 'active';
+      let blockReason = null;
+
+      if (isSuspended) {
+        licenseStatus = 'suspended';
+        blockReason = `Your organisation "${org.org_name}" has been suspended. Please contact your administrator.`;
+      } else if (isExpired) {
+        licenseStatus = 'expired';
+        blockReason = `Your organisation "${org.org_name}" subscription / license has expired. Please contact your administrator.`;
+      }
+
+      enrichedOrgs.push({
+        ...org,
+        is_active: !isSuspended,
+        is_suspended: isSuspended,
+        is_expired: isExpired,
+        license_status: licenseStatus,
+        block_reason: blockReason,
+        effective_end_date: effectiveEndDate,
+      });
+    }
+
+    return res.json({ organisations: enrichedOrgs });
   } catch (err) {
     console.error('list orgs error:', err);
     return res.status(500).json({ error: 'Server error' });

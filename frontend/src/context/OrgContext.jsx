@@ -41,12 +41,21 @@ export function OrgProvider({ children }) {
       setOrganisations(list);
 
       // Restore previous selection ONLY if it still belongs to this user,
-      // or default to the user's primary organisation.
+      // or default to the user's first active organisation.
       const savedId = session.getOrgId();
+      const activeList = list.filter(
+        (o) => !o.is_expired && !o.is_suspended && o.license_status !== 'expired' && o.license_status !== 'suspended'
+      );
       const found = list.find((o) => o.id === savedId);
+
       if (found) {
         setCurrentOrgState(found);
         api.defaults.headers.common['X-Org-Id'] = String(found.id);
+      } else if (activeList.length > 0) {
+        const defaultOrg = activeList[0];
+        setCurrentOrgState(defaultOrg);
+        session.setOrgId(defaultOrg.id);
+        api.defaults.headers.common['X-Org-Id'] = String(defaultOrg.id);
       } else if (list.length > 0) {
         const defaultOrg = list[0];
         setCurrentOrgState(defaultOrg);

@@ -4,6 +4,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { centralPool } = require('../db');
 const { sendEmail } = require('../utils/mailer');
+const { validateUserAndOrgStatus } = require('../utils/userOrgValidation');
 
 const router = express.Router();
 
@@ -48,13 +49,26 @@ router.post('/2fa/login', async (req, res) => {
     }
 
     const { rows } = await centralPool.query(
-      'SELECT * FROM users WHERE username = $1',
+      'SELECT * FROM users WHERE username = $1 AND deleted_at IS NULL',
       [username]
     );
     if (rows.length === 0) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     const user = rows[0];
+
+    // Check account and organisation status
+    const statusCheck = await validateUserAndOrgStatus(user, centralPool);
+    if (statusCheck.blocked) {
+      return res.status(403).json({
+        error: statusCheck.code,
+        code: statusCheck.code,
+        orgStatus: statusCheck.orgStatus || 'inactive',
+        message: statusCheck.message,
+        orgName: statusCheck.orgName || null,
+      });
+    }
+
     const valid = await bcrypt.compare(password, user.password);
     if (!valid) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -146,35 +160,23 @@ router.post('/2fa/verify-otp', async (req, res) => {
     // Issue the final access token (embeds org_ids; org context is applied
     // later via the X-Org-Id header, matching the rest of the app).
     const { rows: userRows } = await centralPool.query(
-      'SELECT id, username, role, org_ids, is_active FROM users WHERE id = $1',
+      'SELECT id, username, email, role, org_ids, organisation_id, is_active, status FROM users WHERE id = $1 AND deleted_at IS NULL',
       [session.user_id]
     );
+    if (userRows.length === 0) {
+      return res.status(401).json({ error: 'User account not found or deleted.' });
+    }
     const user = userRows[0];
 
-    // For non-superAdmin users, check user status and organization status
-    if (user.role !== 'superAdmin') {
-      if (user.is_active === false) {
-        return res.status(403).json({ error: 'Your account has been deactivated. Please contact your administrator.' });
-      }
-      if (Array.isArray(user.org_ids) && user.org_ids.length > 0) {
-        const orgCheck = await centralPool.query(
-          `SELECT id, status, is_active, end_date FROM organisations
-           WHERE id = ANY($1::int[]) AND deleted_at IS NULL`,
-          [user.org_ids]
-        );
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const activeOrgs = orgCheck.rows.filter((o) => {
-          if (o.status === 'suspended' || o.is_active === false) return false;
-          if (o.end_date && new Date(o.end_date) < today) return false;
-          return true;
-        });
-        if (activeOrgs.length === 0 && orgCheck.rows.length > 0) {
-          return res.status(403).json({
-            error: 'Your organization access is inactive or expired. Please contact your administrator.',
-          });
-        }
-      }
+    const statusCheck = await validateUserAndOrgStatus(user, centralPool);
+    if (statusCheck.blocked) {
+      return res.status(403).json({
+        error: statusCheck.code,
+        code: statusCheck.code,
+        orgStatus: statusCheck.orgStatus || 'inactive',
+        message: statusCheck.message,
+        orgName: statusCheck.orgName || null,
+      });
     }
 
     // Update last_login_at

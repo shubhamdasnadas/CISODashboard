@@ -3,6 +3,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { centralPool } = require('../db');
 const { sendEmail } = require('../utils/mailer');
+const { validateUserAndOrgStatus } = require('../utils/userOrgValidation');
 
 const router = express.Router();
 
@@ -82,11 +83,22 @@ router.post('/send', async (req, res) => {
   const identifier = (req.body.email || req.body.username || req.body.identifier || '').trim();
   if (!identifier) return res.status(400).json({ error: 'Email is required' });
   const userResult = await centralPool.query(
-    'SELECT id, username, email FROM users WHERE LOWER(email) = LOWER($1)',
+    'SELECT id, username, email, role, org_ids, organisation_id, is_active, status FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL',
     [identifier]
   );
   if (userResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
   const user = userResult.rows[0];
+
+  const statusCheck = await validateUserAndOrgStatus(user, centralPool);
+  if (statusCheck.blocked) {
+    return res.status(403).json({
+      error: statusCheck.code,
+      code: statusCheck.code,
+      orgStatus: statusCheck.orgStatus || 'inactive',
+      message: statusCheck.message,
+      orgName: statusCheck.orgName || null,
+    });
+  }
 
   // Rate-limit re-sends: the one OTP that actually works is created_at DESC first,
   // so its age tells us when the last code was issued.
@@ -121,36 +133,21 @@ router.post('/verify', async (req, res) => {
   const { otp } = req.body;
   if (!identifier || !otp) return res.status(400).json({ error: 'Email and OTP are required' });
   const userRes = await centralPool.query(
-    'SELECT id, username, email, role, org_ids, is_active FROM users WHERE LOWER(email) = LOWER($1)',
+    'SELECT id, username, email, role, org_ids, organisation_id, is_active, status FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL',
     [identifier]
   );
   if (userRes.rows.length === 0) return res.status(404).json({ error: 'User not found' });
   const user = userRes.rows[0];
 
-  // For non-superAdmin users, check user status and organization status
-  if (user.role !== 'superAdmin') {
-    if (user.is_active === false) {
-      return res.status(403).json({ error: 'Your account has been deactivated. Please contact your administrator.' });
-    }
-    if (Array.isArray(user.org_ids) && user.org_ids.length > 0) {
-      const orgCheck = await centralPool.query(
-        `SELECT id, status, is_active, end_date FROM organisations
-         WHERE id = ANY($1::int[]) AND deleted_at IS NULL`,
-        [user.org_ids]
-      );
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const activeOrgs = orgCheck.rows.filter((o) => {
-        if (o.status === 'suspended' || o.is_active === false) return false;
-        if (o.end_date && new Date(o.end_date) < today) return false;
-        return true;
-      });
-      if (activeOrgs.length === 0 && orgCheck.rows.length > 0) {
-        return res.status(403).json({
-          error: 'Your organization access is inactive or expired. Please contact your administrator.',
-        });
-      }
-    }
+  const statusCheck = await validateUserAndOrgStatus(user, centralPool);
+  if (statusCheck.blocked) {
+    return res.status(403).json({
+      error: statusCheck.code,
+      code: statusCheck.code,
+      orgStatus: statusCheck.orgStatus || 'inactive',
+      message: statusCheck.message,
+      orgName: statusCheck.orgName || null,
+    });
   }
 
   const verified = await verifyOtp(user.id, otp);

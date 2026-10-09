@@ -20,7 +20,10 @@ async function orgMiddleware(req, res, next) {
   }
 
   try {
-    const { rows } = await centralPool.query('SELECT id, org_name, slug, is_active FROM organisations WHERE id = $1', [orgId]);
+    const { rows } = await centralPool.query(
+      'SELECT id, org_name, slug, is_active, status FROM organisations WHERE id = $1 AND deleted_at IS NULL',
+      [orgId]
+    );
     const org = rows[0];
     if (!org || !org.slug) {
       return res.status(400).json({ error: 'Organisation not found' });
@@ -36,14 +39,29 @@ async function orgMiddleware(req, res, next) {
       return res.status(403).json({ error: 'Access denied to this organisation' });
     }
 
-    // Validate organization license token for non-superadmins
+    // Validate organization active/suspension status for non-superadmins
     if (user.role !== 'superAdmin') {
+      if (org.is_active === false || org.status === 'suspended') {
+        return res.status(403).json({
+          error: 'ORGANISATION_SUSPENDED',
+          code: 'ORGANISATION_SUSPENDED',
+          message: `Your organisation "${org.org_name}" has been suspended. Please contact your administrator.`,
+          details: {
+            orgId,
+            orgName: org.org_name,
+            slug: orgSlug,
+          },
+        });
+      }
+
       const tokenResult = await verifyOrgToken(orgId);
       if (!tokenResult.valid) {
         return res.status(403).json({
           error: tokenResult.code || 'TOKEN_EXPIRED',
           code: tokenResult.code || 'TOKEN_EXPIRED',
-          message: tokenResult.message || 'Organisation license expired, contact administrator',
+          message:
+            tokenResult.message ||
+            `Your organisation "${org.org_name}" subscription / license has expired. Please contact your administrator.`,
           details: tokenResult.details || {
             orgId,
             orgName: org.org_name,

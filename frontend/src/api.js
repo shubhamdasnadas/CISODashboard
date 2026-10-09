@@ -101,11 +101,35 @@ api.interceptors.response.use(
       window.location &&
       (window.location.pathname.includes('print') || window.location.search.includes('print=true'));
 
-    if (status === 401 && !isAuthFlow && !_authRedirecting && !isPrintMode) {
+    const isDeactivated =
+      err.response?.data?.code === 'ACCOUNT_DEACTIVATED' ||
+      err.response?.data?.error === 'ACCOUNT_DEACTIVATED';
+
+    const isOrgSuspended =
+      err.response?.data?.code === 'ORGANISATION_SUSPENDED' ||
+      err.response?.data?.error === 'ORGANISATION_SUSPENDED' ||
+      err.response?.data?.code === 'ORG_SUSPENDED';
+
+    const isOrgExpired =
+      err.response?.data?.code === 'ORGANISATION_EXPIRED' ||
+      err.response?.data?.error === 'ORGANISATION_EXPIRED' ||
+      err.response?.data?.code === 'ORG_EXPIRED';
+
+    const isAccessBlocked = isDeactivated || isOrgSuspended || isOrgExpired;
+
+    if ((status === 401 || (status === 403 && isAccessBlocked)) && !isAuthFlow && !_authRedirecting && !isPrintMode) {
       _authRedirecting = true;
       clearSession(); // drops only THIS tab's session
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
+      if (typeof window !== 'undefined' && window.location && window.location.pathname !== '/login') {
+        if (isOrgSuspended) {
+          window.location.href = '/login?org_suspended=true';
+        } else if (isOrgExpired) {
+          window.location.href = '/login?org_expired=true';
+        } else if (isDeactivated) {
+          window.location.href = '/login?deactivated=true';
+        } else {
+          window.location.href = '/login';
+        }
       }
     }
 

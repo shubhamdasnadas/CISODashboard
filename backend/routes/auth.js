@@ -3,6 +3,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { centralPool } = require('../db');
 const { authMiddleware } = require('../middleware/authMiddleware');
+const { validateUserAndOrgStatus } = require('../utils/userOrgValidation');
 
 const router = express.Router();
 
@@ -18,7 +19,7 @@ async function handleCheckEmail(req, res) {
     if (!identifier) return res.status(400).json({ error: 'Email is required' });
 
     const userResult = await centralPool.query(
-      'SELECT id, username, email, org_ids FROM users WHERE LOWER(email) = LOWER($1)',
+      'SELECT id, username, email, role, org_ids, organisation_id, is_active, status FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL',
       [identifier]
     );
     if (userResult.rows.length === 0) {
@@ -26,21 +27,22 @@ async function handleCheckEmail(req, res) {
     }
 
     const matchedUser = userResult.rows[0];
-    const orgIds = matchedUser.org_ids || [];
-    let organisations = [];
-    if (orgIds.length > 0) {
-      const orgsResult = await centralPool.query(
-        'SELECT id, org_name FROM organisations WHERE id = ANY($1::int[])',
-        [orgIds]
-      );
-      organisations = orgsResult.rows;
-    }
+    const statusCheck = await validateUserAndOrgStatus(matchedUser, centralPool);
 
     return res.json({
       exists: true,
-      organisations,
+      organisations: statusCheck.organisations || [],
       email: matchedUser.email,
       username: matchedUser.username,
+      is_active: !statusCheck.blocked,
+      deactivated: statusCheck.code === 'ACCOUNT_DEACTIVATED',
+      orgBlocked: statusCheck.blocked,
+      orgStatus: statusCheck.orgStatus || null,
+      blockCode: statusCheck.code || null,
+      blockReason: statusCheck.code || null,
+      message: statusCheck.message || null,
+      deactivationMessage: statusCheck.message || null,
+      orgName: statusCheck.orgName || null,
     });
   } catch (err) {
     console.error('check-email error:', err.message, err.code || '');
@@ -58,7 +60,7 @@ router.post('/check-email', handleCheckEmail);
 /**
  * POST /api/auth/check-password
  * Body: { email, password }
- * Returns { valid: boolean }
+ * Returns { valid: boolean, deactivated?: boolean, deactivationMessage?: string, orgName?: string }
  * Checks if the entered password matches the account password
  */
 router.post('/check-password', async (req, res) => {
@@ -70,15 +72,32 @@ router.post('/check-password', async (req, res) => {
     }
 
     const result = await centralPool.query(
-      'SELECT password FROM users WHERE LOWER(email) = LOWER($1)',
+      'SELECT id, username, email, role, org_ids, organisation_id, password, is_active, status FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL',
       [identifier]
     );
     if (result.rows.length === 0) {
       return res.json({ valid: false });
     }
 
-    const valid = await bcrypt.compare(password, result.rows[0].password);
-    return res.json({ valid: Boolean(valid) });
+    const user = result.rows[0];
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) {
+      return res.json({ valid: false });
+    }
+
+    const statusCheck = await validateUserAndOrgStatus(user, centralPool);
+
+    return res.json({
+      valid: true,
+      deactivated: statusCheck.code === 'ACCOUNT_DEACTIVATED',
+      orgBlocked: statusCheck.blocked,
+      orgStatus: statusCheck.orgStatus || null,
+      blockCode: statusCheck.code || null,
+      blockReason: statusCheck.code || null,
+      message: statusCheck.message || null,
+      deactivationMessage: statusCheck.message || null,
+      orgName: statusCheck.orgName || null,
+    });
   } catch (err) {
     console.error('check-password error:', err);
     return res.status(500).json({ valid: false, error: 'Server error' });
@@ -100,7 +119,7 @@ router.post('/login', async (req, res) => {
     }
 
     const result = await centralPool.query(
-      'SELECT * FROM users WHERE LOWER(email) = LOWER($1)',
+      'SELECT id, username, email, role, org_ids, organisation_id, password, is_active, status FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL',
       [identifier]
     );
     if (result.rows.length === 0) {
@@ -108,6 +127,19 @@ router.post('/login', async (req, res) => {
     }
 
     const user = result.rows[0];
+
+    // Check account and organisation status BEFORE checking password & sending OTP
+    const statusCheck = await validateUserAndOrgStatus(user, centralPool);
+    if (statusCheck.blocked) {
+      return res.status(403).json({
+        error: statusCheck.code,
+        code: statusCheck.code,
+        orgStatus: statusCheck.orgStatus || 'inactive',
+        message: statusCheck.message,
+        orgName: statusCheck.orgName || null,
+      });
+    }
+
     const valid = await bcrypt.compare(password, user.password);
     if (!valid) {
       return res.status(401).json({ error: 'Invalid credentials' });

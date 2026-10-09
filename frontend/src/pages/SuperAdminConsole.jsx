@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import * as session from '../utils/session.js';
@@ -2659,15 +2659,35 @@ function DeleteOrgConfirmModal({ org, onClose, onSuccess }) {
 // ─────────────────────────────────────────────────────────────────────────────
 function UserFormModal({ editingUser, organisations = [], lockedOrgId = null, onClose, onSuccess, onResetPassword }) {
   const isEdit = !!editingUser;
+
+  const getInitialOrgIds = () => {
+    if (lockedOrgId) return [parseInt(lockedOrgId, 10)].filter((n) => !isNaN(n));
+    if (Array.isArray(editingUser?.org_ids) && editingUser.org_ids.length > 0) {
+      return editingUser.org_ids.map((id) => parseInt(id, 10)).filter((n) => !isNaN(n));
+    }
+    if (Array.isArray(editingUser?.organisations) && editingUser.organisations.length > 0) {
+      return editingUser.organisations.map((o) => parseInt(o.id, 10)).filter((n) => !isNaN(n));
+    }
+    if (editingUser?.organisation_id) {
+      const parsed = parseInt(editingUser.organisation_id, 10);
+      return isNaN(parsed) ? [] : [parsed];
+    }
+    return [];
+  };
+
   const [form, setForm] = useState({
     name: editingUser?.username || '',
     username: editingUser?.username || '',
     email: editingUser?.email || '',
     phone_number: editingUser?.phone_number || '',
-    organisation_id: lockedOrgId ? String(lockedOrgId) : (editingUser?.organisation_id ? String(editingUser.organisation_id) : (organisations[0]?.id ? String(organisations[0].id) : '')),
+    org_ids: getInitialOrgIds(),
     role: editingUser?.role || 'member',
     is_active: editingUser ? editingUser.is_active : true,
   });
+
+  const [orgDropdownOpen, setOrgDropdownOpen] = useState(false);
+  const [orgSearch, setOrgSearch] = useState('');
+  const orgDropdownRef = useRef(null);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -2676,18 +2696,74 @@ function UserFormModal({ editingUser, organisations = [], lockedOrgId = null, on
     ? organisations.find((o) => String(o.id) === String(lockedOrgId))
     : null;
 
+  // Close org dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (orgDropdownRef.current && !orgDropdownRef.current.contains(e.target)) {
+        setOrgDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const toggleOrgSelection = (orgId) => {
+    const id = parseInt(orgId, 10);
+    setForm((prev) => {
+      const current = prev.org_ids || [];
+      const exists = current.includes(id);
+      const nextOrgs = exists ? current.filter((x) => x !== id) : [...current, id];
+      return { ...prev, org_ids: nextOrgs };
+    });
+  };
+
+  const selectAllOrgs = () => {
+    const allFilteredIds = filteredOrgs.map((o) => parseInt(o.id, 10)).filter((n) => !isNaN(n));
+    setForm((prev) => ({
+      ...prev,
+      org_ids: Array.from(new Set([...(prev.org_ids || []), ...allFilteredIds])),
+    }));
+  };
+
+  const clearAllOrgs = () => {
+    setForm((prev) => ({
+      ...prev,
+      org_ids: [],
+    }));
+  };
+
+  const removeOrgTag = (orgId, e) => {
+    e.stopPropagation();
+    const id = parseInt(orgId, 10);
+    setForm((prev) => ({
+      ...prev,
+      org_ids: (prev.org_ids || []).filter((x) => x !== id),
+    }));
+  };
+
+  const filteredOrgs = organisations.filter((o) => {
+    if (!orgSearch.trim()) return true;
+    const q = orgSearch.toLowerCase();
+    return (
+      (o.org_name && o.org_name.toLowerCase().includes(q)) ||
+      (o.slug && o.slug.toLowerCase().includes(q))
+    );
+  });
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
 
     setSubmitting(true);
     try {
+      const primaryOrgId = form.org_ids.length > 0 ? form.org_ids[0] : null;
       if (isEdit) {
         const { data } = await api.put(`/superadmin/users/${editingUser.id}`, {
           username: form.name.trim(),
           email: form.email.trim(),
           phone_number: form.phone_number.trim(),
-          organisation_id: form.organisation_id,
+          organisation_id: primaryOrgId,
+          org_ids: form.org_ids,
           role: form.role,
           is_active: form.is_active,
         });
@@ -2698,7 +2774,8 @@ function UserFormModal({ editingUser, organisations = [], lockedOrgId = null, on
           username: form.name.trim(),
           email: form.email.trim(),
           phone_number: form.phone_number.trim(),
-          organisation_id: form.organisation_id,
+          organisation_id: primaryOrgId,
+          org_ids: form.org_ids,
           role: form.role,
         });
         onSuccess(
@@ -2801,11 +2878,18 @@ function UserFormModal({ editingUser, organisations = [], lockedOrgId = null, on
               />
             </div>
 
-            {/* Organisation & Role */}
+            {/* Organisation Multi-Select & Role */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs sm:text-sm font-bold text-[var(--foreground)] uppercase mb-2">
-                  Organisation {lockedOrgId && <span className="text-xs text-indigo-400 normal-case font-semibold">(Pre-selected)</span>}
+                <label className="block text-xs sm:text-sm font-bold text-[var(--foreground)] uppercase mb-2 flex items-center justify-between">
+                  <span>
+                    Organisations {lockedOrgId && <span className="text-xs text-indigo-400 normal-case font-semibold">(Pre-selected)</span>}
+                  </span>
+                  {!lockedOrgId && form.org_ids.length > 0 && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-mono font-bold">
+                      {form.org_ids.length} selected
+                    </span>
+                  )}
                 </label>
                 {lockedOrgId ? (
                   <div className="w-full px-4 py-3 sm:py-3.5 bg-[var(--muted-bg)] border border-[var(--card-border)] rounded-xl text-sm sm:text-base font-bold text-[var(--foreground)] flex items-center justify-between">
@@ -2817,18 +2901,171 @@ function UserFormModal({ editingUser, organisations = [], lockedOrgId = null, on
                     </span>
                   </div>
                 ) : (
-                  <select
-                    value={form.organisation_id}
-                    onChange={(e) => setForm((p) => ({ ...p, organisation_id: e.target.value }))}
-                    className="w-full px-4 py-3 sm:py-3.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl text-sm sm:text-base text-[var(--foreground)] focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                  >
-                    <option value="">None (Standalone)</option>
-                    {organisations.map((o) => (
-                      <option key={o.id} value={o.id}>
-                        {o.org_name}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="relative" ref={orgDropdownRef}>
+                    <button
+                      type="button"
+                      onClick={() => setOrgDropdownOpen((prev) => !prev)}
+                      className={`w-full px-4 py-3 sm:py-3.5 bg-[var(--input-bg)] border rounded-xl text-left text-sm sm:text-base text-[var(--foreground)] flex items-center justify-between gap-2 transition-all cursor-pointer ${
+                        orgDropdownOpen
+                          ? 'border-indigo-500 ring-2 ring-indigo-500/30'
+                          : 'border-[var(--input-border)] hover:border-indigo-500/50'
+                      }`}
+                    >
+                      <div className="flex-1 truncate">
+                        {form.org_ids.length === 0 ? (
+                          <span className="text-[var(--muted)]">Select organisations...</span>
+                        ) : form.org_ids.length === 1 ? (
+                          <span className="font-semibold text-[var(--foreground)]">
+                            {organisations.find((o) => o.id === form.org_ids[0])?.org_name || '1 organisation selected'}
+                          </span>
+                        ) : (
+                          <span className="font-semibold text-indigo-400">
+                            {form.org_ids.length} organisations selected
+                          </span>
+                        )}
+                      </div>
+                      <span className={`text-xs text-[var(--muted)] transition-transform duration-200 ${orgDropdownOpen ? 'rotate-180' : ''}`}>
+                        ▼
+                      </span>
+                    </button>
+
+                    {/* Dropdown Menu */}
+                    {orgDropdownOpen && (
+                      <div className="absolute top-full left-0 right-0 mt-2 z-50 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl shadow-2xl overflow-hidden animate-scaleUp">
+                        {/* Search Input & Quick Actions */}
+                        <div className="p-3 border-b border-[var(--card-border)] bg-[var(--muted-bg)] space-y-2">
+                          <div className="relative">
+                            <input
+                              type="text"
+                              placeholder="Search organisations..."
+                              value={orgSearch}
+                              onChange={(e) => setOrgSearch(e.target.value)}
+                              className="w-full pl-8 pr-3 py-1.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-lg text-xs sm:text-sm text-[var(--foreground)] focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+                              autoFocus
+                            />
+                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[var(--muted)]">
+                              🔍
+                            </span>
+                            {orgSearch && (
+                              <button
+                                type="button"
+                                onClick={() => setOrgSearch('')}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-[var(--muted)] hover:text-[var(--foreground)]"
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </div>
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-[var(--muted)]">
+                              {filteredOrgs.length} organisation{filteredOrgs.length !== 1 ? 's' : ''}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={selectAllOrgs}
+                                className="text-indigo-400 hover:text-indigo-300 font-semibold cursor-pointer"
+                              >
+                                Select All
+                              </button>
+                              <span className="text-[var(--card-border)]">|</span>
+                              <button
+                                type="button"
+                                onClick={clearAllOrgs}
+                                className="text-[var(--muted)] hover:text-rose-400 font-semibold cursor-pointer"
+                              >
+                                Clear
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* List of Organisation Checkboxes */}
+                        <div className="max-h-56 overflow-y-auto p-2 space-y-1">
+                          {filteredOrgs.length === 0 ? (
+                            <div className="p-4 text-center text-xs text-[var(--muted)]">
+                              No organisations found matching "{orgSearch}"
+                            </div>
+                          ) : (
+                            filteredOrgs.map((o) => {
+                              const isChecked = form.org_ids.includes(o.id);
+                              return (
+                                <label
+                                  key={o.id}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    toggleOrgSelection(o.id);
+                                  }}
+                                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs sm:text-sm transition-colors cursor-pointer select-none ${
+                                    isChecked
+                                      ? 'bg-indigo-500/15 text-indigo-200 border border-indigo-500/30'
+                                      : 'hover:bg-[var(--muted-bg)] text-[var(--foreground)] border border-transparent'
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    readOnly
+                                    className="w-4 h-4 rounded border-zinc-600 text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0 cursor-pointer accent-indigo-600"
+                                  />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="font-semibold truncate">{o.org_name}</div>
+                                    {o.slug && (
+                                      <div className="text-[11px] text-[var(--muted)] font-mono truncate">
+                                        {o.slug}
+                                      </div>
+                                    )}
+                                  </div>
+                                  {isChecked && (
+                                    <span className="text-xs font-bold text-indigo-400 flex-shrink-0">
+                                      ✓
+                                    </span>
+                                  )}
+                                </label>
+                              );
+                            })
+                          )}
+                        </div>
+
+                        {/* Dropdown Footer with Done button */}
+                        <div className="p-2 border-t border-[var(--card-border)] bg-[var(--card-bg)] flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => setOrgDropdownOpen(false)}
+                            className="px-3 py-1 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors cursor-pointer"
+                          >
+                            Done
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Selected Organisation Pills / Tags */}
+                    {form.org_ids.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-2.5">
+                        {form.org_ids.map((orgId) => {
+                          const orgObj = organisations.find((o) => o.id === orgId);
+                          const orgName = orgObj?.org_name || `Org #${orgId}`;
+                          return (
+                            <span
+                              key={orgId}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 text-xs font-semibold"
+                            >
+                              <span className="truncate max-w-[140px]">{orgName}</span>
+                              <button
+                                type="button"
+                                onClick={(e) => removeOrgTag(orgId, e)}
+                                className="w-3.5 h-3.5 rounded-full hover:bg-indigo-500/30 flex items-center justify-center text-[10px] text-indigo-200 hover:text-white transition-colors cursor-pointer"
+                                title="Remove organisation"
+                              >
+                                ✕
+                              </button>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
 

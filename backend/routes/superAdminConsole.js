@@ -1161,34 +1161,35 @@ router.post('/users', async (req, res) => {
 
     const newUser = rows[0];
 
-    // Fetch org name for display in email
+    // Fetch org names for display in email & sync into org_users for each org
     let orgName = null;
-    if (orgIdNum) {
-      const orgRes = await centralPool.query('SELECT org_name FROM organisations WHERE id = $1', [orgIdNum]);
-      orgName = orgRes.rows[0]?.org_name || null;
+    if (requestedOrgIds.length > 0) {
+      const orgRes = await centralPool.query('SELECT org_name FROM organisations WHERE id = ANY($1::int[])', [requestedOrgIds]);
+      orgName = orgRes.rows.map((r) => r.org_name).join(', ') || null;
 
-      // Sync into org_users table
-      try {
-        await centralPool.query(
-          `INSERT INTO org_users (org_id, name, email, password, role, is_active, allowed_pages)
-           VALUES ($1, $2, $3, $4, $5, FALSE, $6)
-           ON CONFLICT (email, org_id) DO UPDATE SET
-             name = EXCLUDED.name,
-             role = EXCLUDED.role,
-             is_active = FALSE,
-             allowed_pages = EXCLUDED.allowed_pages,
-             updated_at = NOW()`,
-          [
-            orgIdNum,
-            finalUsername,
-            userEmail,
-            placeholderHash,
-            role === 'admin' ? 'org_admin' : 'org_user',
-            Array.isArray(allowed_pages) ? allowed_pages : null,
-          ]
-        );
-      } catch (syncErr) {
-        console.warn('[superadmin/users] org_users sync warning:', syncErr.message);
+      for (const oId of requestedOrgIds) {
+        try {
+          await centralPool.query(
+            `INSERT INTO org_users (org_id, name, email, password, role, is_active, allowed_pages)
+             VALUES ($1, $2, $3, $4, $5, FALSE, $6)
+             ON CONFLICT (email, org_id) DO UPDATE SET
+               name = EXCLUDED.name,
+               role = EXCLUDED.role,
+               is_active = FALSE,
+               allowed_pages = EXCLUDED.allowed_pages,
+               updated_at = NOW()`,
+            [
+              oId,
+              finalUsername,
+              userEmail,
+              placeholderHash,
+              role === 'admin' ? 'org_admin' : 'org_user',
+              Array.isArray(allowed_pages) ? allowed_pages : null,
+            ]
+          );
+        } catch (syncErr) {
+          console.warn(`[superadmin/users] org_users sync warning for org ${oId}:`, syncErr.message);
+        }
       }
     }
 
@@ -1343,6 +1344,7 @@ router.put('/users/:id', async (req, res) => {
     const orgIdsArray = Array.isArray(org_ids)
       ? org_ids.map((x) => parseInt(x, 10)).filter((n) => !isNaN(n))
       : (orgIdNum ? [orgIdNum] : (currentUser.org_ids || []));
+    const finalOrgIdNum = orgIdsArray.length > 0 ? orgIdsArray[0] : (orgIdNum || null);
 
     const newIsActive = typeof is_active === 'boolean' ? is_active : currentUser.is_active;
     const newAllowedPages = allowed_pages !== undefined
@@ -1394,7 +1396,7 @@ router.put('/users/:id', async (req, res) => {
         newEmail,
         newPhone,
         newRole,
-        orgIdNum,
+        finalOrgIdNum,
         orgIdsArray,
         emailChanged ? false : newIsActive,
         newStatus,
@@ -1408,31 +1410,42 @@ router.put('/users/:id', async (req, res) => {
     const updatedUser = updatedRows[0];
 
     // 3. Sync into org_users table
-    if (newEmail && orgIdNum) {
+    if (newEmail) {
       try {
         if (emailChanged && currentEmail) {
           await centralPool.query('DELETE FROM org_users WHERE LOWER(email) = LOWER($1)', [currentEmail]);
         }
 
-        await centralPool.query(
-          `INSERT INTO org_users (org_id, name, email, password, role, is_active, allowed_pages)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
-           ON CONFLICT (email, org_id) DO UPDATE SET
-             name = EXCLUDED.name,
-             role = EXCLUDED.role,
-             is_active = EXCLUDED.is_active,
-             allowed_pages = EXCLUDED.allowed_pages,
-             updated_at = NOW()`,
-          [
-            orgIdNum,
-            newUsername,
-            newEmail,
-            currentUser.password || '',
-            newRole === 'admin' ? 'org_admin' : 'org_user',
-            emailChanged ? false : newIsActive,
-            newAllowedPages,
-          ]
-        );
+        if (orgIdsArray.length > 0) {
+          await centralPool.query(
+            'DELETE FROM org_users WHERE LOWER(email) = LOWER($1) AND NOT (org_id = ANY($2::int[]))',
+            [newEmail, orgIdsArray]
+          );
+
+          for (const oId of orgIdsArray) {
+            await centralPool.query(
+              `INSERT INTO org_users (org_id, name, email, password, role, is_active, allowed_pages)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               ON CONFLICT (email, org_id) DO UPDATE SET
+                 name = EXCLUDED.name,
+                 role = EXCLUDED.role,
+                 is_active = EXCLUDED.is_active,
+                 allowed_pages = EXCLUDED.allowed_pages,
+                 updated_at = NOW()`,
+              [
+                oId,
+                newUsername,
+                newEmail,
+                currentUser.password || '',
+                newRole === 'admin' ? 'org_admin' : 'org_user',
+                emailChanged ? false : newIsActive,
+                newAllowedPages,
+              ]
+            );
+          }
+        } else {
+          await centralPool.query('DELETE FROM org_users WHERE LOWER(email) = LOWER($1)', [newEmail]);
+        }
       } catch (syncErr) {
         console.warn('[superadmin/users] org_users sync warning:', syncErr.message);
       }
@@ -1558,25 +1571,36 @@ router.patch('/users/:id/status', async (req, res) => {
   try {
     const userId = parseInt(req.params.id, 10);
     const { is_active } = req.body;
+    const isActiveBool = Boolean(is_active);
+    const newStatus = isActiveBool ? 'active' : 'inactive';
 
     const { rows } = await centralPool.query(
       `UPDATE users SET
          is_active = $1,
+         status = $2,
          updated_at = NOW()
-       WHERE id = $2 AND deleted_at IS NULL
-       RETURNING id, username, email, is_active`,
-      [Boolean(is_active), userId]
+       WHERE id = $3 AND deleted_at IS NULL
+       RETURNING id, username, email, is_active, status`,
+      [isActiveBool, newStatus, userId]
     );
 
     if (rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
+    // Also sync org_users table so tenant-level access reflects the status change immediately
+    if (rows[0].email) {
+      await centralPool.query(
+        'UPDATE org_users SET is_active = $1, updated_at = NOW() WHERE LOWER(email) = LOWER($2)',
+        [isActiveBool, rows[0].email]
+      ).catch(() => {});
+    }
+
     await logAudit(req, {
       target: rows[0].username,
       target_type: 'user',
       action: rows[0].is_active ? 'ACTIVATE_USER' : 'DEACTIVATE_USER',
-      details: { userId, is_active: rows[0].is_active },
+      details: { userId, is_active: rows[0].is_active, status: rows[0].status },
     });
 
     return res.json({
@@ -1606,14 +1630,24 @@ router.delete('/users/:id', async (req, res) => {
     const { rows } = await centralPool.query(
       `UPDATE users SET
          deleted_at = NOW(),
-         is_active = FALSE
+         is_active = FALSE,
+         status = 'inactive',
+         updated_at = NOW()
        WHERE id = $1 AND deleted_at IS NULL
-       RETURNING id, username`,
+       RETURNING id, username, email`,
       [userId]
     );
 
     if (rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Clean up org memberships
+    if (rows[0].email) {
+      await centralPool.query(
+        'DELETE FROM org_users WHERE LOWER(email) = LOWER($1)',
+        [rows[0].email]
+      ).catch(() => {});
     }
 
     await logAudit(req, {
