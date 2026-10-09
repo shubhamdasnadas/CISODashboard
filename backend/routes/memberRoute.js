@@ -160,10 +160,10 @@ router.get('/members', async (req, res) => {
 });
 
 // Ensures a users-table account exists for this member
-async function ensureUserAccount({ email, name, password, role, orgId, allowed_pages, invitedBy }) {
+async function ensureUserAccount({ email, name, password, role, orgId, allowed_pages, invitedBy, req }) {
   const isInvite = !password || !String(password).trim();
   const token = isInvite ? crypto.randomBytes(32).toString('hex') : null;
-  const expiresAt = isInvite ? new Date(Date.now() + 24 * 60 * 60 * 1000) : null;
+  const expiresAt = isInvite ? new Date(Date.now() + 24 * 60 * 1000 * 60) : null;
   const status = isInvite ? 'pending' : 'active';
   const isActive = !isInvite;
 
@@ -244,6 +244,7 @@ async function ensureUserAccount({ email, name, password, role, orgId, allowed_p
         invitedBy: invitedBy || 'Organisation Admin',
         role: sysRole,
         orgName,
+        req,
       });
     } catch (mailErr) {
       console.error('[memberRoute] Send invite email error:', mailErr.message);
@@ -278,6 +279,7 @@ router.post('/members', async (req, res) => {
       orgId,
       allowed_pages: Array.isArray(allowed_pages) && allowed_pages.length > 0 ? allowed_pages : null,
       invitedBy: req.user?.username || 'Organisation Admin',
+      req,
     });
 
     // 2. Sync to `org_users`

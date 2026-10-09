@@ -606,8 +606,7 @@ export function SideLegendDonut({
           <div className="flex items-center justify-between text-[9px] font-bold uppercase tracking-wider text-[var(--muted)] px-2 pb-1 border-b border-[var(--card-border)]/50 mb-0.5">
             <span>Category</span>
             <div className="flex items-center gap-1.5 sm:gap-2 text-right">
-              <span>Cur (%)</span>
-              <span className="min-w-[28px] text-right">Prev</span>
+              <span className="min-w-[28px] text-right">(%)</span>
               <span className="min-w-[42px] text-right">vs Prev</span>
             </div>
           </div>
@@ -635,17 +634,9 @@ export function SideLegendDonut({
                 </span>
               </div>
               <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 text-right">
-                <span className="text-[11px] font-bold text-[var(--foreground)]">
-                  {d.val.toLocaleString()}
-                </span>
-                <span className="text-[10px] font-semibold text-[var(--muted)] min-w-[26px] text-right">
+                <span className="text-[10px] font-semibold text-[var(--muted)] min-w-[28px] text-right">
                   {d.pct}%
                 </span>
-                {d.hasComparison && (
-                  <span className="text-[10px] font-medium text-[var(--muted)] min-w-[28px] text-right" title={`Prior count: ${d.prevVal.toLocaleString()}`}>
-                    {d.prevVal.toLocaleString()}
-                  </span>
-                )}
                 {d.hasComparison && (
                   <span
                     className={`inline-flex items-center justify-center gap-0.5 px-1.5 py-0.5 rounded text-[9.5px] font-bold tracking-tight min-w-[42px] ${

@@ -1,4 +1,5 @@
 const { sendEmail } = require('./mailer');
+const { getAppUrl } = require('./networkIp');
 
 /**
  * Format a date string into readable format: "08 Oct 2026"
@@ -28,9 +29,11 @@ async function sendLicenseExpiredEmail({
   reason,
   deploymentMode = 'online',
   installId,
+  req,
+  appUrl,
 }) {
-  const appUrl = process.env.APP_URL || 'http://localhost:5173';
-  const consoleUrl = `${appUrl}/superadmin-console`;
+  const baseUrl = appUrl || getAppUrl(req);
+  const consoleUrl = `${baseUrl}/superadmin-console`;
 
   const formattedStart = formatDate(startDate);
   const formattedEnd = formatDate(endDate);
@@ -177,9 +180,11 @@ async function sendLicenseWarningEmail({
   daysRemaining,
   endDate,
   deploymentMode = 'online',
+  req,
+  appUrl,
 }) {
-  const appUrl = process.env.APP_URL || 'http://localhost:5173';
-  const consoleUrl = `${appUrl}/superadmin-console`;
+  const baseUrl = appUrl || getAppUrl(req);
+  const consoleUrl = `${baseUrl}/superadmin-console`;
   const formattedEnd = formatDate(endDate);
 
   const subject = `⏳ License Expiring in ${daysRemaining} Days: "${orgName}" (${slug})`;

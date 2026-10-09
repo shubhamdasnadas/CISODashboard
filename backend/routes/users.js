@@ -168,6 +168,7 @@ router.post('/', authMiddleware, requireSuperAdmin, async (req, res) => {
             invitedBy: req.user?.username || 'SuperAdmin',
             role: role || existingUser.role || 'member',
             orgName: addedOrgNames,
+            req,
           });
         } catch (mailErr) {
           console.error('[users] Error sending user invite email on multi-org add:', mailErr.message);
@@ -278,6 +279,7 @@ router.post('/', authMiddleware, requireSuperAdmin, async (req, res) => {
           invitedBy: req.user?.username || 'SuperAdmin',
           role,
           orgName,
+          req,
         });
       } catch (mailErr) {
         console.error('[users] Error sending user invite email:', mailErr.message);
@@ -347,6 +349,7 @@ router.post('/:id/resend-invite', authMiddleware, requireSuperAdmin, async (req,
       invitedBy: req.user?.username || 'SuperAdmin',
       role: user.role || 'member',
       orgName,
+      req,
     });
 
     return res.json({
@@ -524,6 +527,7 @@ router.put('/:id', authMiddleware, requireSuperAdmin, async (req, res) => {
           invitedBy: req.user?.username || 'SuperAdmin',
           role: newRole,
           orgName,
+          req,
         });
         emailSent = true;
       } catch (mailErr) {

@@ -1,4 +1,5 @@
 const nodemailer = require('nodemailer');
+const { getAppUrl } = require('./networkIp');
 
 /**
  * Lazily-created, cached nodemailer transport.
@@ -98,9 +99,9 @@ async function sendEmail({ to, subject, text, html }) {
 /**
  * Send a branded SuperAdmin Password Setup Invitation Email (Image #23 style).
  */
-async function sendSuperAdminInviteEmail({ to, name, phone, token, invitedBy }) {
-  const appUrl = process.env.APP_URL || 'http://localhost:5173';
-  const setupUrl = `${appUrl}/setpassword?token=${encodeURIComponent(token)}&email=${encodeURIComponent(to)}`;
+async function sendSuperAdminInviteEmail({ to, name, phone, token, invitedBy, req, appUrl }) {
+  const baseUrl = appUrl || getAppUrl(req);
+  const setupUrl = `${baseUrl}/setpassword?token=${encodeURIComponent(token)}&email=${encodeURIComponent(to)}`;
 
   const subject = 'Action Required: Set up your CISO Dashboard SuperAdmin Password';
 
@@ -230,9 +231,9 @@ async function sendSuperAdminInviteEmail({ to, name, phone, token, invitedBy }) 
 /**
  * Send a branded User / Member Password Setup Invitation Email (Image #23 style).
  */
-async function sendUserInviteEmail({ to, name, phone, token, invitedBy, role = 'Member', orgName }) {
-  const appUrl = process.env.APP_URL || 'http://localhost:5173';
-  const setupUrl = `${appUrl}/setpassword?token=${encodeURIComponent(token)}&email=${encodeURIComponent(to)}`;
+async function sendUserInviteEmail({ to, name, phone, token, invitedBy, role = 'Member', orgName, req, appUrl }) {
+  const baseUrl = appUrl || getAppUrl(req);
+  const setupUrl = `${baseUrl}/setpassword?token=${encodeURIComponent(token)}&email=${encodeURIComponent(to)}`;
 
   const roleLabels = {
     superAdmin: 'SuperAdmin (Full Platform Access)',

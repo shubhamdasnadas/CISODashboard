@@ -596,8 +596,7 @@ function ImprovedDonut({ data, onSliceClick, isPie = false, days }) {
         <div className="flex items-center justify-between text-[9px] font-bold uppercase tracking-wider text-[var(--muted)] px-2 pb-1 border-b border-[var(--card-border)]/50 mb-0.5">
           <span>Category</span>
           <div className="flex items-center gap-1.5 sm:gap-2 text-right">
-            <span>Cur (%)</span>
-            <span className="min-w-[28px] text-right">Prev</span>
+            <span className="min-w-[28px] text-right">(%)</span>
             <span className="min-w-[42px] text-right">vs Prev</span>
           </div>
         </div>
@@ -622,14 +621,8 @@ function ImprovedDonut({ data, onSliceClick, isPie = false, days }) {
                 </span>
               </div>
               <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0 text-right">
-                <span className="text-[11px] font-bold text-[var(--foreground)]">
-                  {fmtNum(item.val)}
-                </span>
-                <span className="text-[10px] font-semibold text-[var(--muted)] min-w-[26px] text-right">
+                <span className="text-[10px] font-semibold text-[var(--muted)] min-w-[28px] text-right">
                   {item.pct}%
-                </span>
-                <span className="text-[10px] font-medium text-[var(--muted)] min-w-[28px] text-right" title={`Prior count: ${fmtNum(item.prevVal)}`}>
-                  {fmtNum(item.prevVal)}
                 </span>
                 <span
                   className={`inline-flex items-center justify-center gap-0.5 px-1.5 py-0.5 rounded text-[9.5px] font-bold tracking-tight min-w-[42px] ${

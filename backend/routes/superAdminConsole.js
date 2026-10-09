@@ -1094,6 +1094,7 @@ router.post('/users', async (req, res) => {
           invitedBy: req.user?.username || 'SuperAdmin',
           role: role || existingUser.role || 'member',
           orgName: addedOrgNames,
+          req,
         });
       } catch (mailErr) {
         console.error('[superadmin/users] Failed to send email on adding existing user to org:', mailErr.message);
@@ -1201,6 +1202,7 @@ router.post('/users', async (req, res) => {
         invitedBy: req.user?.username || 'SuperAdmin',
         role: role || 'member',
         orgName,
+        req,
       });
     } catch (mailErr) {
       console.error('[superadmin/users] Failed to send invite email:', mailErr.message);
@@ -1269,6 +1271,7 @@ router.post('/users/:id/resend-invite', async (req, res) => {
       invitedBy: req.user?.username || 'SuperAdmin',
       role: user.role || 'member',
       orgName,
+      req,
     });
 
     await logAudit(req, {
@@ -1446,6 +1449,7 @@ router.put('/users/:id', async (req, res) => {
             phone: newPhone || null,
             token,
             invitedBy: req.user?.username || 'SuperAdmin',
+            req,
           });
           emailSent = true;
         } else {
@@ -1462,6 +1466,7 @@ router.put('/users/:id', async (req, res) => {
             invitedBy: req.user?.username || 'SuperAdmin',
             role: newRole,
             orgName,
+            req,
           });
           emailSent = true;
         }
@@ -1764,6 +1769,7 @@ router.post('/admins', async (req, res) => {
         phone: superAdminPhone || null,
         token,
         invitedBy: req.user?.username || 'SuperAdmin',
+        req,
       });
     } catch (mailErr) {
       console.error('[superadmin/admins] Mail send failed:', mailErr.message);
@@ -1839,6 +1845,7 @@ router.post('/admins/:id/resend-invite', async (req, res) => {
       phone: admin.phone_number || null,
       token,
       invitedBy: req.user?.username || 'SuperAdmin',
+      req,
     });
 
     await logAudit(req, {
