@@ -1,5 +1,33 @@
 const express = require('express');
 const router = express.Router();
+const syncService = require('../services/syncService');
+
+// GET /api/analytics/aggregate — Redis-accelerated whole-analytics snapshot
+router.get('/aggregate', async (req, res) => {
+  const orgSlug = req.orgSlug;
+  try {
+    let result = await syncService.readCached(orgSlug, 'analytics-aggregate');
+    if (result.source === 'miss') {
+      try {
+        await syncService.syncAndCache(orgSlug, 'analytics-aggregate');
+        result = await syncService.readCached(orgSlug, 'analytics-aggregate');
+      } catch (syncErr) {
+        console.warn('[analytics] aggregate on-demand sync fallback:', syncErr.message);
+      }
+    }
+    if (result.source === 'miss') {
+      return res.status(404).json({ source: 'miss', message: 'No analytics cache available' });
+    }
+    res.json({
+      source: result.source,
+      orgSlug,
+      data: result.payload,
+      updatedAt: result.updatedAt,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
 
 // Helper: build a WHERE clause (and params) for a date window against a
 // timestamp column. Works with both DATE(...) friendly text columns and

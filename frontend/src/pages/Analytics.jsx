@@ -4134,6 +4134,8 @@ export default function Analytics({ printMode: printModeProp = false }) {
     });
   };
 
+  const [aggSource, setAggSource] = useState(null);
+
   useEffect(() => {
     let isMounted = true;
     let fallbackTimer = null;
@@ -4164,18 +4166,23 @@ export default function Analytics({ printMode: printModeProp = false }) {
       }, 8000);
     }
 
-    Promise.allSettled([
-      loadAgents(),
-      loadCves(),
-      loadThreats(),
-      loadDevices(),
-      loadApps(),
-      loadCheckpoint(),
-      loadFirewall(),
-      loadZoho(),
-      loadMicrosoft(),
-    ]).finally(() => {
-      if (isMounted) {
+    // ── Ultra-Fast Redis Cache-Aside Aggregation (<1s) ──────────────────────────
+    api.get('/cache/analytics-aggregate', { timeout: apiTimeout })
+      .then((r) => {
+        if (!isMounted) return;
+        setAggSource(r.data?.source || 'redis');
+        const agg = r.data?.data || {};
+
+        if (Array.isArray(agg.agents)) setAgents(agg.agents);
+        if (Array.isArray(agg.cves)) setCves(agg.cves);
+        if (Array.isArray(agg.threats)) setThreats(agg.threats);
+        if (Array.isArray(agg.devices)) setDevices(agg.devices);
+        if (Array.isArray(agg.apps)) setApps(agg.apps);
+        if (Array.isArray(agg.cpEvents)) setCpEvents(agg.cpEvents);
+        if (Array.isArray(agg.fwReports)) setFwReports(agg.fwReports);
+        if (Array.isArray(agg.zohoTickets)) setZohoTickets(agg.zohoTickets);
+        if (agg.msData && Object.keys(agg.msData).length > 0) setMsData(agg.msData);
+
         setLoaded(true);
         if (isPrint) {
           setTimeout(() => {
@@ -4185,44 +4192,93 @@ export default function Analytics({ printMode: printModeProp = false }) {
             }
           }, 300);
         }
-      }
-    });
+      })
+      .catch(() => {
+        // Fallback to parallel loaders if aggregate fails
+        Promise.allSettled([
+          loadAgents(),
+          loadCves(),
+          loadThreats(),
+          loadDevices(),
+          loadApps(),
+          loadCheckpoint(),
+          loadFirewall(),
+          loadZoho(),
+          loadMicrosoft(),
+        ]).finally(() => {
+          if (isMounted) {
+            setLoaded(true);
+            if (isPrint) {
+              setTimeout(() => {
+                window.__REPORT_READY__ = true;
+                if (typeof document !== 'undefined' && document.body) {
+                  document.body.setAttribute('data-report-ready', 'true');
+                }
+              }, 300);
+            }
+          }
+        });
+      });
 
     return () => {
       isMounted = false;
       if (fallbackTimer) clearTimeout(fallbackTimer);
     };
-  }, []);
+  }, [currentOrgName]);
 
   // ── Sync handlers ───────────────────────────────────────────────────────────
   const syncSecurity = async () => {
     markSyncing('security', true);
-    try { await api.post('/sentinelone/sync'); await Promise.all([loadAgents(), loadCves(), loadThreats()]); } catch { /* ignore */ }
+    try {
+      await api.post('/sentinelone/sync');
+      await Promise.all([loadAgents(), loadCves(), loadThreats()]);
+      api.post('/cache/analytics-aggregate/refresh').catch(() => {});
+    } catch { /* ignore */ }
     finally { markSyncing('security', false); }
   };
   const syncMdm = async () => {
     markSyncing('mdm', true);
-    try { await api.post('/hexnode/sync'); await Promise.all([loadDevices(), loadApps()]); } catch { /* ignore */ }
+    try {
+      await api.post('/hexnode/sync');
+      await Promise.all([loadDevices(), loadApps()]);
+      api.post('/cache/analytics-aggregate/refresh').catch(() => {});
+    } catch { /* ignore */ }
     finally { markSyncing('mdm', false); }
   };
   const syncCheckpoint = async () => {
     markSyncing('checkpoint', true);
-    try { await api.post('/harmony/sync-db').catch(() => api.post('/harmony/sync')); await loadCheckpoint(); } catch { /* ignore */ }
+    try {
+      await api.post('/harmony/sync-db').catch(() => api.post('/harmony/sync'));
+      await loadCheckpoint();
+      api.post('/cache/analytics-aggregate/refresh').catch(() => {});
+    } catch { /* ignore */ }
     finally { markSyncing('checkpoint', false); }
   };
   const syncFirewall = async () => {
     markSyncing('firewall', true);
-    try { await api.post('/firewall/collect'); await loadFirewall(); } catch { /* ignore */ }
+    try {
+      await api.post('/firewall/collect');
+      await loadFirewall();
+      api.post('/cache/analytics-aggregate/refresh').catch(() => {});
+    } catch { /* ignore */ }
     finally { markSyncing('firewall', false); }
   };
   const syncZoho = async () => {
     markSyncing('zoho', true);
-    try { await api.post('/zoho/credentials-sync'); await loadZoho(); } catch { /* ignore */ }
+    try {
+      await api.post('/zoho/credentials-sync');
+      await loadZoho();
+      api.post('/cache/analytics-aggregate/refresh').catch(() => {});
+    } catch { /* ignore */ }
     finally { markSyncing('zoho', false); }
   };
   const syncMicrosoft = async () => {
     markSyncing('microsoft', true);
-    try { await api.post('/microsoft/sync'); await loadMicrosoft(); } catch { /* ignore */ }
+    try {
+      await api.post('/microsoft/sync');
+      await loadMicrosoft();
+      api.post('/cache/analytics-aggregate/refresh').catch(() => {});
+    } catch { /* ignore */ }
     finally { markSyncing('microsoft', false); }
   };
 
@@ -4533,9 +4589,23 @@ export default function Analytics({ printMode: printModeProp = false }) {
         {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-[var(--foreground)]">Analytics</h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold text-[var(--foreground)]">Analytics</h1>
+              {aggSource && (
+                <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2.5 py-0.5 rounded-full border ${
+                  aggSource === 'redis'
+                    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                    : aggSource === 'postgres'
+                    ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 border-amber-200 dark:border-amber-800'
+                    : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300 border-gray-200 dark:border-gray-700'
+                }`}>
+                  <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                  {aggSource === 'redis' ? 'Live · Cached' : aggSource === 'postgres' ? 'DB Fallback' : aggSource}
+                </span>
+              )}
+            </div>
             <p className="text-sm text-[var(--muted)] mt-0.5">
-              Live security &amp; operations widgets across all integrated modules · data synced from the database
+              Live security &amp; operations widgets across all integrated modules · accelerated via Redis cache
             </p>
           </div>
 

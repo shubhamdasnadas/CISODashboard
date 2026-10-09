@@ -405,13 +405,13 @@ export default function Dashboard() {
       });
   }, [currentOrg?.id]);
 
-  // ── Ticketing data (with real-time automatic polling) ────────────────────────
+  // ── Ticketing data (background refresh & polling) ─────────────────────────
   useEffect(() => {
     if (!currentOrg) return;
     let isMounted = true;
 
     const fetchTickets = (isInitial = false) => {
-      if (isInitial) setTicketLoading(true);
+      if (isInitial && ticketData.length === 0) setTicketLoading(true);
       api.get('/zoho/tickets-db')
         .then((r) => {
           if (isMounted) {
@@ -419,14 +419,13 @@ export default function Dashboard() {
           }
         })
         .catch(() => {
-          if (isMounted && isInitial) setTicketData([]);
+          if (isMounted && isInitial && ticketData.length === 0) setTicketData([]);
         })
         .finally(() => {
           if (isMounted && isInitial) setTicketLoading(false);
         });
     };
 
-    fetchTickets(true);
     const interval = setInterval(() => fetchTickets(false), 20000);
 
     return () => {
@@ -435,13 +434,13 @@ export default function Dashboard() {
     };
   }, [currentOrg?.id]);
 
-  // ── MDM data ────────────────────────────────────────────────────────────────
+  // ── MDM data (fallback if not loaded by aggregate) ─────────────────────────
   useEffect(() => {
     if (!currentOrg) return;
-    setMdmLoading(true);
+    if (mdmData.length > 0) return;
     api.get('/hexnode/db/devices')
       .then((r) => setMdmData(Array.isArray(r.data?.data) ? r.data.data : []))
-      .catch(() => setMdmData([]))
+      .catch(() => {})
       .finally(() => setMdmLoading(false));
   }, [currentOrg?.id]);
 

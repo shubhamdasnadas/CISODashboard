@@ -18,13 +18,22 @@ router.get('/health', async (req, res) => {
 });
 
 // GET /api/cache/:resourceKey — cache-aside read for the CURRENT org (req.orgSlug).
-// Redis first; on miss, Postgres (never an external API). Responds with a
-// `source` field ("redis" | "postgres" | "miss") for debugging.
+// Redis first (<10ms); on miss, Postgres fallback (<50ms) and repopulates Redis.
+// If not yet present in Postgres, on-demand sync computes and populates Redis immediately.
 router.get('/:resourceKey', async (req, res) => {
   const { resourceKey } = req.params;
   const orgSlug = req.orgSlug; // server-resolved — never from client body
   try {
-    const result = await syncService.readCached(orgSlug, resourceKey);
+    let result = await syncService.readCached(orgSlug, resourceKey);
+    if (result.source === 'miss') {
+      try {
+        await syncService.syncAndCache(orgSlug, resourceKey);
+        result = await syncService.readCached(orgSlug, resourceKey);
+      } catch (syncErr) {
+        console.warn(`[cache] on-demand sync for ${resourceKey} failed:`, syncErr.message);
+      }
+    }
+
     if (result.source === 'miss') {
       return res.status(404).json({
         source: 'miss',

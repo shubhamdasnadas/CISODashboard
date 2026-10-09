@@ -35,6 +35,8 @@ const RESOURCES = {
   'zoho-tickets':       { ttl: 900, fetcher: fetchZohoTickets },
   // Whole-dashboard snapshot (covers the aggregate stat cards + all widgets).
   'dashboard-aggregate': { ttl: 120, fetcher: fetchDashboardAggregate },
+  // Whole-analytics snapshot (covers all modules on the Analytics page).
+  'analytics-aggregate': { ttl: 120, fetcher: fetchAnalyticsAggregate },
   // News sections.
   'news':               { ttl: 900, fetcher: fetchNews },
 };
@@ -122,27 +124,38 @@ async function fetchZohoTickets(orgSlug) {
 
 // Whole-dashboard snapshot — mirrors the /api/dashboard/aggregate response so
 // the main stat cards + every widget can be served from the cache. Reads the
-// per-org tables directly (no external call); the S1/Harmony/FW pieces are
+// per-org tables directly (no external call); the S1/Harmony/FW/Zoho/MDM pieces are
 // already kept fresh by their own cron syncs, so this is a fast DB aggregation.
 async function fetchDashboardAggregate(orgSlug) {
   const pool = getOrgPool(orgSlug);
   const [
     threatsRows, agentsRows, appAgentRows, appCveRows,
     deviceControlRows, rssRows, customAlertRows, harmonyRows, fwWidgetsRows,
+    zohoRows, hexnodeRows,
   ] = await Promise.all([
-    pool.query('SELECT data FROM s1_threats ORDER BY synced_at DESC'),
-    pool.query('SELECT data FROM s1_agents ORDER BY synced_at DESC'),
-    pool.query('SELECT data FROM s1_application_agent ORDER BY synced_at DESC'),
-    pool.query('SELECT data FROM s1_application_cve ORDER BY synced_at DESC'),
-    pool.query('SELECT data FROM s1_device_control ORDER BY synced_at DESC'),
-    pool.query('SELECT data FROM s1_rss ORDER BY synced_at DESC'),
-    pool.query('SELECT data FROM s1_custome_alert ORDER BY synced_at DESC'),
-    pool.query('SELECT * FROM checkpoint_events ORDER BY synced_at DESC'),
-    pool.query('SELECT * FROM firewall_widgets ORDER BY created_at ASC'),
+    pool.query('SELECT data FROM s1_threats ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+    pool.query('SELECT data FROM s1_agents ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+    pool.query('SELECT data FROM s1_application_agent ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+    pool.query('SELECT data FROM s1_application_cve ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+    pool.query('SELECT data FROM s1_device_control ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+    pool.query('SELECT data FROM s1_rss ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+    pool.query('SELECT data FROM s1_custome_alert ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+    pool.query('SELECT * FROM checkpoint_events ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+    pool.query('SELECT * FROM firewall_widgets ORDER BY created_at ASC').catch(() => ({ rows: [] })),
+    pool.query("SELECT data FROM zohotable WHERE data_name = 'ticket_data' LIMIT 1").catch(() => ({ rows: [] })),
+    pool.query('SELECT data FROM hexnode_devices ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
   ]);
 
   // Per-tool current vs previous-month counts (delta drives the badge).
   const allTools = await buildAllToolsSnapshot(pool);
+
+  let tickets = [];
+  if (zohoRows.rows[0]?.data) {
+    const raw = zohoRows.rows[0].data;
+    tickets = Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : []);
+  }
+
+  const devices = hexnodeRows.rows.map((r) => r.data).filter(Boolean);
 
   // NOTE: the per-user dashboard_layout is intentionally excluded here — it is
   // user-specific and fetched live from the DB on the client, not cached
@@ -159,6 +172,8 @@ async function fetchDashboardAggregate(orgSlug) {
     },
     harmony: { events: harmonyRows.rows },
     firewall: { widgets: fwWidgetsRows.rows },
+    ticketing: { tickets },
+    mdm: { devices },
     allTools,
     syncedAt: new Date().toISOString(),
   };
@@ -228,6 +243,175 @@ async function fetchNews(orgSlug) {
     byTerm[term] = r.rows;
   }
   return { terms, byTerm, syncedAt: new Date().toISOString() };
+}
+
+function toArray(v) {
+  if (!v) return null;
+  return Array.isArray(v) ? v : [v];
+}
+
+function extractFirewallTableHelper(raw) {
+  if (!raw) return null;
+  try {
+    const entry =
+      toArray(raw?.report?.result?.entry) ||
+      toArray(raw?.report?.result?.report?.entry) ||
+      toArray(raw?.response?.result?.report?.entry) ||
+      toArray(raw?.response?.result?.entry) ||
+      toArray(raw?.result?.report?.entry) ||
+      toArray(raw?.result?.entry) ||
+      toArray(raw?.entry);
+    if (entry && entry.length > 0) {
+      const colSet = new Set();
+      entry.forEach((item) => {
+        if (typeof item === 'object' && item !== null) {
+          Object.keys(item).forEach((k) => {
+            if (k === '@name') colSet.add('name');
+            else if (!k.startsWith('@')) colSet.add(k);
+          });
+        }
+      });
+      const columns = Array.from(colSet);
+      const rows = entry.map((item) => {
+        const row = {};
+        columns.forEach((col) => {
+          const rk = col === 'name' ? '@name' : col;
+          const value = item?.[rk] ?? item?.[col];
+          row[col] = typeof value === 'object' && value !== null && '#text' in value ? value['#text'] : (value ?? '');
+        });
+        return row;
+      });
+      return { columns, rows };
+    }
+    if (Array.isArray(raw)) {
+      return { columns: Array.from(new Set(raw.flatMap((item) => Object.keys(item || {})))), rows: raw };
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+// Whole-analytics snapshot — aggregates all data required by the Analytics page
+// into a single cached JSON payload so the entire Analytics view renders in < 1s.
+async function fetchAnalyticsAggregate(orgSlug) {
+  const pool = getOrgPool(orgSlug);
+
+  const FW_REPORT_NAMES = [
+    'risk-trend', 'top-attacker-sources', 'top-attacker-destinations',
+    'top-denied-destinations', 'top-denied-sources',
+    'top-attacks', 'top-connections',
+    'bandwidth-trend', 'threat-summary', 'blocked-websites',
+  ];
+
+  const MS_TABLES = [
+    { key: 'organization', table: 'ms_organization' },
+    { key: 'subscribedSkus', table: 'ms_subscribed_skus' },
+    { key: 'domains', table: 'ms_domains' },
+    { key: 'users', table: 'ms_users' },
+    { key: 'auditSignIns', table: 'ms_audit_sign_ins' },
+    { key: 'auditDirectory', table: 'ms_audit_directory' },
+    { key: 'auditProvisioning', table: 'ms_audit_provisioning' },
+    { key: 'riskyUsers', table: 'ms_risky_users' },
+    { key: 'riskDetections', table: 'ms_risk_detections' },
+    { key: 'riskyServicePrincipals', table: 'ms_risky_service_principals' },
+    { key: 'securityIncidents', table: 'ms_security_incidents' },
+    { key: 'securityAlerts', table: 'ms_security_alerts' },
+    { key: 'secureScores', table: 'ms_secure_scores' },
+    { key: 'secureScoreProfiles', table: 'ms_secure_score_profiles' },
+    { key: 'managedDevices', table: 'ms_managed_devices' },
+    { key: 'compliancePolicies', table: 'ms_compliance_policies' },
+    { key: 'deviceConfigurations', table: 'ms_device_configurations' },
+    { key: 'applications', table: 'ms_applications' },
+    { key: 'servicePrincipals', table: 'ms_service_principals' },
+    { key: 'serviceHealth', table: 'ms_service_health' },
+    { key: 'serviceIssues', table: 'ms_service_issues' },
+    { key: 'purviewTrigger', table: 'ms_purview_trigger' },
+    { key: 'purviewLabels', table: 'ms_purview_label' },
+    { key: 'mgmtActivitySubscriptions', table: 'ms_mgmt_activity_subscriptions' },
+    { key: 'defenderMachines', table: 'ms_defender_machines' },
+    { key: 'defenderAlerts', table: 'ms_defender_alerts' },
+    { key: 'defenderVulnerabilities', table: 'ms_defender_vulnerabilities' },
+    { key: 'defenderRecommendations', table: 'ms_defender_recommendations' },
+    { key: 'defenderSoftware', table: 'ms_defender_software' },
+    { key: 'defenderIndicators', table: 'ms_defender_indicators' },
+    { key: 'defenderInvestigations', table: 'ms_defender_investigations' },
+    { key: 'defenderLibraryFiles', table: 'ms_defender_library_files' },
+  ];
+
+  const [
+    agentsRows, cvesRows, threatsRows,
+    devicesRows, appsRows,
+    cpRows,
+    fwRows,
+    zohoRows,
+  ] = await Promise.all([
+    pool.query('SELECT data FROM s1_agents ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+    pool.query('SELECT data FROM s1_application_cve ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+    pool.query('SELECT data FROM s1_threats ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+    pool.query('SELECT data FROM hexnode_devices ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+    pool.query('SELECT data FROM hexnode_applications ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+    pool.query('SELECT * FROM checkpoint_events ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+    pool.query('SELECT report_name, data FROM firewall_reports').catch(() => ({ rows: [] })),
+    pool.query("SELECT data FROM zohotable WHERE data_name = 'ticket_data' LIMIT 1").catch(() => ({ rows: [] })),
+  ]);
+
+  const fwReportMap = {};
+  for (const r of fwRows.rows) {
+    if (r.report_name) fwReportMap[r.report_name] = r.data;
+  }
+  const fwReports = FW_REPORT_NAMES.map((name) => {
+    const raw = fwReportMap[name] || null;
+    const table = extractFirewallTableHelper(raw);
+    return { report: name, rows: table?.rows ?? [], columns: table?.columns ?? [] };
+  });
+
+  let zohoTickets = [];
+  if (zohoRows.rows[0]?.data) {
+    const raw = zohoRows.rows[0].data;
+    zohoTickets = Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : []);
+  }
+
+  const mapCpEvent = (e) => {
+    const ad = e.additional_data || e.additionalData || {};
+    return {
+      eventId: e.event_id, type: e.type, state: e.state, severity: e.severity,
+      description: e.description, senderAddress: e.sender_address,
+      receiverAddress: ad.receiver_address || ad.recipient_address || ad.receiverAddress || ad.recipientAddress || ad.to || null,
+      subject: ad.subject || ad.email_subject || ad.mail_subject || null,
+      threatType: e.threat_type || ad.threat_type || null,
+      mitigation: e.mitigation_action || ad.mitigation_action || null,
+      confidenceIndicator: (e.confidence_indicator ?? ad.confidence_indicator ?? ad.confidenceIndicator ?? e.threat_confidence ?? ad.threat_confidence ?? null) || null,
+      platform: e.mail_domain ?? e.platform ?? ad.platform ?? e.saas ?? ad.mail_domain ?? null,
+      eventCreated: e.event_created, saas: e.saas,
+    };
+  };
+  const cpEvents = cpRows.rows.map(mapCpEvent);
+
+  const msData = {};
+  await Promise.all(
+    MS_TABLES.map(async (ep) => {
+      try {
+        const { rows } = await pool.query(
+          `SELECT data, synced_at FROM ${ep.table} ORDER BY synced_at DESC LIMIT 1`
+        );
+        msData[ep.key] = rows[0] ? { data: rows[0].data, syncedAt: rows[0].synced_at } : null;
+      } catch {
+        msData[ep.key] = null;
+      }
+    })
+  );
+
+  return {
+    agents: agentsRows.rows.map((r) => r.data),
+    cves: cvesRows.rows.map((r) => r.data),
+    threats: threatsRows.rows.map((r) => r.data),
+    devices: devicesRows.rows.map((r) => r.data),
+    apps: appsRows.rows.map((r) => r.data),
+    cpEvents,
+    fwReports,
+    zohoTickets,
+    msData,
+    syncedAt: new Date().toISOString(),
+  };
 }
 
 // ── Distributed lock (prevents duplicate sync runs across instances) ──────────

@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const syncService = require('../services/syncService');
 
 // GET /api/dashboard/layout
 router.get('/layout', async (req, res) => {
@@ -31,42 +32,73 @@ router.put('/layout', async (req, res) => {
   }
 });
 
-// GET /api/dashboard/aggregate  — single endpoint that returns all data for the dashboard
+// GET /api/dashboard/aggregate  — single endpoint that returns all data for the dashboard with Redis acceleration
 router.get('/aggregate', async (req, res) => {
   try {
     const userId = req.user.userId;
     const pool = req.orgPool;
+    const orgSlug = req.orgSlug;
+
+    const [layoutRes, cacheRes] = await Promise.all([
+      pool.query('SELECT layout FROM dashboard_layout WHERE user_id = $1 LIMIT 1', [userId]).catch(() => ({ rows: [] })),
+      syncService.readCached(orgSlug, 'dashboard-aggregate').catch(() => ({ source: 'miss' })),
+    ]);
+
+    let aggData = cacheRes?.payload;
+    if (!aggData || cacheRes?.source === 'miss') {
+      try {
+        await syncService.syncAndCache(orgSlug, 'dashboard-aggregate');
+        const fresh = await syncService.readCached(orgSlug, 'dashboard-aggregate');
+        aggData = fresh?.payload;
+      } catch (e) {
+        console.warn('[dashboard] aggregate sync fallback:', e.message);
+      }
+    }
+
+    if (aggData) {
+      return res.json({
+        layout: layoutRes.rows[0]?.layout ?? null,
+        ...aggData,
+      });
+    }
 
     const [
-      layoutRows,
       threatsRows,
       agentsRows,
       appAgentRows,
       appCveRows,
       deviceControlRows,
       rssRows,
+      customAlertRows,
       harmonyRows,
       fwWidgetsRows,
+      zohoRows,
+      hexnodeRows,
     ] = await Promise.all([
-      pool.query('SELECT layout FROM dashboard_layout WHERE user_id = $1 LIMIT 1', [userId]),
-      pool.query('SELECT data FROM s1_threats ORDER BY synced_at DESC'),
-      pool.query('SELECT data FROM s1_agents ORDER BY synced_at DESC'),
-      pool.query('SELECT data FROM s1_application_agent ORDER BY synced_at DESC'),
-      pool.query('SELECT data FROM s1_application_cve ORDER BY synced_at DESC'),
-      pool.query('SELECT data FROM s1_device_control ORDER BY synced_at DESC'),
-      pool.query('SELECT data FROM s1_rss ORDER BY synced_at DESC'),
-      pool.query('SELECT * FROM checkpoint_events ORDER BY synced_at DESC'),
-      pool.query('SELECT * FROM firewall_widgets ORDER BY created_at ASC'),
+      pool.query('SELECT data FROM s1_threats ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+      pool.query('SELECT data FROM s1_agents ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+      pool.query('SELECT data FROM s1_application_agent ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+      pool.query('SELECT data FROM s1_application_cve ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+      pool.query('SELECT data FROM s1_device_control ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+      pool.query('SELECT data FROM s1_rss ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+      pool.query('SELECT data FROM s1_custome_alert ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+      pool.query('SELECT * FROM checkpoint_events ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+      pool.query('SELECT * FROM firewall_widgets ORDER BY created_at ASC').catch(() => ({ rows: [] })),
+      pool.query("SELECT data FROM zohotable WHERE data_name = 'ticket_data' LIMIT 1").catch(() => ({ rows: [] })),
+      pool.query('SELECT data FROM hexnode_devices ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
     ]);
 
-    // ── All-tools snapshot with current vs previous month comparison ──────────
-    // Each tool exposes `current` (records synced this month) and `previous`
-    // (records synced during the previous calendar month). The bubble chart on
-    // the dashboard uses this to render a delta badge per tool.
     const allTools = await buildAllToolsSnapshot(pool);
 
+    let tickets = [];
+    if (zohoRows.rows[0]?.data) {
+      const raw = zohoRows.rows[0].data;
+      tickets = Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : []);
+    }
+    const devices = hexnodeRows.rows.map(r => r.data).filter(Boolean);
+
     res.json({
-      layout: layoutRows.rows[0]?.layout ?? null,
+      layout: layoutRes.rows[0]?.layout ?? null,
       sentinelone: {
         threats: threatsRows.rows.map(r => r.data),
         agents: agentsRows.rows.map(r => r.data),
@@ -74,6 +106,7 @@ router.get('/aggregate', async (req, res) => {
         applicationCve: appCveRows.rows.map(r => r.data),
         deviceControl: deviceControlRows.rows.map(r => r.data),
         rss: rssRows.rows.map(r => r.data),
+        customAlerts: customAlertRows.rows.map(r => r.data),
       },
       harmony: {
         events: harmonyRows.rows,
@@ -81,6 +114,8 @@ router.get('/aggregate', async (req, res) => {
       firewall: {
         widgets: fwWidgetsRows.rows,
       },
+      ticketing: { tickets },
+      mdm: { devices },
       allTools,
     });
   } catch (err) {
