@@ -361,8 +361,8 @@ function TopBar({ onMenuClick }) {
             </button>
 
             {open && (
-              <div className="absolute top-full left-0 mt-1.5 w-80 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl shadow-xl z-50 overflow-hidden">
-                <div className="px-4 pt-3 pb-2 border-b border-[var(--card-border)]/50">
+              <div className="absolute top-full left-0 mt-1.5 w-80 bg-white dark:bg-[#131c33] border border-[var(--card-border)] rounded-2xl shadow-xl z-50 overflow-hidden">
+                <div className="px-4 pt-3 pb-2 border-b border-[var(--card-border)]/50 bg-[var(--muted-bg)]/40">
                   <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider">Organizations</p>
                 </div>
                 <div className="max-h-64 overflow-y-auto divide-y divide-[var(--card-border)]/40">
