@@ -397,7 +397,7 @@ export default function Login() {
             />
           </div>
 
-          {/* Orgs preview */}
+          {/* Orgs preview
           {userStatus.exists && userStatus.organisations?.length > 0 && (
             <div className="bg-[var(--muted-bg)] rounded-xl p-4">
               <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wide mb-2">Connected organisations</p>
@@ -425,7 +425,7 @@ export default function Login() {
                 })}
               </div>
             </div>
-          )}
+          )} */}
 
           {/* Password */}
           {showPassword && (
