@@ -764,7 +764,7 @@ export default function SuperAdminConsole() {
                                     #{org.id}
                                   </span>
                                 </div>
-                                <div className="text-xs sm:text-sm text-[var(--muted)] flex items-center gap-2 truncate mt-0.5">
+                                {/* <div className="text-xs sm:text-sm text-[var(--muted)] flex items-center gap-2 truncate mt-0.5">
                                   <span className="font-mono text-xs opacity-75">/{org.slug}</span>
                                   {org.email && (
                                     <>
@@ -772,7 +772,7 @@ export default function SuperAdminConsole() {
                                       <span className="truncate">{org.email}</span>
                                     </>
                                   )}
-                                </div>
+                                </div> */}
                               </div>
                             </div>
                           </td>

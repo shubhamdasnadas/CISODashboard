@@ -298,7 +298,7 @@ function TicketListCard({ tickets, loading, onTicketClick }) {
   return (
     <section className="rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] p-5 shadow-sm">
       <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <h2 className="text-xl font-bold text-[var(--foreground)]">Ticket Details</h2>
+        {/* <h2 className="text-xl font-bold text-[var(--foreground)]">Ticket Details</h2> */}
         <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[620px]">
           <label className="text-sm font-medium text-[var(--foreground)]">
             <span className="mb-1 block">Assignee</span>
@@ -346,8 +346,8 @@ function TicketListCard({ tickets, loading, onTicketClick }) {
                             setExpanded(p => ({ ...p, [key]: !p[key] }));
                           }}
                           className={`rounded-lg px-2.5 py-1 text-xs font-bold transition-all cursor-pointer ${isExp
-                              ? 'bg-indigo-600 text-white shadow-sm'
-                              : 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800'
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800'
                             }`}
                         >
                           {isExp ? '▲ Hide' : '▼ Track'}
@@ -521,13 +521,12 @@ function TicketTrendWidget({ tickets, activeDay = 'Mon', setActiveDay, onBarClic
                       if (setActiveDay) setActiveDay(row.day);
                       if (onBarClick && count > 0) onBarClick(row.day);
                     }}
-                    className={`mb-2 px-2 py-0.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
-                      isSel
-                        ? 'bg-indigo-600 text-white shadow-md scale-105 ring-2 ring-indigo-400/50'
-                        : count > 0
+                    className={`mb-2 px-2 py-0.5 rounded-md text-xs font-bold transition-all cursor-pointer ${isSel
+                      ? 'bg-indigo-600 text-white shadow-md scale-105 ring-2 ring-indigo-400/50'
+                      : count > 0
                         ? 'text-[var(--foreground)] bg-[var(--card-bg)] hover:bg-indigo-50 dark:hover:bg-indigo-950/50 hover:text-indigo-600 border border-[var(--card-border)]'
                         : 'text-[var(--muted)]'
-                    }`}
+                      }`}
                   >
                     {count}
                   </button>
@@ -542,11 +541,10 @@ function TicketTrendWidget({ tickets, activeDay = 'Mon', setActiveDay, onBarClic
                     }}
                   >
                     <div
-                      className={`w-full rounded-t-lg transition-all duration-500 ease-out ${
-                        isSel
-                          ? 'ring-2 ring-indigo-400 ring-inset brightness-110'
-                          : ''
-                      }`}
+                      className={`w-full rounded-t-lg transition-all duration-500 ease-out ${isSel
+                        ? 'ring-2 ring-indigo-400 ring-inset brightness-110'
+                        : ''
+                        }`}
                       style={{
                         height: `${heightPct}%`,
                         backgroundColor: barColors[idx % barColors.length],
@@ -556,9 +554,8 @@ function TicketTrendWidget({ tickets, activeDay = 'Mon', setActiveDay, onBarClic
 
                   {/* Day Label */}
                   <div
-                    className={`mt-2 text-xs font-semibold transition-colors ${
-                      isSel ? 'text-indigo-600 dark:text-indigo-400 font-bold' : 'text-[var(--muted)]'
-                    }`}
+                    className={`mt-2 text-xs font-semibold transition-colors ${isSel ? 'text-indigo-600 dark:text-indigo-400 font-bold' : 'text-[var(--muted)]'
+                      }`}
                   >
                     {row.day}
                   </div>
@@ -734,9 +731,8 @@ function ResolutionHeatmapWidget({ tickets, loading, onCellClick }) {
                     return (
                       <div
                         key={b}
-                        className={`rounded-lg border border-[var(--card-border)] py-2 px-1 text-center transition-all ${
-                          cnt > 0 ? 'cursor-pointer hover:scale-105 hover:shadow-md' : 'opacity-60'
-                        }`}
+                        className={`rounded-lg border border-[var(--card-border)] py-2 px-1 text-center transition-all ${cnt > 0 ? 'cursor-pointer hover:scale-105 hover:shadow-md' : 'opacity-60'
+                          }`}
                         style={{
                           backgroundColor: cnt ? `rgba(99, 102, 241, ${0.15 + intensity * 0.55})` : 'var(--card-bg)',
                         }}
@@ -848,9 +844,8 @@ function MonthlyVolumeWidget({ tickets, loading, onCellClick }) {
                     return (
                       <div
                         key={m.key}
-                        className={`rounded-lg border border-[var(--card-border)] py-2 px-1 text-center transition-all ${
-                          cnt > 0 ? 'cursor-pointer hover:scale-105 hover:shadow-md' : 'opacity-60'
-                        }`}
+                        className={`rounded-lg border border-[var(--card-border)] py-2 px-1 text-center transition-all ${cnt > 0 ? 'cursor-pointer hover:scale-105 hover:shadow-md' : 'opacity-60'
+                          }`}
                         style={{
                           backgroundColor: cnt ? `rgba(8, 145, 178, ${0.15 + intensity * 0.55})` : 'var(--card-bg)',
                         }}
@@ -1163,11 +1158,10 @@ export default function Zohoone() {
                         setDateTo(to);
                       }
                     }}
-                    className={`text-[10px] font-semibold px-2 py-0.5 rounded-md transition-all cursor-pointer ${
-                      isActive
-                        ? 'bg-indigo-600 text-white shadow-sm'
-                        : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
-                    }`}
+                    className={`text-[10px] font-semibold px-2 py-0.5 rounded-md transition-all cursor-pointer ${isActive
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+                      }`}
                   >
                     {label}
                   </button>
@@ -1366,7 +1360,7 @@ export default function Zohoone() {
         </div>
 
         {/* 3. By Department */}
-        <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-6 flex flex-col justify-between shadow-sm lg:col-span-3 xl:col-span-1">
+        {/* <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-6 flex flex-col justify-between shadow-sm lg:col-span-3 xl:col-span-1">
           <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
             <div>
               <h3 className="font-semibold text-[var(--foreground)]">By Department</h3>
@@ -1389,20 +1383,11 @@ export default function Zohoone() {
               barColor="#6366f1"
             />
           </div>
-        </div>
+        </div> */}
       </div>
 
       {/* ── Analytics ─────────────────────────────────────────────────────────── */}
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-[var(--foreground)]">Zoho One</h1>
-          <p className="text-sm text-[var(--muted)]">Ticket analytics from stored Zoho data.</p>
-        </div>
-        <div className="text-sm text-[var(--muted)]">{loading ? 'Loading tickets...' : `${tickets.length} tickets`}</div>
-      </div>
 
-      <TicketListCard tickets={tickets} loading={loading}
-        onTicketClick={(t) => goToDetail('zohoTicketNo', getTicketNo(t), `Zoho Ticket ${getTicketNo(t)}`)} />
       <WidgetDateFilter tickets={tickets}>{filtered => <TicketVolcanoGraph tickets={filtered} onBarClick={(label, min, max) => {
         var getCr = function (t) { return t?.createdTime || t?.created_at || t?.createdAt || ''; };
         var getCl = function (t) { return t?.closedTime || t?.closed_at || t?.closedAt || t?.closeTime || ''; };
@@ -1484,7 +1469,17 @@ export default function Zohoone() {
         }} />}</WidgetDateFilter>
       </div>
 
-      <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-[var(--foreground)]">Zoho Ticket</h1>
+          <p className="text-sm text-[var(--muted)]">Ticket analytics from stored Zoho data.</p>
+        </div>
+        <div className="text-sm text-[var(--muted)]">{loading ? 'Loading tickets...' : `${tickets.length} tickets`}</div>
+      </div>
+
+      <TicketListCard tickets={tickets} loading={loading}
+        onTicketClick={(t) => goToDetail('zohoTicketNo', getTicketNo(t), `Zoho Ticket ${getTicketNo(t)}`)} />
+      {/* <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
         <div className="p-4 border-b border-[var(--card-border)] flex items-center justify-between flex-wrap gap-3">
           <div>
             <h2 className="text-lg font-bold text-[var(--foreground)]">All Tickets Overview</h2>
@@ -1580,7 +1575,7 @@ export default function Zohoone() {
             </div>
           </div>
         )}
-      </div>
+      </div> */}
     </div>
   );
 }
