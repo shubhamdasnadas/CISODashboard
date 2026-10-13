@@ -6,10 +6,11 @@ import AnalyticsLaunchButton from '../../components/AnalyticsLaunchButton.jsx';
 import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 import {
   Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ComposedChart, Line,
+  Line, BarChart, LineChart,
 } from 'recharts';
 import {
   DaysFilter,
+  DEFAULT_DAY_OPTIONS,
   ChartViewDropdown,
   useViewState,
   withinRange,
@@ -20,6 +21,14 @@ import {
 
 const COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#6366f1'];
 const RISK_COLORS = { '1': '#22c55e', '2': '#84cc16', '3': '#f59e0b', '4': '#f97316', '5': '#ef4444' };
+const ALL_RISK_TYPES = ['Risk 1', 'Risk 2', 'Risk 3', 'Risk 4', 'Risk 5'];
+const RISK_CHART_COLORS = {
+  'Risk 1': '#22c55e',
+  'Risk 2': '#84cc16',
+  'Risk 3': '#f59e0b',
+  'Risk 4': '#f97316',
+  'Risk 5': '#ef4444',
+};
 
 const REPORTS_TO_FETCH = [
   'risk-trend',
@@ -149,8 +158,23 @@ const DATE_COLS = ['slabbed-receive_time', 'receive_time', 'time_generated', 'ti
 const getRowDate = (row) => {
   const raw = getFirstValue(row, DATE_COLS, null);
   if (!raw || raw === '-') return null;
+  if (raw instanceof Date) return isNaN(raw.getTime()) ? null : raw;
+  const num = Number(raw);
+  if (!isNaN(num) && num > 0) {
+    const ms = num < 1e11 ? num * 1000 : num;
+    const d = new Date(ms);
+    return isNaN(d.getTime()) ? null : d;
+  }
   const d = new Date(raw);
   return isNaN(d.getTime()) ? null : d;
+};
+
+const fmtDate = (d) => {
+  if (!d) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 };
 
 const filterRowsByDate = (rows, from, to) => {
@@ -204,9 +228,9 @@ const makeTopChartData = (rows, cols, limit = 8) => {
 const makeRiskTrendData = (rows) => {
   const map = new Map();
   rows.forEach((row) => {
-    const rawDate = getFirstValue(row, ['slabbed-receive_time', 'receive_time', 'time', 'date', 'updatedAt']);
-    const date = rawDate && rawDate !== '-' ? new Date(rawDate).toLocaleDateString('en-CA') : null;
-    if (!date || date === 'Invalid Date') return;
+    const d = getRowDate(row);
+    if (!d) return;
+    const date = fmtDate(d);
     const old = map.get(date) || { date, sessions: 0, traffic: 0 };
     old.sessions += parseNumber(getFirstValue(row, ['nsess', 'sessions', 'session', 'count'], 1));
     old.traffic += parseNumber(getFirstValue(row, ['nbytes', 'bytes', 'byte'], 0));
@@ -380,15 +404,22 @@ export default function PaloAltoPage() {
   });
 
   // Days filter state for each individual chart
-  const [riskTrendDays, setRiskTrendDays] = useState(30);
   const [riskDistDays, setRiskDistDays] = useState(30);
   const [topAttacksDays, setTopAttacksDays] = useState(30);
   const [topSourcesDays, setTopSourcesDays] = useState(30);
   const [topDeniedDays, setTopDeniedDays] = useState(30);
   const [topConnectionsDays, setTopConnectionsDays] = useState(30);
 
+  // Events per Day chart state (matching Checkpoint setup)
+  const [chartDays, setChartDays] = useState(30);
+  const [chartTypes, setChartTypes] = useState(ALL_RISK_TYPES);
+  const [chartMode, setChartMode] = useState('bar');
+
+  const toggleChartType = (t) => {
+    setChartTypes((prev) => (prev.includes(t) ? (prev.length > 1 ? prev.filter((x) => x !== t) : prev) : [...prev, t]));
+  };
+
   // View type state for each chart (persisted)
-  const [riskTrendView, setRiskTrendView] = useViewState('firewall:riskTrend', 'composed');
   const [riskDistView, setRiskDistView] = useViewState('firewall:riskDist', 'donut');
   const [topAttacksView, setTopAttacksView] = useViewState('firewall:topAttacks', 'bar');
   const [topSourcesView, setTopSourcesView] = useViewState('firewall:topSources', 'bar');
@@ -456,7 +487,7 @@ export default function PaloAltoPage() {
 
   const dashboard = useMemo(() => {
     const riskRowsAll = getRowsByReport(allReports, 'risk-trend');
-    const riskTrendRows = filterRows(riskRowsAll, riskTrendDays, componentDateRanges.riskTrend.from, componentDateRanges.riskTrend.to);
+    const riskTrendRows = filterRows(riskRowsAll, chartDays, componentDateRanges.riskTrend.from, componentDateRanges.riskTrend.to);
     const riskDistRows = filterRows(riskRowsAll, riskDistDays, componentDateRanges.riskDistribution.from, componentDateRanges.riskDistribution.to);
 
     const attackerSourceRowsAll = getRowsByReport(allReports, 'top-attacker-sources');
@@ -594,7 +625,7 @@ export default function PaloAltoPage() {
     kpiRows,
     kpiDays,
     kpiDateRange,
-    riskTrendDays,
+    chartDays,
     riskDistDays,
     topAttacksDays,
     topSourcesDays,
@@ -603,16 +634,69 @@ export default function PaloAltoPage() {
     componentDateRanges,
   ]);
 
-  // Category time series data for Line/Area views
-  const riskTrendTimeSeries = useMemo(() => {
-    const rows = dashboard.riskTrendData;
-    if (!rows || rows.length === 0) return null;
-    return categoryTimeSeries(rows, {
-      keyOf: (r) => (r.sessions > 0 ? 'Sessions' : null),
-      dateOf: (r) => (r.date ? new Date(r.date) : null),
-      days: riskTrendDays === 'all' ? 30 : riskTrendDays,
+  // Events per Day time series grouping for Firewall data
+  const eventsPerDayData = useMemo(() => {
+    const riskRowsAll = getRowsByReport(allReports, 'risk-trend');
+    if (!riskRowsAll || riskRowsAll.length === 0) return [];
+
+    const inRange = withinRange(riskRowsAll, getRowDate, chartDays);
+    const dates = inRange.map(getRowDate).filter(Boolean);
+    if (dates.length === 0) return [];
+
+    const maxMs = Math.max(...dates.map((d) => d.getTime()));
+    const minMs = Math.min(...dates.map((d) => d.getTime()));
+
+    let end = new Date(maxMs);
+    end.setHours(23, 59, 59, 999);
+
+    const numDays =
+      chartDays === 'all'
+        ? Math.max(1, Math.ceil((maxMs - minMs) / 86400000) + 1)
+        : parseInt(chartDays, 10) || 30;
+
+    let start = new Date(end);
+    start.setDate(start.getDate() - numDays + 1);
+    start.setHours(0, 0, 0, 0);
+
+    const map = {};
+    const cursor = new Date(start);
+    while (cursor <= end) {
+      map[fmtDate(cursor)] = {};
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    inRange.forEach((row) => {
+      const d = getRowDate(row);
+      if (!d) return;
+      const rawRisk = getFirstValue(row, ['risk', 'severity'], '');
+      const cleanRisk = String(rawRisk).replace(/risk\s*/i, '').trim();
+      const riskKey = cleanRisk ? `Risk ${cleanRisk}` : 'Risk 1';
+      if (!chartTypes.includes(riskKey)) return;
+
+      const count = parseNumber(getFirstValue(row, ['nsess', 'sessions', 'session', 'count', 'nrepeat', 'repeatcnt'], 1)) || 1;
+      const key = fmtDate(d);
+      if (!map[key]) map[key] = {};
+      map[key][riskKey] = (map[key][riskKey] || 0) + count;
     });
-  }, [dashboard.riskTrendData, riskTrendDays]);
+
+    return Object.entries(map)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, counts]) => ({ date, ...counts }));
+  }, [allReports, chartDays, chartTypes]);
+
+  const handleChartClick = (data, riskType) => {
+    if (!data || !riskType) return;
+    const date = data.date;
+    const riskRowsAll = getRowsByReport(allReports, 'risk-trend');
+    const cleanRisk = riskType.replace(/risk\s*/i, '').trim();
+    const filtered = riskRowsAll.filter((r) => {
+      const d = getRowDate(r);
+      if (!d) return false;
+      const rRisk = String(getFirstValue(r, ['risk', 'severity'], '')).replace(/risk\s*/i, '').trim();
+      return fmtDate(d) === date && (!cleanRisk || rRisk === cleanRisk);
+    });
+    goToDetail(filtered.length ? filtered : riskRowsAll, `${riskType} Events on ${date}`, { from: date, to: date });
+  };
 
   const riskDistTimeSeries = useMemo(() => {
     const rows = dashboard.riskDistributionRows;
@@ -776,58 +860,94 @@ export default function PaloAltoPage() {
 
           {/* ── 6 Multi-View Charts Grid with Independent Filters ────────────────── */}
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-            {/* 1. Risk Trend Over Time */}
-            <ChartCard
-              title="Risk Trend Over Time"
-              subtitle={`${riskTrendDays === 'all' ? 'All-Time' : `${riskTrendDays}-Day`} Network Traffic & Session Volume`}
-              dateRange={componentDateRanges.riskTrend}
-              onDateChange={(newRange) => handleComponentDateChange('riskTrend', newRange)}
-              days={riskTrendDays}
-              onDaysChange={setRiskTrendDays}
-              view={riskTrendView}
-              onViewChange={setRiskTrendView}
-            >
-              <div className="h-[320px]">
-                {dashboard.riskTrendData.length === 0 ? (
-                  <div className="flex items-center justify-center h-full">
-                    <p className="text-sm text-[var(--muted)]">No data in range</p>
+            {/* Events per Day chart (matching Checkpoint setup) */}
+            <div className="col-span-1 xl:col-span-2 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl p-6 shadow-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-4">
+                <h3 className="font-semibold text-[var(--foreground)] text-base sm:text-lg flex-1">Events per Day</h3>
+                <div className="flex flex-wrap items-center gap-3">
+                  <DaysFilter value={chartDays} onChange={setChartDays} options={DEFAULT_DAY_OPTIONS} compact />
+                  <div className="flex border border-[var(--card-border)] rounded-lg overflow-hidden">
+                    {['bar', 'line'].map((m) => (
+                      <button
+                        key={m}
+                        onClick={() => setChartMode(m)}
+                        className={`px-3 py-1.5 text-xs font-medium capitalize transition-colors ${
+                          chartMode === m ? 'bg-indigo-600 text-white' : 'text-[var(--muted)] hover:bg-[var(--muted-bg)]'
+                        }`}
+                      >
+                        {m}
+                      </button>
+                    ))}
                   </div>
-                ) : riskTrendView === 'composed' ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={dashboard.riskTrendData} margin={{ top: 10, right: 25, bottom: 45, left: 10 }}>
+                  <div className="flex flex-wrap gap-1">
+                    {ALL_RISK_TYPES.map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => toggleChartType(t)}
+                        className={`px-2 py-1 rounded-full text-xs font-medium border capitalize transition-colors ${
+                          chartTypes.includes(t)
+                            ? 'text-white border-transparent'
+                            : 'text-[var(--muted)] border-[var(--card-border)]'
+                        }`}
+                        style={chartTypes.includes(t) ? { backgroundColor: RISK_CHART_COLORS[t] || '#6366f1' } : {}}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              {eventsPerDayData.length === 0 ? (
+                <div className="h-48 flex items-center justify-center text-[var(--muted)] text-sm">No data in range</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={260}>
+                  {chartMode === 'bar' ? (
+                    <BarChart data={eventsPerDayData} margin={{ top: 5, right: 10, left: -10, bottom: 30 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
-                      <XAxis dataKey="date" angle={-30} textAnchor="end" height={60} tick={{ fontSize: 10 }} />
-                      <YAxis yAxisId="left" tick={{ fontSize: 10 }} />
-                      <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} tickFormatter={formatBytes} />
+                      <XAxis dataKey="date" tick={{ fontSize: 10 }} angle={-30} textAnchor="end" height={50} />
+                      <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v)} />
                       <Tooltip
                         contentStyle={tooltipStyle}
-                        formatter={(v, name) =>
-                          name === 'traffic' ? [formatBytes(v), 'Traffic'] : [formatNumber(parseNumber(v)), 'Sessions']
-                        }
+                        formatter={(val, name) => [formatNumber(parseNumber(val)), name]}
                       />
-                      <Bar yAxisId="right" dataKey="traffic" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={36} />
-                      <Line yAxisId="left" type="monotone" dataKey="sessions" stroke="#60a5fa" strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 5 }} />
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <MultiViewChart
-                    data={dashboard.riskTrendData.map((d) => ({
-                      name: d.date,
-                      value: d.sessions,
-                      fill: '#3b82f6',
-                    }))}
-                    timeSeriesData={riskTrendTimeSeries}
-                    viewType={riskTrendView}
-                    view={riskTrendView}
-                    storageKey="firewall-risk-trend"
-                    barColor="#3b82f6"
-                    onItemClick={(entry) =>
-                      goToDetail(dashboard.riskTrendRows, `Sessions on ${entry.name}`, componentDateRanges.riskTrend)
-                    }
-                  />
-                )}
-              </div>
-            </ChartCard>
+                      {chartTypes.map((t) => (
+                        <Bar
+                          key={t}
+                          dataKey={t}
+                          stackId="a"
+                          fill={RISK_CHART_COLORS[t] || '#6366f1'}
+                          radius={[2, 2, 0, 0]}
+                          cursor="pointer"
+                          onClick={(data) => handleChartClick(data.payload, t)}
+                        />
+                      ))}
+                    </BarChart>
+                  ) : (
+                    <LineChart data={eventsPerDayData} margin={{ top: 5, right: 10, left: -10, bottom: 30 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
+                      <XAxis dataKey="date" tick={{ fontSize: 10 }} angle={-30} textAnchor="end" height={50} />
+                      <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v)} />
+                      <Tooltip
+                        contentStyle={tooltipStyle}
+                        formatter={(val, name) => [formatNumber(parseNumber(val)), name]}
+                      />
+                      {chartTypes.map((t) => (
+                        <Line
+                          key={t}
+                          type="monotone"
+                          dataKey={t}
+                          stroke={RISK_CHART_COLORS[t] || '#6366f1'}
+                          strokeWidth={2}
+                          dot={false}
+                          cursor="pointer"
+                          onClick={(data) => handleChartClick(data.payload, t)}
+                        />
+                      ))}
+                    </LineChart>
+                  )}
+                </ResponsiveContainer>
+              )}
+            </div>
 
             {/* 2. Risk Distribution */}
             <ChartCard
