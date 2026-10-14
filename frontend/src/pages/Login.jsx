@@ -134,8 +134,8 @@ export default function Login() {
         orgName: '',
       });
       setShowPassword(false);
-      if (trimmed.length > 2 && !trimmed.includes('@')) {
-        setError('Please enter a valid registered email address');
+      if (trimmed.length > 15 && !trimmed.includes('@')) {
+        setError('Please enter a valid email address');
       } else {
         setError('');
       }
