@@ -9,7 +9,9 @@ const {
   generateToken,
   extendOrgToken,
   applyOfflineLicense,
+  activateLicenseKey,
   generateLicenseRequestCode,
+  toDateString,
 } = require('../services/tokenService');
 
 // Sync services
@@ -45,25 +47,28 @@ async function logAudit(req, { target, target_type, action, details = {} }) {
 // ─── DERIVED ORG STATUS HELPER ────────────────────────────────────────────────
 function computeOrgStatus(org) {
   if (org.deleted_at) return 'deleted';
-  if (org.status === 'suspended' || org.is_active === false) return 'suspended';
   if (org.token_status === 'revoked') return 'revoked';
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const startStr = toDateString(org.token_start_date || org.start_date);
+  const endStr = toDateString(org.token_end_date || org.end_date);
+  const todayStr = new Date().toISOString().slice(0, 10);
 
-  const startVal = org.token_start_date || org.start_date;
-  if (startVal) {
-    const start = new Date(startVal);
-    start.setHours(0, 0, 0, 0);
-    if (start > today) return 'upcoming';
-  }
+  // If start date and end date are the exact same day, it is immediately expired
+  if (startStr && endStr && startStr === endStr) return 'expired';
 
-  const endVal = org.token_end_date || org.end_date;
-  if (endVal) {
-    const end = new Date(endVal);
-    end.setHours(23, 59, 59, 999);
-    if (end < today) return 'expired';
-  }
+  // If end date is before start date, or end date is in the past
+  if (startStr && endStr && endStr < startStr) return 'expired';
+  if (endStr && endStr < todayStr) return 'expired';
+
+  // Explicit expired status
+  if (org.status === 'expired' || org.token_status === 'expired') return 'expired';
+
+  // Suspended check
+  if (org.status === 'suspended') return 'suspended';
+  if (org.is_active === false) return 'suspended';
+
+  // Upcoming check
+  if (startStr && startStr > todayStr) return 'upcoming';
 
   return 'active';
 }
@@ -164,8 +169,11 @@ router.get('/organisations', async (req, res) => {
     const processed = rows.map((org) => {
       const effectiveEndDate = org.token_end_date || org.end_date;
       const derivedStatus = computeOrgStatus(org);
-      const daysRemaining = computeDaysRemaining(effectiveEndDate);
-      const isExpiringSoon = daysRemaining !== null && daysRemaining >= 0 && daysRemaining <= 30;
+      const startStr = toDateString(org.token_start_date || org.start_date);
+      const endStr = toDateString(effectiveEndDate);
+      const isSameDate = Boolean(startStr && endStr && startStr === endStr);
+      const daysRemaining = isSameDate ? 0 : computeDaysRemaining(effectiveEndDate);
+      const isExpiringSoon = derivedStatus !== 'expired' && derivedStatus !== 'suspended' && daysRemaining !== null && daysRemaining >= 0 && daysRemaining <= 30;
       return {
         ...org,
         derived_status: derivedStatus,
@@ -244,9 +252,18 @@ router.post('/organisations', async (req, res) => {
 
     const start = new Date(start_date);
     const end = new Date(end_date);
-    if (end <= start) {
-      return res.status(400).json({ error: 'End Date must be after Start Date' });
+    if (end < start) {
+      return res.status(400).json({ error: 'End Date cannot be before Start Date' });
     }
+
+    const startStr = toDateString(start_date);
+    const endStr = toDateString(end_date);
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const isSameDate = Boolean(startStr && endStr && startStr === endStr);
+    const isPastDate = Boolean(endStr && endStr < todayStr);
+    const isExpired = isSameDate || isPastDate;
+    const initialStatus = isExpired ? 'expired' : 'active';
+    const initialActive = !isExpired;
 
     // Auto-generate unique slug
     const finalSlug = await generateUniqueSlug(org_name.trim(), customSlug ? customSlug.trim() : null);
@@ -256,7 +273,7 @@ router.post('/organisations', async (req, res) => {
         org_name, slug, email, industry, plan, start_date, end_date,
         status, is_active, color, description, address, mobile_no,
         created_by, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', TRUE, $8, $9, $10, $11, $12, NOW(), NOW())
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
       RETURNING *
     `;
 
@@ -268,6 +285,8 @@ router.post('/organisations', async (req, res) => {
       plan || 'starter',
       start_date,
       end_date,
+      initialStatus,
+      initialActive,
       color || null,
       description || null,
       address || null,
@@ -403,9 +422,16 @@ router.put('/organisations/:id', async (req, res) => {
     if (!org_name || !org_name.trim()) {
       return res.status(400).json({ error: 'Organisation Name is required' });
     }
-    if (start_date && end_date && new Date(end_date) <= new Date(start_date)) {
-      return res.status(400).json({ error: 'End Date must be after Start Date' });
+    if (start_date && end_date && new Date(end_date) < new Date(start_date)) {
+      return res.status(400).json({ error: 'End Date cannot be before Start Date' });
     }
+
+    const startStr = start_date ? toDateString(start_date) : null;
+    const endStr = end_date ? toDateString(end_date) : null;
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const isSameDate = Boolean(startStr && endStr && startStr === endStr);
+    const isPastDate = Boolean(endStr && endStr < todayStr);
+    const isExpired = isSameDate || isPastDate;
 
     const { rows } = await centralPool.query(
       `UPDATE organisations SET
@@ -418,6 +444,8 @@ router.put('/organisations/:id', async (req, res) => {
          address = $7,
          mobile_no = $8,
          description = $9,
+         status = CASE WHEN $11 = TRUE THEN 'expired' ELSE status END,
+         is_active = CASE WHEN $11 = TRUE THEN FALSE ELSE is_active END,
          updated_at = NOW()
        WHERE id = $10 AND deleted_at IS NULL
        RETURNING *`,
@@ -432,11 +460,19 @@ router.put('/organisations/:id', async (req, res) => {
         mobile_no || null,
         description || null,
         orgId,
+        isExpired,
       ]
     );
 
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Organisation not found' });
+    }
+
+    if (isExpired) {
+      await centralPool.query(
+        "UPDATE org_tokens SET status = 'expired', updated_at = NOW() WHERE org_id = $1",
+        [orgId]
+      );
     }
 
     await logAudit(req, {
@@ -560,7 +596,7 @@ async function handleGenerateToken(req, res) {
   try {
     const orgId = parseInt(req.params.id, 10);
     const { rows: orgRows } = await centralPool.query(
-      'SELECT id, org_name, slug, start_date, end_date FROM organisations WHERE id = $1 AND deleted_at IS NULL',
+      'SELECT id, org_name, slug, start_date, end_date, status, is_active FROM organisations WHERE id = $1 AND deleted_at IS NULL',
       [orgId]
     );
 
@@ -569,14 +605,39 @@ async function handleGenerateToken(req, res) {
     }
 
     const org = orgRows[0];
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const orgStartStr = org.start_date ? toDateString(org.start_date) : todayStr;
+    const orgEndStr = org.end_date ? toDateString(org.end_date) : orgStartStr;
+
+    // Use exact start and end dates from selection without automatic renewal offsets
+    const targetStartDate = req.body?.startDate
+      ? toDateString(req.body.startDate)
+      : orgStartStr;
+
+    const targetEndDate = req.body?.endDate
+      ? toDateString(req.body.endDate)
+      : orgEndStr;
+
+    const isSameDate = Boolean(targetStartDate && targetEndDate && targetStartDate === targetEndDate);
+    const isPastDate = Boolean(targetEndDate && targetEndDate < todayStr);
+
     const gen = await generateToken({
       orgId: org.id,
       orgName: org.org_name,
       slug: org.slug,
-      startDate: org.start_date || new Date(),
-      endDate: org.end_date || new Date(Date.now() + 365 * 86400000),
+      startDate: targetStartDate,
+      endDate: targetEndDate,
       issuedBy: req.user?.username || 'SuperAdmin',
+      activateOrg: false, // Expired organisations remain expired until client activates key!
+      client: centralPool,
     });
+
+    if (isSameDate || isPastDate) {
+      await centralPool.query(
+        "UPDATE organisations SET status = 'expired', is_active = false, updated_at = NOW() WHERE id = $1",
+        [org.id]
+      );
+    }
 
     await logAudit(req, {
       target: org.org_name,
@@ -594,6 +655,9 @@ async function handleGenerateToken(req, res) {
       startDate: gen.tokenRecord?.start_date,
       endDate: gen.tokenRecord?.end_date,
       deploymentMode: gen.deploymentMode,
+      token: gen.tokenRecord,
+      parsedKey: gen.parsedKey,
+      keyFormat: gen.keyFormat,
     });
   } catch (err) {
     console.error('[superadmin/token/generate] error:', err);
@@ -620,18 +684,19 @@ router.get('/license/config', (_req, res) => {
 
 /**
  * POST /api/superadmin/license/apply
- * Upload / paste a signed offline license token.
+ * Upload / paste a signed offline license token or custom binary key.
  */
 router.post('/license/apply', async (req, res) => {
   try {
-    const { signedLicense } = req.body;
-    if (!signedLicense) {
-      return res.status(400).json({ error: 'signedLicense string is required' });
+    const { signedLicense, licenseKey } = req.body;
+    const inputKey = (signedLicense || licenseKey || '').trim();
+    if (!inputKey) {
+      return res.status(400).json({ error: 'License key or signed license string is required' });
     }
 
-    const result = await applyOfflineLicense({
-      signedLicense,
-      actor: req.user?.username || 'Admin',
+    const result = await activateLicenseKey({
+      licenseKey: inputKey,
+      actor: req.user?.username || 'SuperAdmin',
     });
 
     return res.json(result);
@@ -726,9 +791,6 @@ router.get('/organisations/:id/details', async (req, res) => {
     }
 
     const org = orgRows[0];
-    const derivedStatus = computeOrgStatus(org);
-    const daysRemaining = computeDaysRemaining(org.end_date);
-    const isExpiringSoon = daysRemaining !== null && daysRemaining >= 0 && daysRemaining <= 30;
 
     // 0. Fetch latest token info
     const tokenRes = await centralPool.query(
@@ -740,6 +802,20 @@ router.get('/organisations/:id/details', async (req, res) => {
       [orgId]
     );
     const tokenRecord = tokenRes.rows[0] || null;
+
+    const orgWithToken = {
+      ...org,
+      token_status: tokenRecord?.status,
+      token_start_date: tokenRecord?.start_date,
+      token_end_date: tokenRecord?.end_date,
+    };
+    const derivedStatus = computeOrgStatus(orgWithToken);
+    const effectiveEndDate = orgWithToken.token_end_date || orgWithToken.end_date;
+    const startStr = toDateString(orgWithToken.token_start_date || orgWithToken.start_date);
+    const endStr = toDateString(effectiveEndDate);
+    const isSameDate = Boolean(startStr && endStr && startStr === endStr);
+    const daysRemaining = isSameDate ? 0 : computeDaysRemaining(effectiveEndDate);
+    const isExpiringSoon = derivedStatus !== 'expired' && derivedStatus !== 'suspended' && daysRemaining !== null && daysRemaining >= 0 && daysRemaining <= 30;
 
     // 1. Users statistics & latest 5 users
     const userStatsRes = await centralPool.query(

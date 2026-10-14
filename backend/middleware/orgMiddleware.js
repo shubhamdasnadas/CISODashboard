@@ -41,11 +41,16 @@ async function orgMiddleware(req, res, next) {
 
     // Validate organization active/suspension status for non-superadmins
     if (user.role !== 'superAdmin') {
-      if (org.is_active === false || org.status === 'suspended') {
+      const isExpired = org.status === 'expired' || (!org.is_active && org.status !== 'suspended');
+      if (org.is_active === false || org.status === 'suspended' || org.status === 'expired') {
+        const code = (org.status === 'expired' || isExpired) ? 'ORGANISATION_EXPIRED' : 'ORGANISATION_SUSPENDED';
+        const msg = (org.status === 'expired' || isExpired)
+          ? `Your organisation "${org.org_name}" subscription / license has expired. Please contact your administrator.`
+          : `Your organisation "${org.org_name}" has been suspended. Please contact your administrator.`;
         return res.status(403).json({
-          error: 'ORGANISATION_SUSPENDED',
-          code: 'ORGANISATION_SUSPENDED',
-          message: `Your organisation "${org.org_name}" has been suspended. Please contact your administrator.`,
+          error: code,
+          code,
+          message: msg,
           details: {
             orgId,
             orgName: org.org_name,

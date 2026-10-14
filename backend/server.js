@@ -1,4 +1,5 @@
 require('dotenv').config();
+// CISO Dashboard Backend Service - License Key & Auth Gating Engine Reloaded
 
 const express = require('express');
 const cors = require('cors');

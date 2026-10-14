@@ -41,9 +41,16 @@ const authMiddleware = async (req, res, next) => {
 
     const user = rows[0];
 
-    // Instant access revocation if user account is deactivated, or organisation is suspended/expired
+    // Instant access revocation if user account is deactivated, or organisation is suspended/expired.
+    // Tenant users whose organisations are expired/suspended are still permitted to access /api/organisations
+    // and /api/auth so they can view the organisation selection screen and submit renewal license keys.
     const statusCheck = await validateUserAndOrgStatus(user, centralPool);
-    if (statusCheck.blocked) {
+    const isOrgEndpoint = req.originalUrl && (
+      req.originalUrl.startsWith('/api/organisations') ||
+      req.originalUrl.startsWith('/api/auth')
+    );
+
+    if (statusCheck.blocked && (!isOrgEndpoint || statusCheck.code === 'ACCOUNT_DEACTIVATED')) {
       return res.status(401).json({
         error: statusCheck.code,
         code: statusCheck.code,

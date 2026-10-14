@@ -99,12 +99,12 @@ async function checkLicenseExpirations(client = centralPool) {
   const installId = await getInstallId(client);
 
   try {
-    // 1. Transition tokens where end_date < today and status = 'active'
+    // 1. Transition tokens where end_date < today or start_date === end_date and status = 'active'
     const { rows: expiredTokens } = await client.query(
       `SELECT t.*, o.org_name, o.slug AS org_slug
        FROM org_tokens t
        JOIN organisations o ON o.id = t.org_id
-       WHERE t.end_date < $1 AND t.status = 'active'
+       WHERE (t.end_date < $1 OR (t.start_date IS NOT NULL AND t.end_date = t.start_date)) AND t.status = 'active'
        ORDER BY t.id ASC`,
       [today]
     );
@@ -115,7 +115,7 @@ async function checkLicenseExpirations(client = centralPool) {
         [token.id]
       );
       await client.query(
-        "UPDATE organisations SET status = 'expired', updated_at = NOW() WHERE id = $1",
+        "UPDATE organisations SET status = 'expired', is_active = false, updated_at = NOW() WHERE id = $1",
         [token.org_id]
       );
       console.log(`[licenseCron] Token ${token.license_id} for org "${token.org_name}" transitioned to EXPIRED.`);

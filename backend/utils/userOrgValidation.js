@@ -1,4 +1,5 @@
 const { centralPool } = require('../db');
+const { toDateString } = require('../services/tokenService');
 
 /**
  * Validates whether a user or their associated organisation is active, suspended, or expired.
@@ -31,10 +32,10 @@ async function validateUserAndOrgStatus(user, pool = centralPool) {
     try {
       const orgsRes = await pool.query(
         `SELECT o.id, o.org_name, o.slug, o.is_active, o.status, o.start_date, o.end_date,
-                t.token_status, t.token_end_date, t.license_id
+                t.token_status, t.token_start_date, t.token_end_date, t.license_id
          FROM organisations o
          LEFT JOIN LATERAL (
-           SELECT status AS token_status, end_date AS token_end_date, license_id
+           SELECT status AS token_status, start_date AS token_start_date, end_date AS token_end_date, license_id
            FROM org_tokens
            WHERE org_id = o.id
            ORDER BY id DESC
@@ -121,23 +122,28 @@ async function validateUserAndOrgStatus(user, pool = centralPool) {
       if (seenIds.has(org.id)) continue;
       seenIds.add(org.id);
 
-      const isSuspended = org.is_active === false || org.status === 'suspended';
-      const effectiveEndDate = org.token_end_date || org.end_date;
-      const isDateExpired = effectiveEndDate && new Date(effectiveEndDate) < today;
-      const isStatusExpired = org.status === 'expired' || org.token_status === 'expired';
-      const isExpired = !isSuspended && (isDateExpired || isStatusExpired);
+      const hasActiveToken = org.token_status === 'active';
+      const effectiveEndDate = hasActiveToken && org.token_end_date ? org.token_end_date : org.end_date;
+      const startStr = toDateString(org.token_start_date || org.start_date);
+      const endStr = toDateString(effectiveEndDate);
+      const isSameDate = Boolean(startStr && endStr && startStr === endStr);
+
+      const isDateExpired = Boolean(endStr && new Date(endStr) < today);
+      const isStatusExpired = org.status === 'expired' || org.token_status === 'expired' || org.token_status === 'pending_activation';
+      const isExpired = isSameDate || isDateExpired || isStatusExpired;
+      const isSuspended = !isExpired && (org.status === 'suspended' || (org.is_active === false && org.status !== 'active'));
 
       let licenseStatus = 'active';
       let blockReason = null;
 
-      if (isSuspended) {
-        licenseStatus = 'suspended';
-        blockReason = `Your organisation "${org.org_name}" has been suspended. Please contact your administrator.`;
-        suspendedOrgs.push(org);
-      } else if (isExpired) {
+      if (isExpired) {
         licenseStatus = 'expired';
         blockReason = `Your organisation "${org.org_name}" subscription / license has expired. Please contact your administrator.`;
         expiredOrgs.push(org);
+      } else if (isSuspended) {
+        licenseStatus = 'suspended';
+        blockReason = `Your organisation "${org.org_name}" has been suspended. Please contact your administrator.`;
+        suspendedOrgs.push(org);
       } else {
         licenseStatus = 'active';
         activeOrgs.push(org);

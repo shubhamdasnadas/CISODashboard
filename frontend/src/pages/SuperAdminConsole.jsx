@@ -293,14 +293,24 @@ export default function SuperAdminConsole() {
       setGeneratedTokenData({
         org,
         rawToken: data.rawToken,
-        token: data.token,
+        token: data.token || {
+          license_id: data.licenseId,
+          start_date: data.startDate,
+          end_date: data.endDate,
+          status: 'active',
+        },
+        licenseId: data.licenseId,
+        startDate: data.startDate,
+        endDate: data.endDate,
+        parsedKey: data.parsedKey,
+        keyFormat: data.keyFormat,
         signedLicense: data.token?.signed_license,
         deploymentMode: data.deploymentMode || licenseConfig.deploymentMode,
       });
       showToast(`Token generated successfully for ${org.org_name}`);
       fetchOrganisations();
     } catch (err) {
-      showToast(err.response?.data?.error || 'Failed to generate token', 'error');
+      showToast(err.response?.data?.detail || err.response?.data?.error || 'Failed to generate token', 'error');
     }
   };
 
@@ -1854,8 +1864,8 @@ function OrgFormModal({ editingOrg, onClose, onSuccess }) {
       setError('Organisation Name is required');
       return;
     }
-    if (new Date(form.end_date) <= new Date(form.start_date)) {
-      setError('End Date must be after Start Date');
+    if (new Date(form.end_date) < new Date(form.start_date)) {
+      setError('End Date cannot be before Start Date');
       return;
     }
 
@@ -2156,15 +2166,6 @@ function ExtendValidityModal({ org, licenseConfig, onClose, onSuccess, onOpenApp
       return;
     }
 
-    if (org.end_date) {
-      const currentEnd = new Date(org.end_date.split('T')[0]);
-      const nextEnd = new Date(newEndDate);
-      if (nextEnd <= currentEnd) {
-        setError(`New End Date (${newEndDate}) must be strictly after Current Expiry (${formatDate(org.end_date)}).`);
-        return;
-      }
-    }
-
     if (!reason.trim()) {
       setError('Please provide a reason/note for this validity extension.');
       return;
@@ -2329,10 +2330,14 @@ function ExtendValidityModal({ org, licenseConfig, onClose, onSuccess, onOpenApp
 // ─────────────────────────────────────────────────────────────────────────────
 function TokenResultModal({ data, onClose }) {
   const [copied, setCopied] = useState(false);
-  const { org, rawToken, token, signedLicense, deploymentMode } = data || {};
+  const { org, rawToken, token, signedLicense, deploymentMode, parsedKey, keyFormat } = data || {};
 
   const tokenString = rawToken || signedLicense || '';
   const isSigned = !!signedLicense;
+
+  const licenseId = token?.license_id || data?.licenseId || parsedKey?.licenseId || '—';
+  const startDate = token?.start_date || data?.startDate || parsedKey?.startDate;
+  const endDate = token?.end_date || data?.endDate || parsedKey?.endDate;
 
   const handleCopy = async () => {
     try {
@@ -2350,7 +2355,7 @@ function TokenResultModal({ data, onClose }) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${org?.slug || 'ciso'}-license-${token?.license_id || 'key'}.lic`;
+    a.download = `${org?.slug || 'ciso'}-license-${licenseId || 'key'}.lic`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -2376,19 +2381,61 @@ function TokenResultModal({ data, onClose }) {
         </div>
 
         {/* Token Details Summary */}
-        <div className="p-4 rounded-2xl bg-[var(--muted-bg)] border border-[var(--card-border)] text-xs space-y-2">
-          <div className="flex justify-between">
+        <div className="p-4 rounded-2xl bg-[var(--muted-bg)] border border-[var(--card-border)] text-xs space-y-2.5">
+          <div className="flex justify-between items-center">
             <span className="text-[var(--muted)]">License ID:</span>
-            <span className="font-mono text-indigo-400 font-semibold">{token?.license_id || '—'}</span>
+            <span className="font-mono text-indigo-400 font-semibold">{licenseId}</span>
           </div>
-          <div className="flex justify-between">
+          <div className="flex justify-between items-center">
             <span className="text-[var(--muted)]">Validity Period:</span>
-            <span className="font-bold text-[var(--foreground)]">{formatDate(token?.start_date)} → {formatDate(token?.end_date)}</span>
+            <span className="font-bold text-[var(--foreground)]">
+              {startDate ? formatDate(startDate) : '—'} → {endDate ? formatDate(endDate) : '—'}
+            </span>
           </div>
-          <div className="flex justify-between">
+          <div className="flex justify-between items-center">
             <span className="text-[var(--muted)]">Deployment Mode:</span>
             <span className="font-bold uppercase text-purple-400">{deploymentMode || 'online'}</span>
           </div>
+          <div className="flex justify-between items-center pt-2 border-t border-[var(--card-border)]/60">
+            <span className="text-[var(--muted)] font-medium">Binary Key Format:</span>
+            <span className="font-mono text-[11px] font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-lg border border-emerald-500/30">
+              {keyFormat || 'ver(1) | org_id(16) | start(uint32, days) | end(uint32, days) | license_id(8)'}
+            </span>
+          </div>
+
+          {/* Decoded Field Inspection */}
+          {parsedKey && (
+            <div className="mt-2 pt-2 border-t border-[var(--card-border)]/40 grid grid-cols-2 sm:grid-cols-5 gap-2 text-[10px] text-[var(--muted)] font-mono">
+              <div className="p-1.5 rounded bg-[var(--card-bg)] border border-[var(--card-border)] text-center">
+                <div className="text-[9px] uppercase tracking-wider text-[var(--muted)]">ver(1)</div>
+                <div className="font-bold text-indigo-300">{parsedKey.version}</div>
+              </div>
+              <div className="p-1.5 rounded bg-[var(--card-bg)] border border-[var(--card-border)] text-center">
+                <div className="text-[9px] uppercase tracking-wider text-[var(--muted)]">org_id(16)</div>
+                <div className="font-bold text-indigo-300 truncate" title={parsedKey.orgIdHex}>
+                  {parsedKey.orgId || org?.id || '16B'}
+                </div>
+              </div>
+              <div className="p-1.5 rounded bg-[var(--card-bg)] border border-[var(--card-border)] text-center">
+                <div className="text-[9px] uppercase tracking-wider text-[var(--muted)]">start(uint32)</div>
+                <div className="font-bold text-emerald-300" title={`${parsedKey.startDays} days`}>
+                  {parsedKey.startDays}d
+                </div>
+              </div>
+              <div className="p-1.5 rounded bg-[var(--card-bg)] border border-[var(--card-border)] text-center">
+                <div className="text-[9px] uppercase tracking-wider text-[var(--muted)]">end(uint32)</div>
+                <div className="font-bold text-emerald-300" title={`${parsedKey.endDays} days`}>
+                  {parsedKey.endDays}d
+                </div>
+              </div>
+              <div className="col-span-2 sm:col-span-1 p-1.5 rounded bg-[var(--card-bg)] border border-[var(--card-border)] text-center">
+                <div className="text-[9px] uppercase tracking-wider text-[var(--muted)]">license_id(8)</div>
+                <div className="font-bold text-purple-300 truncate" title={parsedKey.licenseIdHex}>
+                  {parsedKey.licenseIdHex?.slice(0, 8)}…
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Token Display Area */}
