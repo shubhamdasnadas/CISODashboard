@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api.js';
+import * as session from '../../utils/session.js';
 import {
   MultiViewChart,
   ChartViewDropdown,
@@ -34,10 +35,20 @@ export default function NetworkSecurityWidgets({
 }) {
   const navigate = useNavigate();
 
+  const activeOrgId = session.getOrgId() || 'default';
+  const trafficCacheKey = `ciso_widget_${activeOrgId}_top_applications`;
+
   const [appChartView, setAppChartView] = useState('donut');
   const [actionChartView, setActionChartView] = useState('bar');
-  const [trafficData, setTrafficData] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [trafficData, setTrafficData] = useState(() => {
+    try {
+      const raw = localStorage.getItem(trafficCacheKey);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [loading, setLoading] = useState(() => trafficData.length === 0);
   const [appDays, setAppDays] = useState(14);
   const [actionDays, setActionDays] = useState(14);
 
@@ -54,6 +65,9 @@ export default function NetworkSecurityWidgets({
           const entry = raw?.report?.result?.entry || raw?.response?.result?.entry || raw?.entry || [];
           const rows = Array.isArray(entry) ? entry : [entry].filter(Boolean);
           setTrafficData(rows);
+          try {
+            localStorage.setItem(trafficCacheKey, JSON.stringify(rows));
+          } catch (_) {}
         }
       })
       .catch(() => {})
@@ -61,7 +75,7 @@ export default function NetworkSecurityWidgets({
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, []);
+  }, [trafficCacheKey]);
 
   // 1. Top Applications by Bandwidth / Sessions
   const appBreakdown = useMemo(() => {

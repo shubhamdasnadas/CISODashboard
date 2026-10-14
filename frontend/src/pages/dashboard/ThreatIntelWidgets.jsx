@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api.js';
+import * as session from '../../utils/session.js';
 import {
   MultiViewChart,
   ChartViewDropdown,
@@ -30,8 +31,18 @@ export default function ThreatIntelWidgets({
 }) {
   const navigate = useNavigate();
 
-  const [nvdCves, setNvdCves] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const activeOrgId = session.getOrgId() || 'default';
+  const cveCacheKey = `ciso_widget_${activeOrgId}_threat_intel_cves`;
+
+  const [nvdCves, setNvdCves] = useState(() => {
+    try {
+      const raw = localStorage.getItem(cveCacheKey);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [loading, setLoading] = useState(() => nvdCves.length === 0);
   const [chartView, setChartView] = useState('donut');
   const [searchCve, setSearchCve] = useState('');
   const [selectedDays, setSelectedDays] = useState(30);
@@ -58,6 +69,9 @@ export default function ThreatIntelWidgets({
             publishedDate: c.published || c.publishedDate,
           }));
           setNvdCves(normalized);
+          try {
+            localStorage.setItem(cveCacheKey, JSON.stringify(normalized));
+          } catch (_) {}
         }
       })
       .catch(() => {})
@@ -65,7 +79,7 @@ export default function ThreatIntelWidgets({
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, []);
+  }, [cveCacheKey]);
 
   const getCveDate = (c) => {
     const val = c.publishedDate || c.published || c.createdAt || c.lastModifiedDate || c.last_modified;

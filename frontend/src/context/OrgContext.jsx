@@ -15,9 +15,32 @@ const OrgContext = createContext({
 
 export function OrgProvider({ children }) {
   const [organisations, setOrganisations] = useState([]);
-  const [currentOrg, setCurrentOrgState] = useState(null);
+  const [currentOrg, setCurrentOrgState] = useState(() => {
+    try {
+      const raw = localStorage.getItem('ciso_current_org_obj');
+      const obj = raw ? JSON.parse(raw) : null;
+      const savedId = session.getOrgId();
+      if (obj && savedId && obj.id === savedId) {
+        api.defaults.headers.common['X-Org-Id'] = String(savedId);
+        return obj;
+      }
+      if (savedId) {
+        api.defaults.headers.common['X-Org-Id'] = String(savedId);
+      }
+      return obj;
+    } catch {
+      return null;
+    }
+  });
   const [loading, setLoading] = useState(true);
   const [licenseExpiredInfo, setLicenseExpiredInfo] = useState(null);
+
+  const persistCurrentOrg = (org) => {
+    try {
+      if (org) localStorage.setItem('ciso_current_org_obj', JSON.stringify(org));
+      else localStorage.removeItem('ciso_current_org_obj');
+    } catch (_) {}
+  };
 
   useEffect(() => {
     function handleLicenseExpired(event) {
@@ -50,19 +73,23 @@ export function OrgProvider({ children }) {
 
       if (found) {
         setCurrentOrgState(found);
+        persistCurrentOrg(found);
         api.defaults.headers.common['X-Org-Id'] = String(found.id);
       } else if (activeList.length > 0) {
         const defaultOrg = activeList[0];
         setCurrentOrgState(defaultOrg);
+        persistCurrentOrg(defaultOrg);
         session.setOrgId(defaultOrg.id);
         api.defaults.headers.common['X-Org-Id'] = String(defaultOrg.id);
       } else if (list.length > 0) {
         const defaultOrg = list[0];
         setCurrentOrgState(defaultOrg);
+        persistCurrentOrg(defaultOrg);
         session.setOrgId(defaultOrg.id);
         api.defaults.headers.common['X-Org-Id'] = String(defaultOrg.id);
       } else {
         setCurrentOrgState(null);
+        persistCurrentOrg(null);
         session.setOrgId(null);
         delete api.defaults.headers.common['X-Org-Id'];
       }
@@ -87,11 +114,13 @@ export function OrgProvider({ children }) {
     setLicenseExpiredInfo(null);
     if (org) {
       setCurrentOrgState(org);
+      persistCurrentOrg(org);
       session.setOrgId(org.id);
       // Keep the axios default header in sync so all API calls send the right org
       api.defaults.headers.common['X-Org-Id'] = String(org.id);
     } else {
       setCurrentOrgState(null);
+      persistCurrentOrg(null);
       session.setOrgId(null);
       delete api.defaults.headers.common['X-Org-Id'];
     }

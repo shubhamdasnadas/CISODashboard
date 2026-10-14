@@ -4,6 +4,7 @@ import { ResponsiveGridLayout, noCompactor } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 import api from '../api.js';
+import * as session from '../utils/session.js';
 import { useOrg } from '../context/OrgContext.jsx';
 
 import {
@@ -30,6 +31,13 @@ import NetworkSecurityWidgets from './dashboard/NetworkSecurityWidgets.jsx';
 import IdentityMdmWidgets from './dashboard/IdentityMdmWidgets.jsx';
 import ThreatIntelWidgets from './dashboard/ThreatIntelWidgets.jsx';
 import AllTools from './dashboard/AllTools.jsx';
+import {
+  WIDGET_KEYS,
+  writeWidgetStorage,
+  loadAllWidgetsFromStorage,
+  saveAllWidgetsToStorage,
+  isDifferentData,
+} from './dashboard/cache.js';
 import {
   MultiViewChart,
   ChartViewDropdown,
@@ -180,42 +188,52 @@ export default function Dashboard() {
   const { currentOrg } = useOrg();
   const navigate = useNavigate();
 
+  const activeOrgId = currentOrg?.id || session.getOrgId();
+  const orgKey = activeOrgId || currentOrg?.slug || 'default';
+
+  // Read initial cache from localStorage for instant 0ms mount
+  const initialCache = useMemo(() => {
+    return loadAllWidgetsFromStorage(orgKey);
+  }, [orgKey]);
+
   // ── S1 data ─────────────────────────────────────────────────────────────────
-  const [s1Data, setS1Data] = useState([]);
-  const [s1Loading, setS1Loading] = useState(true);
+  const [s1Data, setS1Data] = useState(() => initialCache.s1Threats || []);
+  const [s1Loading, setS1Loading] = useState(() => !initialCache.s1Threats);
   const [s1Error] = useState('');
-  const [agentData, setAgentData] = useState([]);
-  const [agentLoading, setAgentLoading] = useState(true);
+  const [agentData, setAgentData] = useState(() => initialCache.s1Agents || []);
+  const [agentLoading, setAgentLoading] = useState(() => !initialCache.s1Agents);
   const [agentError] = useState('');
-  const [appAgentData, setAppAgentData] = useState([]);
-  const [appAgentLoading, setAppAgentLoading] = useState(true);
-  const [appCveData, setAppCveData] = useState([]);
-  const [appCveLoading, setAppCveLoading] = useState(true);
-  const [deviceControlData, setDeviceControlData] = useState([]);
-  const [deviceControlLoading, setDeviceControlLoading] = useState(true);
-  const [rssData, setRssData] = useState([]);
-  const [rssLoading, setRssLoading] = useState(true);
-  const [customAlertData, setCustomAlertData] = useState([]);
-  const [customAlertLoading, setCustomAlertLoading] = useState(true);
+  const [appAgentData, setAppAgentData] = useState(() => initialCache.s1AppAgent || []);
+  const [appAgentLoading, setAppAgentLoading] = useState(() => !initialCache.s1AppAgent);
+  const [appCveData, setAppCveData] = useState(() => initialCache.s1AppCve || []);
+  const [appCveLoading, setAppCveLoading] = useState(() => !initialCache.s1AppCve);
+  const [deviceControlData, setDeviceControlData] = useState(() => initialCache.s1DeviceControl || []);
+  const [deviceControlLoading, setDeviceControlLoading] = useState(() => !initialCache.s1DeviceControl);
+  const [rssData, setRssData] = useState(() => initialCache.s1Rss || []);
+  const [rssLoading, setRssLoading] = useState(() => !initialCache.s1Rss);
+  const [customAlertData, setCustomAlertData] = useState(() => initialCache.s1CustomAlerts || []);
+  const [customAlertLoading, setCustomAlertLoading] = useState(() => !initialCache.s1CustomAlerts);
   const [mitigationChart, setMitigationChart] = useState('donut');
   const [severityChart, setSeverityChart] = useState('bar');
   const [mitigationDays, setMitigationDays] = useState(14);
   const [severityDays, setSeverityDays] = useState(14);
 
   // ── Ticketing data ──────────────────────────────────────────────────────────
-  const [ticketData, setTicketData] = useState([]);
-  const [ticketLoading, setTicketLoading] = useState(true);
+  const [ticketData, setTicketData] = useState(() => initialCache.ticketData || []);
+  const [ticketLoading, setTicketLoading] = useState(() => !initialCache.ticketData);
 
   // ── MDM data ────────────────────────────────────────────────────────────────
-  const [mdmData, setMdmData] = useState([]);
-  const [mdmLoading, setMdmLoading] = useState(true);
+  const [mdmData, setMdmData] = useState(() => initialCache.mdmData || []);
+  const [mdmLoading, setMdmLoading] = useState(() => !initialCache.mdmData);
 
   // ── Checkpoint ──────────────────────────────────────────────────────────────
-  const [cpEvents, setCpEvents] = useState([]);
-  const [cpEventsLoading, setCpEventsLoading] = useState(true);
+  const [cpEvents, setCpEvents] = useState(() => {
+    return Array.isArray(initialCache.cpEvents) ? initialCache.cpEvents.map(mapCpEvent) : [];
+  });
+  const [cpEventsLoading, setCpEventsLoading] = useState(() => !initialCache.cpEvents);
 
   // ── Firewall ─────────────────────────────────────────────────────────────────
-  const [fwWidgets, setFwWidgets] = useState([]);
+  const [fwWidgets, setFwWidgets] = useState(() => initialCache.fwWidgets || []);
   const [fwReport, setFwReport] = useState('bandwidth-trend');
   const [fwRaw, setFwRaw] = useState(null);
   const [, setFwLoading] = useState(false);
@@ -246,8 +264,14 @@ export default function Dashboard() {
   }, []);
 
   // ── Grid layout ──────────────────────────────────────────────────────────────
-  const [boxes, setBoxes] = useState(() => compactLegacyS1WidgetHeights(DEFAULT_BOXES));
-  const [, setLayoutLoaded] = useState(false);
+  const [boxes, setBoxes] = useState(() => {
+    const saved = initialCache.layout?.pgboxes;
+    if (Array.isArray(saved) && saved.length > 0) {
+      return compactLegacyS1WidgetHeights(normalizeSavedBoxes(saved));
+    }
+    return compactLegacyS1WidgetHeights(DEFAULT_BOXES);
+  });
+  const [, setLayoutLoaded] = useState(() => Boolean(initialCache.layout));
   const [activeGridBreakpoint, setActiveGridBreakpoint] = useState('lg');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -261,21 +285,41 @@ export default function Dashboard() {
   const [s1Selected, setS1Selected] = useState([]);
 
   // ── Section ordering & Drag & Drop ───────────────────────────────────────────
-  const [sectionOrder, setSectionOrder] = useState(ALL_SECTIONS);
+  const [sectionOrder, setSectionOrder] = useState(() => {
+    const savedOrder = initialCache.layout?.sectionOrder;
+    if (Array.isArray(savedOrder) && savedOrder.length > 0) {
+      return Array.from(new Set([...savedOrder, ...ALL_SECTIONS]));
+    }
+    return ALL_SECTIONS;
+  });
   const sectionOrderRef = useRef(ALL_SECTIONS);
   const dragSectionRef = useRef(null);
   const [draggedSection, setDraggedSection] = useState(null);
   const [dragOverSection, setDragOverSection] = useState(null);
 
   // ── Visible widget sets ───────────────────────────────────────────────────────
-  const [visibleS1Widgets, setVisibleS1Widgets] = useState(['s1-mitigation', 's1-severity', 's1-threats', 's1-agents']);
-  const [s1WidgetConfigs, setS1WidgetConfigs] = useState({
-    's1-mitigation': { id: 's1-mitigation', viewMode: 'stat' },
-    's1-severity': { id: 's1-severity', viewMode: 'stat' },
-    's1-threats': { id: 's1-threats', viewMode: 'table' },
-    's1-agents': { id: 's1-agents', viewMode: 'table' },
+  const [visibleS1Widgets, setVisibleS1Widgets] = useState(() => {
+    const saved = initialCache.layout?.visibleS1Widgets;
+    if (Array.isArray(saved) && saved.length > 0) return saved;
+    return ['s1-mitigation', 's1-severity', 's1-threats', 's1-agents'];
   });
-  const [visibleCpWidgets, setVisibleCpWidgets] = useState([]);
+  const [s1WidgetConfigs, setS1WidgetConfigs] = useState(() => {
+    const defaultConfigs = {
+      's1-mitigation': { id: 's1-mitigation', viewMode: 'stat' },
+      's1-severity': { id: 's1-severity', viewMode: 'stat' },
+      's1-threats': { id: 's1-threats', viewMode: 'table' },
+      's1-agents': { id: 's1-agents', viewMode: 'table' },
+    };
+    if (initialCache.layout?.s1WidgetConfigs && typeof initialCache.layout.s1WidgetConfigs === 'object') {
+      return { ...defaultConfigs, ...initialCache.layout.s1WidgetConfigs };
+    }
+    return defaultConfigs;
+  });
+  const [visibleCpWidgets, setVisibleCpWidgets] = useState(() => {
+    const saved = initialCache.layout?.visibleCpWidgets;
+    if (Array.isArray(saved)) return saved;
+    return [];
+  });
 
   const visibleS1Ref = useRef(['s1-mitigation', 's1-severity', 's1-threats', 's1-agents']);
   const s1ConfigsRef = useRef(s1WidgetConfigs);
@@ -312,234 +356,298 @@ export default function Dashboard() {
   const persistLayout = useCallback((nextBoxes, nextSectionOrder) => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     setSaving(true);
+    const orderToSave = nextSectionOrder ?? sectionOrderRef.current;
+    const layoutObj = {
+      pgboxes: nextBoxes,
+      sectionOrder: orderToSave,
+      visibleS1Widgets: visibleS1Ref.current,
+      s1WidgetConfigs: s1ConfigsRef.current,
+      visibleCpWidgets: visibleCpRef.current,
+    };
+
+    // Save immediately to localStorage for instant local persistence
+    const currentOrgKey = currentOrg?.id || currentOrg?.slug || 'default';
+    writeWidgetStorage(currentOrgKey, WIDGET_KEYS.LAYOUT, layoutObj);
+
     saveTimerRef.current = setTimeout(() => {
-      const orderToSave = nextSectionOrder ?? sectionOrderRef.current;
-      api.put('/dashboard/layout', {
-        layout: {
-          pgboxes: nextBoxes,
-          sectionOrder: orderToSave,
-          visibleS1Widgets: visibleS1Ref.current,
-          s1WidgetConfigs: s1ConfigsRef.current,
-          visibleCpWidgets: visibleCpRef.current,
-        },
-      })
+      api.put('/dashboard/layout', { layout: layoutObj })
         .then(() => { setSaved(true); setTimeout(() => setSaved(false), 2500); })
         .catch(() => { })
         .finally(() => setSaving(false));
     }, 800);
-  }, []);
+  }, [currentOrg]);
 
-  // ── Aggregate data fetch with multi-tier fallback ────────────────────────────
-  const [aggSource, setAggSource] = useState(null);
+  // ── Data refs to prevent stale closure during the 5–7s background sync loop ──
+  const dataRefs = useRef({
+    s1Data,
+    agentData,
+    appAgentData,
+    appCveData,
+    deviceControlData,
+    rssData,
+    customAlertData,
+    cpEvents,
+    ticketData,
+    mdmData,
+    fwWidgets,
+  });
   useEffect(() => {
-    if (!currentOrg) return;
+    dataRefs.current = {
+      s1Data,
+      agentData,
+      appAgentData,
+      appCveData,
+      deviceControlData,
+      rssData,
+      customAlertData,
+      cpEvents,
+      ticketData,
+      mdmData,
+      fwWidgets,
+    };
+  }, [
+    s1Data, agentData, appAgentData, appCveData, deviceControlData,
+    rssData, customAlertData, cpEvents, ticketData, mdmData, fwWidgets,
+  ]);
 
+  // ── Multi-Tier Redis + LocalStorage synchronization (5 to 7s interval) ──────
+  const [aggSource, setAggSource] = useState(() => {
+    if (initialCache.hasCache) {
+      return initialCache.meta?.source || 'redis';
+    }
+    return null;
+  });
+
+  useEffect(() => {
+    const currentOrgKey = currentOrg?.id || session.getOrgId() || 'default';
     let isMounted = true;
+    let isFetching = false;
 
-    const fetchAggregate = async () => {
-      let r = null;
+    // 1. Immediately hydrate all widgets from localStorage if switching orgs
+    const cached = loadAllWidgetsFromStorage(currentOrgKey);
+    if (cached.hasCache) {
+      if (cached.s1Threats) { setS1Data(cached.s1Threats); setS1Loading(false); }
+      if (cached.s1Agents) { setAgentData(cached.s1Agents); setAgentLoading(false); }
+      if (cached.s1AppAgent) { setAppAgentData(cached.s1AppAgent); setAppAgentLoading(false); }
+      if (cached.s1AppCve) { setAppCveData(cached.s1AppCve); setAppCveLoading(false); }
+      if (cached.s1DeviceControl) { setDeviceControlData(cached.s1DeviceControl); setDeviceControlLoading(false); }
+      if (cached.s1Rss) { setRssData(cached.s1Rss); setRssLoading(false); }
+      if (cached.s1CustomAlerts) { setCustomAlertData(cached.s1CustomAlerts); setCustomAlertLoading(false); }
+      if (cached.cpEvents) { setCpEvents(cached.cpEvents.map(mapCpEvent)); setCpEventsLoading(false); }
+      if (cached.ticketData) { setTicketData(cached.ticketData); setTicketLoading(false); }
+      if (cached.mdmData) { setMdmData(cached.mdmData); setMdmLoading(false); }
+      if (cached.fwWidgets) { setFwWidgets(cached.fwWidgets); }
+      if (cached.layout) {
+        if (Array.isArray(cached.layout.pgboxes) && cached.layout.pgboxes.length > 0) {
+          setBoxes(compactLegacyS1WidgetHeights(normalizeSavedBoxes(cached.layout.pgboxes)));
+        }
+        if (Array.isArray(cached.layout.sectionOrder) && cached.layout.sectionOrder.length > 0) {
+          setSectionOrder(Array.from(new Set([...cached.layout.sectionOrder, ...ALL_SECTIONS])));
+        }
+        if (Array.isArray(cached.layout.visibleS1Widgets) && cached.layout.visibleS1Widgets.length > 0) {
+          setVisibleS1Widgets(cached.layout.visibleS1Widgets);
+        }
+        if (cached.layout.s1WidgetConfigs) {
+          setS1WidgetConfigs((prev) => ({ ...prev, ...cached.layout.s1WidgetConfigs }));
+        }
+        if (Array.isArray(cached.layout.visibleCpWidgets)) {
+          setVisibleCpWidgets(cached.layout.visibleCpWidgets);
+        }
+      }
+      if (cached.meta?.source) setAggSource(cached.meta.source);
+    }
+
+    // 2. Fetch from Redis and synchronize with localStorage every 5 to 7 seconds
+    const syncFromRedis = async () => {
+      if (isFetching) return;
+      isFetching = true;
       try {
-        r = await api.get('/dashboard/aggregate');
-      } catch {
+        let r = null;
         try {
-          r = await api.get('/cache/dashboard-aggregate');
-        } catch (err2) {
-          console.warn('[dashboard] aggregate fetch error:', err2?.message);
-        }
-      }
-
-      const agg = r?.data?.data || r?.data || {};
-      if (r?.data?.source && isMounted) setAggSource(r.data.source);
-
-      // Layout
-      if (agg.layout && isMounted) {
-        const saved = Array.isArray(agg.layout?.pgboxes) ? agg.layout.pgboxes : [];
-        setBoxes(compactLegacyS1WidgetHeights(normalizeSavedBoxes(saved)));
-        const savedOrder = agg.layout?.sectionOrder;
-        if (Array.isArray(savedOrder) && savedOrder.length > 0) {
-          // merge with any new sections
-          const merged = Array.from(new Set([...savedOrder, ...ALL_SECTIONS]));
-          setSectionOrder(merged);
-          sectionOrderRef.current = merged;
-        }
-        if (Array.isArray(agg.layout?.visibleS1Widgets) && agg.layout.visibleS1Widgets.length > 0) {
-          setVisibleS1Widgets(agg.layout.visibleS1Widgets);
-          visibleS1Ref.current = agg.layout.visibleS1Widgets;
-        }
-        if (agg.layout?.s1WidgetConfigs && typeof agg.layout.s1WidgetConfigs === 'object') {
-          setS1WidgetConfigs((prev) => ({ ...prev, ...agg.layout.s1WidgetConfigs }));
-          s1ConfigsRef.current = { ...s1ConfigsRef.current, ...agg.layout.s1WidgetConfigs };
-        }
-        if (Array.isArray(agg.layout?.visibleCpWidgets)) {
-          setVisibleCpWidgets(agg.layout.visibleCpWidgets);
-          visibleCpRef.current = agg.layout.visibleCpWidgets;
-        }
-      }
-      if (isMounted) setLayoutLoaded(true);
-
-      // S1
-      let hasS1Threats = false;
-      if (Array.isArray(agg.sentinelone?.threats) && agg.sentinelone.threats.length > 0) {
-        if (isMounted) setS1Data(agg.sentinelone.threats);
-        hasS1Threats = true;
-      }
-      if (Array.isArray(agg.sentinelone?.agents) && isMounted) setAgentData(agg.sentinelone.agents);
-      if (Array.isArray(agg.sentinelone?.applicationAgent) && isMounted) setAppAgentData(agg.sentinelone.applicationAgent);
-      if (Array.isArray(agg.sentinelone?.applicationCve) && isMounted) setAppCveData(agg.sentinelone.applicationCve);
-      if (Array.isArray(agg.sentinelone?.deviceControl) && isMounted) setDeviceControlData(agg.sentinelone.deviceControl);
-      if (Array.isArray(agg.sentinelone?.rss) && isMounted) setRssData(agg.sentinelone.rss);
-      if (Array.isArray(agg.sentinelone?.customAlerts) && isMounted) setCustomAlertData(agg.sentinelone.customAlerts);
-
-      // Harmony
-      let hasCpEvents = false;
-      if (Array.isArray(agg.harmony?.events) && agg.harmony.events.length > 0) {
-        if (isMounted) setCpEvents(agg.harmony.events.map(mapCpEvent));
-        hasCpEvents = true;
-      }
-
-      // Ticketing
-      if (Array.isArray(agg.ticketing?.tickets) && isMounted) setTicketData(agg.ticketing.tickets);
-
-      // MDM
-      if (Array.isArray(agg.mdm?.devices) && isMounted) setMdmData(agg.mdm.devices);
-
-      // Firewall
-      if (Array.isArray(agg.firewall?.widgets) && isMounted) {
-        setFwWidgets(agg.firewall.widgets.map((w) => ({
-          ...w,
-          x: Number(w.x ?? 0), y: Number(w.y ?? 45),
-          w: Number(w.w ?? 7), h: Number(w.h ?? 44),
-        })));
-      }
-
-      // Fallback fetches if S1 threats or Harmony events are missing from aggregate
-      const fallbackPromises = [];
-      if (!hasS1Threats) {
-        fallbackPromises.push(
-          api.get('/sentinelone/db/threats')
-            .then((res) => {
-              const list = res.data?.data || res.data?.threats || [];
-              if (isMounted && Array.isArray(list) && list.length > 0) setS1Data(list);
-            })
-            .catch(() => {})
-        );
-        fallbackPromises.push(
-          api.get('/sentinelone/db/agents')
-            .then((res) => {
-              const list = res.data?.data || res.data?.agents || [];
-              if (isMounted && Array.isArray(list) && list.length > 0) setAgentData(list);
-            })
-            .catch(() => {})
-        );
-      }
-
-      if (!hasCpEvents) {
-        fallbackPromises.push(
-          api.get('/harmony/events-db')
-            .then((res) => {
-              const list = res.data?.events || res.data?.responseData || [];
-              if (isMounted && Array.isArray(list) && list.length > 0) setCpEvents(list.map(mapCpEvent));
-            })
-            .catch(() => {})
-        );
-      }
-
-      if (fallbackPromises.length > 0) {
-        await Promise.allSettled(fallbackPromises);
-      }
-
-      if (isMounted) {
-        setS1Loading(false); setAgentLoading(false); setAppAgentLoading(false);
-        setAppCveLoading(false); setDeviceControlLoading(false); setRssLoading(false);
-        setCustomAlertLoading(false);
-        setCpEventsLoading(false); setTicketLoading(false); setMdmLoading(false);
-      }
-    };
-
-    fetchAggregate().catch(() => {
-      if (isMounted) {
-        setS1Loading(false); setAgentLoading(false); setAppAgentLoading(false);
-        setAppCveLoading(false); setDeviceControlLoading(false); setRssLoading(false);
-        setCustomAlertLoading(false);
-        setCpEventsLoading(false); setTicketLoading(false); setMdmLoading(false); setLayoutLoaded(true);
-      }
-    });
-
-    return () => { isMounted = false; };
-  }, [currentOrg?.id]);
-
-  // ── Ticketing data (background refresh & polling) ─────────────────────────
-  useEffect(() => {
-    if (!currentOrg) return;
-    let isMounted = true;
-
-    const fetchTickets = (isInitial = false) => {
-      if (isInitial && ticketData.length === 0) setTicketLoading(true);
-      api.get('/zoho/tickets-db')
-        .then((r) => {
-          if (isMounted) {
-            setTicketData(r.data.responseData || []);
+          r = await api.get('/dashboard/aggregate');
+        } catch {
+          try {
+            r = await api.get('/cache/dashboard-aggregate');
+          } catch (err2) {
+            console.warn('[dashboard] aggregate fetch error:', err2?.message);
           }
-        })
-        .catch(() => {
-          if (isMounted && isInitial && ticketData.length === 0) setTicketData([]);
-        })
-        .finally(() => {
-          if (isMounted && isInitial) setTicketLoading(false);
-        });
+        }
+
+        if (!isMounted || !r?.data) return;
+
+        const agg = r.data.data || r.data || {};
+        const source = r.data.source || 'redis';
+        setAggSource(source);
+
+        // Update layout if provided and user not actively editing
+        if (agg.layout && !isEditMode) {
+          const saved = Array.isArray(agg.layout?.pgboxes) ? agg.layout.pgboxes : [];
+          if (saved.length > 0) {
+            setBoxes(compactLegacyS1WidgetHeights(normalizeSavedBoxes(saved)));
+          }
+          const savedOrder = agg.layout?.sectionOrder;
+          if (Array.isArray(savedOrder) && savedOrder.length > 0) {
+            const merged = Array.from(new Set([...savedOrder, ...ALL_SECTIONS]));
+            setSectionOrder(merged);
+            sectionOrderRef.current = merged;
+          }
+          if (Array.isArray(agg.layout?.visibleS1Widgets) && agg.layout.visibleS1Widgets.length > 0) {
+            setVisibleS1Widgets(agg.layout.visibleS1Widgets);
+            visibleS1Ref.current = agg.layout.visibleS1Widgets;
+          }
+          if (agg.layout?.s1WidgetConfigs && typeof agg.layout.s1WidgetConfigs === 'object') {
+            setS1WidgetConfigs((prev) => ({ ...prev, ...agg.layout.s1WidgetConfigs }));
+            s1ConfigsRef.current = { ...s1ConfigsRef.current, ...agg.layout.s1WidgetConfigs };
+          }
+          if (Array.isArray(agg.layout?.visibleCpWidgets)) {
+            setVisibleCpWidgets(agg.layout.visibleCpWidgets);
+            visibleCpRef.current = agg.layout.visibleCpWidgets;
+          }
+        }
+        setLayoutLoaded(true);
+
+        // SentinelOne threats & widgets check & update
+        let hasS1Threats = false;
+        const s1Threats = agg.sentinelone?.threats;
+        if (Array.isArray(s1Threats) && s1Threats.length > 0) {
+          hasS1Threats = true;
+          if (isDifferentData(dataRefs.current.s1Data, s1Threats)) {
+            setS1Data(s1Threats);
+          }
+        }
+        const s1Agents = agg.sentinelone?.agents;
+        if (Array.isArray(s1Agents) && isDifferentData(dataRefs.current.agentData, s1Agents)) {
+          setAgentData(s1Agents);
+        }
+        const appAgents = agg.sentinelone?.applicationAgent;
+        if (Array.isArray(appAgents) && isDifferentData(dataRefs.current.appAgentData, appAgents)) {
+          setAppAgentData(appAgents);
+        }
+        const appCves = agg.sentinelone?.applicationCve;
+        if (Array.isArray(appCves) && isDifferentData(dataRefs.current.appCveData, appCves)) {
+          setAppCveData(appCves);
+        }
+        const devControls = agg.sentinelone?.deviceControl;
+        if (Array.isArray(devControls) && isDifferentData(dataRefs.current.deviceControlData, devControls)) {
+          setDeviceControlData(devControls);
+        }
+        const rss = agg.sentinelone?.rss;
+        if (Array.isArray(rss) && isDifferentData(dataRefs.current.rssData, rss)) {
+          setRssData(rss);
+        }
+        const customAlerts = agg.sentinelone?.customAlerts;
+        if (Array.isArray(customAlerts) && isDifferentData(dataRefs.current.customAlertData, customAlerts)) {
+          setCustomAlertData(customAlerts);
+        }
+
+        // Harmony Checkpoint events check & update
+        let hasCpEvents = false;
+        const cpEvts = agg.harmony?.events;
+        if (Array.isArray(cpEvts) && cpEvts.length > 0) {
+          hasCpEvents = true;
+          const mapped = cpEvts.map(mapCpEvent);
+          if (isDifferentData(dataRefs.current.cpEvents, mapped)) {
+            setCpEvents(mapped);
+          }
+        }
+
+        // Zoho Ticketing tickets check & update
+        const tickets = agg.ticketing?.tickets;
+        if (Array.isArray(tickets) && isDifferentData(dataRefs.current.ticketData, tickets)) {
+          setTicketData(tickets);
+        }
+
+        // MDM devices check & update
+        const mdmDevices = agg.mdm?.devices;
+        if (Array.isArray(mdmDevices) && isDifferentData(dataRefs.current.mdmData, mdmDevices)) {
+          setMdmData(mdmDevices);
+        }
+
+        // Firewall widgets check & update
+        const fwList = agg.firewall?.widgets;
+        if (Array.isArray(fwList) && isDifferentData(dataRefs.current.fwWidgets, fwList)) {
+          setFwWidgets(fwList.map((w) => ({
+            ...w,
+            x: Number(w.x ?? 0), y: Number(w.y ?? 45),
+            w: Number(w.w ?? 7), h: Number(w.h ?? 44),
+          })));
+        }
+
+        // Fallbacks if S1 threats or Harmony events are missing from aggregate
+        const fallbackPromises = [];
+        if (!hasS1Threats && dataRefs.current.s1Data.length === 0) {
+          fallbackPromises.push(
+            api.get('/sentinelone/db/threats')
+              .then((res) => {
+                const list = res.data?.data || res.data?.threats || [];
+                if (isMounted && Array.isArray(list) && list.length > 0) {
+                  setS1Data(list);
+                  writeWidgetStorage(currentOrgKey, WIDGET_KEYS.S1_THREATS, list);
+                }
+              })
+              .catch(() => {})
+          );
+          fallbackPromises.push(
+            api.get('/sentinelone/db/agents')
+              .then((res) => {
+                const list = res.data?.data || res.data?.agents || [];
+                if (isMounted && Array.isArray(list) && list.length > 0) {
+                  setAgentData(list);
+                  writeWidgetStorage(currentOrgKey, WIDGET_KEYS.S1_AGENTS, list);
+                }
+              })
+              .catch(() => {})
+          );
+        }
+        if (!hasCpEvents && dataRefs.current.cpEvents.length === 0) {
+          fallbackPromises.push(
+            api.get('/harmony/events-db')
+              .then((res) => {
+                const list = res.data?.events || res.data?.responseData || [];
+                if (isMounted && Array.isArray(list) && list.length > 0) {
+                  const mapped = list.map(mapCpEvent);
+                  setCpEvents(mapped);
+                  writeWidgetStorage(currentOrgKey, WIDGET_KEYS.CP_EVENTS, list);
+                }
+              })
+              .catch(() => {})
+          );
+        }
+        if (fallbackPromises.length > 0) {
+          await Promise.allSettled(fallbackPromises);
+        }
+
+        // 3. Store data in localStorage for each and every widget of the dashboard
+        saveAllWidgetsToStorage(currentOrgKey, agg, source);
+
+      } catch (err) {
+        console.warn('[dashboard] 5-7s sync error:', err?.message);
+      } finally {
+        isFetching = false;
+        if (isMounted) {
+          setS1Loading(false); setAgentLoading(false); setAppAgentLoading(false);
+          setAppCveLoading(false); setDeviceControlLoading(false); setRssLoading(false);
+          setCustomAlertLoading(false);
+          setCpEventsLoading(false); setTicketLoading(false); setMdmLoading(false);
+        }
+      }
     };
 
-    const interval = setInterval(() => fetchTickets(false), 20000);
+    // First load from Redis
+    syncFromRedis();
+
+    // Revalidate / synchronize every 5 to 7 seconds (6000ms)
+    const interval = setInterval(syncFromRedis, 6000);
 
     return () => {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [currentOrg?.id]);
+  }, [currentOrg?.id, session.getOrgId()]);
 
-  // ── MDM data (fallback if not loaded by aggregate) ─────────────────────────
+  // ── Firewall report preview (only when Add Widget modal is open for firewall) ──
   useEffect(() => {
-    if (!currentOrg) return;
-    if (mdmData.length > 0) return;
-    api.get('/hexnode/db/devices')
-      .then((r) => setMdmData(Array.isArray(r.data?.data) ? r.data.data : []))
-      .catch(() => {})
-      .finally(() => setMdmLoading(false));
-  }, [currentOrg?.id]);
-
-  // ── Layout load ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!currentOrg) return;
-    api.get('/dashboard/layout')
-      .then((r) => {
-        const layout = r.data?.layout;
-        if (layout) {
-          const saved = Array.isArray(layout?.pgboxes) ? layout.pgboxes : [];
-          setBoxes(compactLegacyS1WidgetHeights(normalizeSavedBoxes(saved)));
-          const savedOrder = layout?.sectionOrder;
-          if (Array.isArray(savedOrder) && savedOrder.length > 0) {
-            const merged = Array.from(new Set([...savedOrder, ...ALL_SECTIONS]));
-            setSectionOrder(merged); sectionOrderRef.current = merged;
-          }
-          if (Array.isArray(layout?.visibleS1Widgets) && layout.visibleS1Widgets.length > 0) {
-            setVisibleS1Widgets(layout.visibleS1Widgets); visibleS1Ref.current = layout.visibleS1Widgets;
-          }
-          if (layout?.s1WidgetConfigs && typeof layout.s1WidgetConfigs === 'object') {
-            setS1WidgetConfigs((prev) => ({ ...prev, ...layout.s1WidgetConfigs }));
-            s1ConfigsRef.current = { ...s1ConfigsRef.current, ...layout.s1WidgetConfigs };
-          }
-          if (Array.isArray(layout?.visibleCpWidgets)) {
-            setVisibleCpWidgets(layout.visibleCpWidgets); visibleCpRef.current = layout.visibleCpWidgets;
-          }
-        }
-        setLayoutLoaded(true);
-      })
-      .catch(() => setLayoutLoaded(true));
-  }, [currentOrg?.id]);
-
-  // ── Firewall report preview ─────────────────────────────────────────────────
-  useEffect(() => {
-    if (!currentOrg || !fwReport) return;
+    if (!currentOrg || !fwReport || !showAddWidget || widgetSource !== 'firewall') return;
     setFwLoading(true); setFwError(''); setFwRaw(null);
     api.get(`/firewall/reports/${fwReport}`)
       .then((r) => {
@@ -549,7 +657,7 @@ export default function Dashboard() {
       })
       .catch(() => setFwError('Network error'))
       .finally(() => setFwLoading(false));
-  }, [currentOrg?.id, fwReport]);
+  }, [currentOrg?.id, fwReport, showAddWidget, widgetSource]);
 
   useEffect(() => {
     const table = fwRaw ? extractTable(fwRaw) : null;
@@ -673,11 +781,23 @@ export default function Dashboard() {
       setS1SyncMsg({ text: r.data?.message || 'Done', ok: r.status < 400 });
       if (r.status < 400) {
         setS1Loading(true);
-        api.get('/sentinelone/threats').then((x) => { setS1Data(x.data?.data || []); }).finally(() => setS1Loading(false));
+        api.get('/sentinelone/threats').then((x) => {
+          const list = x.data?.data || [];
+          setS1Data(list);
+          writeWidgetStorage(orgKey, WIDGET_KEYS.S1_THREATS, list);
+        }).finally(() => setS1Loading(false));
         setAgentLoading(true);
-        api.get('/sentinelone/sentinalone_agentinfo').then((x) => { setAgentData(Array.isArray(x.data?.data) ? x.data.data : []); }).finally(() => setAgentLoading(false));
+        api.get('/sentinelone/sentinalone_agentinfo').then((x) => {
+          const list = Array.isArray(x.data?.data) ? x.data.data : [];
+          setAgentData(list);
+          writeWidgetStorage(orgKey, WIDGET_KEYS.S1_AGENTS, list);
+        }).finally(() => setAgentLoading(false));
         setCustomAlertLoading(true);
-        api.get('/sentinelone/db/custom-alert').then((x) => { setCustomAlertData(Array.isArray(x.data?.data) ? x.data.data : []); }).finally(() => setCustomAlertLoading(false));
+        api.get('/sentinelone/db/custom-alert').then((x) => {
+          const list = Array.isArray(x.data?.data) ? x.data.data : [];
+          setCustomAlertData(list);
+          writeWidgetStorage(orgKey, WIDGET_KEYS.S1_CUSTOM_ALERTS, list);
+        }).finally(() => setCustomAlertLoading(false));
       }
     } catch (e) {
       setS1SyncMsg({ text: e.response?.data?.message || 'Sync failed', ok: false });
@@ -705,13 +825,17 @@ export default function Dashboard() {
     const r = await api.post('/firewall/widgets', payload);
     if (r.status < 400 && r.data?.widget) {
       const w = r.data.widget;
-      setFwWidgets((prev) => [...prev, { ...w, x: Number(w.x ?? 0), y: Number(w.y ?? nextY), w: Number(w.w ?? 7), h: Number(w.h ?? 44) }]);
+      const next = [...fwWidgets, { ...w, x: Number(w.x ?? 0), y: Number(w.y ?? nextY), w: Number(w.w ?? 7), h: Number(w.h ?? 44) }];
+      setFwWidgets(next);
+      writeWidgetStorage(orgKey, WIDGET_KEYS.FW_WIDGETS, next);
     }
   }
 
   async function handleDeleteFwWidget(id) {
     await api.delete(`/firewall/widgets/${id}`).catch(() => { });
-    setFwWidgets((prev) => prev.filter((w) => w.id !== id));
+    const next = fwWidgets.filter((w) => w.id !== id);
+    setFwWidgets(next);
+    writeWidgetStorage(orgKey, WIDGET_KEYS.FW_WIDGETS, next);
   }
 
   function removeS1Widget(id) {
@@ -953,13 +1077,13 @@ export default function Dashboard() {
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
               {isEditMode ? 'Done Editing' : 'Edit Layout'}
             </button>
-            <button
+            {/* <button
               onClick={() => setShowAddWidget(true)}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-600 transition-all shadow-md shadow-indigo-600/20"
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" /></svg>
               Add Widget
-            </button>
+            </button> */}
           </div>
         </div>
       </div>

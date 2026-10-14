@@ -59,6 +59,7 @@ router.get('/aggregate', async (req, res) => {
 
     if (aggData) {
       return res.json({
+        source: cacheRes?.source || 'redis',
         layout: layoutRes.rows[0]?.layout ?? null,
         ...aggData,
       });
@@ -100,6 +101,7 @@ router.get('/aggregate', async (req, res) => {
     const devices = hexnodeRows.rows.map(r => r.data).filter(Boolean);
 
     res.json({
+      source: 'postgres',
       layout: layoutRes.rows[0]?.layout ?? null,
       sentinelone: {
         threats: threatsRows.rows.map(r => r.data),

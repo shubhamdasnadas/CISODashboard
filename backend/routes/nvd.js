@@ -435,13 +435,13 @@ const handleListCves = async (req, res) => {
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const countRes = await req.orgPool.query(
-      `SELECT COUNT(*)::int AS total FROM nvd ${where}`,
-      params
-    );
-    const total = countRes.rows[0].total;
+    const countPromise = where
+      ? req.orgPool.query(`SELECT COUNT(*)::int AS total FROM nvd ${where}`, params).then((r) => r.rows[0].total)
+      : req.orgPool.query("SELECT reltuples::bigint AS total FROM pg_class WHERE relname = 'nvd'")
+          .then((r) => (r.rows[0]?.total > 0 ? Number(r.rows[0].total) : req.orgPool.query('SELECT COUNT(*)::int AS total FROM nvd').then((c) => c.rows[0].total)))
+          .catch(() => req.orgPool.query('SELECT COUNT(*)::int AS total FROM nvd').then((c) => c.rows[0].total));
 
-    const dataRes = await req.orgPool.query(
+    const dataPromise = req.orgPool.query(
       `SELECT cve_id, source_identifier, published, last_modified, vuln_status,
               description_en, cvss_version, cvss_base_score, cvss_base_severity,
               cvss_vector_string, weaknesses, configurations, reference_list, raw, synced_at
@@ -450,6 +450,8 @@ const handleListCves = async (req, res) => {
          LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       [...params, limit, offset]
     );
+
+    const [total, dataRes] = await Promise.all([countPromise, dataPromise]);
 
     res.json({
       vulnerabilities: dataRes.rows,

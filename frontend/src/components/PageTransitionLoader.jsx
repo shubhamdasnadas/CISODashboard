@@ -42,8 +42,8 @@ export default function PageTransitionLoader({
       }
     });
 
-    const minGracePeriod = 450; // ms to let React child components mount and initiate network requests
-    const maxSafetyTimeout = 12000; // max time before safety finish (12s)
+    const minGracePeriod = 250; // ms to let React child components mount and initiate network requests
+    const maxSafetyTimeout = 2500; // max time before safety finish (2.5s)
 
     const interval = setInterval(() => {
       const elapsed = Date.now() - mountedTimeRef.current;
