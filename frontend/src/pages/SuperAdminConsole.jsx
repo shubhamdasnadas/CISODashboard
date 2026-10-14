@@ -36,11 +36,42 @@ const ROLES = [
 function formatDate(d) {
   if (!d) return '—';
   try {
+    if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+      const [y, m, day] = d.split('-').map(Number);
+      const dt = new Date(y, m - 1, day);
+      return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    }
     const dt = new Date(d);
     if (isNaN(dt.getTime())) return String(d);
     return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   } catch {
     return String(d);
+  }
+}
+
+function toDateInputValue(val) {
+  if (!val) return '';
+  if (typeof val === 'string') {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+    if (val.includes('T')) {
+      const d = new Date(val);
+      if (!isNaN(d.getTime())) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      }
+    }
+  }
+  try {
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return '';
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  } catch {
+    return '';
   }
 }
 
@@ -1821,8 +1852,8 @@ export default function SuperAdminConsole() {
 // ─────────────────────────────────────────────────────────────────────────────
 function OrgFormModal({ editingOrg, onClose, onSuccess }) {
   const isEdit = !!editingOrg;
-  const todayStr = new Date().toISOString().split('T')[0];
-  const nextYearStr = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const todayStr = toDateInputValue(new Date());
+  const nextYearStr = toDateInputValue(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000));
 
   const [form, setForm] = useState({
     org_name: editingOrg?.org_name || '',
@@ -1830,8 +1861,8 @@ function OrgFormModal({ editingOrg, onClose, onSuccess }) {
     email: editingOrg?.email || '',
     industry: editingOrg?.industry || 'Technology',
     plan: editingOrg?.plan || 'starter',
-    start_date: editingOrg?.start_date ? editingOrg.start_date.split('T')[0] : todayStr,
-    end_date: editingOrg?.end_date ? editingOrg.end_date.split('T')[0] : nextYearStr,
+    start_date: editingOrg?.start_date ? toDateInputValue(editingOrg.start_date) : todayStr,
+    end_date: editingOrg?.end_date ? toDateInputValue(editingOrg.end_date) : nextYearStr,
     description: editingOrg?.description || '',
     address: editingOrg?.address || '',
     mobile_no: editingOrg?.mobile_no || '',
@@ -1840,6 +1871,27 @@ function OrgFormModal({ editingOrg, onClose, onSuccess }) {
     adminEmail: '',
     adminPasswordType: 'temp',
   });
+
+  useEffect(() => {
+    if (editingOrg) {
+      setForm({
+        org_name: editingOrg.org_name || '',
+        slug: editingOrg.slug || '',
+        email: editingOrg.email || '',
+        industry: editingOrg.industry || 'Technology',
+        plan: editingOrg.plan || 'starter',
+        start_date: editingOrg.start_date ? toDateInputValue(editingOrg.start_date) : todayStr,
+        end_date: editingOrg.end_date ? toDateInputValue(editingOrg.end_date) : nextYearStr,
+        description: editingOrg.description || '',
+        address: editingOrg.address || '',
+        mobile_no: editingOrg.mobile_no || '',
+        createAdminUser: false,
+        adminName: '',
+        adminEmail: '',
+        adminPasswordType: 'temp',
+      });
+    }
+  }, [editingOrg, todayStr, nextYearStr]);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -2134,9 +2186,9 @@ function ExtendValidityModal({ org, licenseConfig, onClose, onSuccess, onOpenApp
       const base = org.end_date ? new Date(org.end_date) : new Date();
       const current = isNaN(base.getTime()) ? new Date() : base;
       const target = new Date(current.getTime() + 30 * 24 * 60 * 60 * 1000);
-      return target.toISOString().split('T')[0];
+      return toDateInputValue(target);
     } catch {
-      return new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      return toDateInputValue(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000));
     }
   };
 
@@ -2150,7 +2202,7 @@ function ExtendValidityModal({ org, licenseConfig, onClose, onSuccess, onOpenApp
       const base = org.end_date ? new Date(org.end_date) : new Date();
       const current = isNaN(base.getTime()) ? new Date() : base;
       const target = new Date(current.getTime() + days * 24 * 60 * 60 * 1000);
-      setNewEndDate(target.toISOString().split('T')[0]);
+      setNewEndDate(toDateInputValue(target));
       setError('');
     } catch {
       // fallback

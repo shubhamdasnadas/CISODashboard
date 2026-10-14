@@ -85,14 +85,32 @@ function hashToken(rawToken) {
 }
 
 /**
- * Normalize date to YYYY-MM-DD string.
+ * Normalize date to YYYY-MM-DD string without UTC timezone shift.
  */
 function toDateString(d) {
   if (!d) return null;
-  if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  if (typeof d === 'string') {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+    const date = new Date(d);
+    if (isNaN(date.getTime())) return null;
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+  if (d instanceof Date) {
+    if (isNaN(d.getTime())) return null;
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
   const date = new Date(d);
   if (isNaN(date.getTime())) return null;
-  return date.toISOString().slice(0, 10);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 /**
@@ -788,6 +806,8 @@ async function extendOrgToken({
   if (!newEndStr) {
     throw new Error('Valid new end date (YYYY-MM-DD) is required');
   }
+
+  const currentEndStr = toDateString(org.end_date) || (tokenRows[0] ? toDateString(tokenRows[0].end_date) : null);
 
   const tokenStart = tokenRows[0]?.start_date || org.start_date || new Date();
   const nextStatus = computeTokenStatus(tokenStart, newEndStr);

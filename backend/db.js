@@ -1,6 +1,10 @@
-const { Pool, Client } = require('pg');
+const { Pool, Client, types } = require('pg');
 const fs = require('fs');
 const path = require('path');
+
+// Return PostgreSQL DATE (OID 1082) as raw 'YYYY-MM-DD' string directly without timezone conversion.
+// Without this, pg parses DATE into a local Date object which shifts back 1 day when serialized to UTC ISO string.
+types.setTypeParser(1082, (val) => val);
 
 const DB_HOST = process.env.DB_HOST || 'localhost';
 const DB_PORT = parseInt(process.env.DB_PORT || '5432', 10);

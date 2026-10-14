@@ -176,6 +176,10 @@ router.get('/organisations', async (req, res) => {
       const isExpiringSoon = derivedStatus !== 'expired' && derivedStatus !== 'suspended' && daysRemaining !== null && daysRemaining >= 0 && daysRemaining <= 30;
       return {
         ...org,
+        start_date: toDateString(org.start_date),
+        end_date: toDateString(org.end_date),
+        token_start_date: toDateString(org.token_start_date),
+        token_end_date: toDateString(org.token_end_date),
         derived_status: derivedStatus,
         days_remaining: daysRemaining,
         is_expiring_soon: isExpiringSoon,
@@ -468,7 +472,17 @@ router.put('/organisations/:id', async (req, res) => {
       return res.status(404).json({ error: 'Organisation not found' });
     }
 
-    if (isExpired) {
+    if (startStr || endStr) {
+      await centralPool.query(
+        `UPDATE org_tokens
+         SET start_date = COALESCE($1, start_date),
+             end_date = COALESCE($2, end_date),
+             status = CASE WHEN $3 = TRUE THEN 'expired' ELSE status END,
+             updated_at = NOW()
+         WHERE org_id = $4`,
+        [startStr, endStr, isExpired, orgId]
+      );
+    } else if (isExpired) {
       await centralPool.query(
         "UPDATE org_tokens SET status = 'expired', updated_at = NOW() WHERE org_id = $1",
         [orgId]
@@ -482,7 +496,15 @@ router.put('/organisations/:id', async (req, res) => {
       details: { orgId, plan: rows[0].plan },
     });
 
-    return res.json({ success: true, message: 'Organisation updated successfully', organisation: rows[0] });
+    return res.json({
+      success: true,
+      message: 'Organisation updated successfully',
+      organisation: {
+        ...rows[0],
+        start_date: toDateString(rows[0].start_date),
+        end_date: toDateString(rows[0].end_date),
+      },
+    });
   } catch (err) {
     console.error('[superadmin/organisations] update error:', err);
     return res.status(500).json({ error: 'Failed to update organisation', detail: err.message });
@@ -902,10 +924,18 @@ router.get('/organisations/:id/details', async (req, res) => {
       success: true,
       organisation: {
         ...org,
+        start_date: toDateString(org.start_date),
+        end_date: toDateString(org.end_date),
+        token_start_date: toDateString(tokenRecord?.start_date),
+        token_end_date: toDateString(tokenRecord?.end_date),
         derived_status: derivedStatus,
         days_remaining: daysRemaining,
         is_expiring_soon: isExpiringSoon,
-        token: tokenRecord,
+        token: tokenRecord ? {
+          ...tokenRecord,
+          start_date: toDateString(tokenRecord.start_date),
+          end_date: toDateString(tokenRecord.end_date),
+        } : null,
         deploymentMode: getDeploymentMode(),
       },
       users: {

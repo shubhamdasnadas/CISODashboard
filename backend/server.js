@@ -379,6 +379,7 @@ async function main() {
   await runMigration();
   await runSeedData();
   await ensureCentral2faSchema();
+  // License token expiration and maintenance cron initialized
   initLicenseCron();
 
   // 4. Start the HTTP server.
