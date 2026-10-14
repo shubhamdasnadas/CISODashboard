@@ -47,11 +47,13 @@ router.get('/aggregate', async (req, res) => {
     let aggData = cacheRes?.payload;
     if (!aggData || cacheRes?.source === 'miss') {
       try {
-        await syncService.syncAndCache(orgSlug, 'dashboard-aggregate');
-        const fresh = await syncService.readCached(orgSlug, 'dashboard-aggregate');
+        const syncPromise = syncService.syncAndCache(orgSlug, 'dashboard-aggregate')
+          .then(() => syncService.readCached(orgSlug, 'dashboard-aggregate'));
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 1500));
+        const fresh = await Promise.race([syncPromise, timeoutPromise]);
         aggData = fresh?.payload;
       } catch (e) {
-        console.warn('[dashboard] aggregate sync fallback:', e.message);
+        console.warn('[dashboard] aggregate sync fallback to direct DB:', e.message);
       }
     }
 
@@ -234,7 +236,6 @@ router.post('/health-scores', async (req, res) => {
     const edr = parseFloat(edr_percentage) || 0;
     const email = parseFloat(email_percentage) || 0;
     const ticketing = parseFloat(ticketing_percentage) || 0;
-    const average = Math.round(((edr + email + ticketing) / 3) * 100) / 100;
 
     const client = await req.orgPool.connect();
     try {

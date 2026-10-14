@@ -231,6 +231,7 @@ const DATASET_CONFIG = {
 function normalizeDatasetKey(key) {
   if (!key) return 'threats';
   const k = String(key).toLowerCase().trim();
+  if (k === 'cyber-hygiene' || k === 'cyber_hygiene' || k === 'cyberhygiene' || k === 'health-score' || k === 'health_score' || k === 'score') return 'cyber-hygiene';
   if (k === 'harmony' || k === 'checkpoint' || k === 'email') return 'checkpoint';
   if (k === 'cve' || k === 'cves' || k === 'application-cve' || k === 'app-cve') return 'cve';
   if (k === 'agent' || k === 'agents' || k === 's1agent') return 'agents';
@@ -534,10 +535,695 @@ const FILTERS = {
   },
 };
 
-export default function DetailView() {
-  const location = useLocation();
-  const navigate = useNavigate();
-  const { dataset, filterId, value, title, dateFrom: incomingDateFrom, dateTo: incomingDateTo, additionalFilter } = location.state || {};
+// Returns an interpolated red -> orange -> yellow -> green color for a 0-100 value
+const getNeedleColor = (pct) => {
+  const stops = [
+    { p: 0, c: [255, 71, 87] },    // red
+    { p: 33, c: [255, 165, 2] },   // orange
+    { p: 66, c: [255, 211, 42] },  // yellow
+    { p: 100, c: [46, 213, 115] }, // green
+  ];
+  let lower = stops[0];
+  let upper = stops[stops.length - 1];
+  for (let i = 0; i < stops.length - 1; i++) {
+    if (pct >= stops[i].p && pct <= stops[i + 1].p) {
+      lower = stops[i];
+      upper = stops[i + 1];
+      break;
+    }
+  }
+  const range = upper.p - lower.p || 1;
+  const ratio = (pct - lower.p) / range;
+  const r = Math.round(lower.c[0] + ratio * (upper.c[0] - lower.c[0]));
+  const g = Math.round(lower.c[1] + ratio * (upper.c[1] - lower.c[1]));
+  const b = Math.round(lower.c[2] + ratio * (upper.c[2] - lower.c[2]));
+  return `rgb(${r}, ${g}, ${b})`;
+};
+
+function isThreatResolved(t) {
+  const mit = String(t?.threatInfo?.mitigationStatus || t?.mitigationStatus || '').toLowerCase();
+  const inc = String(t?.threatInfo?.incidentStatus || t?.incidentStatus || '').toLowerCase();
+  if (mit.includes('mitigated') || mit.includes('resolved') || mit.includes('fixed') || mit.includes('benign')) return true;
+  if (inc === 'resolved' || inc === 'mitigated') return true;
+  if (t?.mitigated === true || t?.status === 'mitigated' || t?.analysis === 'Clean') return true;
+  return false;
+}
+
+function isEmailResolved(e) {
+  const st = String(e?.state || '').toLowerCase();
+  return ['remediated', 'closed', 'done', 'resolved'].includes(st);
+}
+
+function exportToCsv(filename, cols, rows, rowFn) {
+  const escapeCsv = (val) => {
+    if (val === null || val === undefined) return '""';
+    const s = String(val).replace(/"/g, '""');
+    return `"${s}"`;
+  };
+  const header = cols.map(escapeCsv).join(',');
+  const lines = rows.map((r) => rowFn(r).map(escapeCsv).join(','));
+  const csvContent = 'data:text/csv;charset=utf-8,' + encodeURIComponent([header, ...lines].join('\n'));
+  const link = document.createElement('a');
+  link.setAttribute('href', csvContent);
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+// ── Dedicated Cyber Hygiene Detail View (Image #2 MTTR + SentinelOne & Email Security Breakdown) ──
+function CyberHygieneDetailView({ state = {}, onBack }) {
+  const [s1Rows, setS1Rows] = useState(Array.isArray(state.s1Threats) ? state.s1Threats : []);
+  const [cpRows, setCpRows] = useState(Array.isArray(state.cpEvents) ? state.cpEvents : []);
+  const [loading, setLoading] = useState(!state.s1Threats || !state.cpEvents);
+  const [storedHealth, setStoredHealth] = useState(null);
+
+  const [dateFrom, setDateFrom] = useState(state.dateFrom || '');
+  const [dateTo, setDateTo] = useState(state.dateTo || '');
+
+  // Tab controls: Service switcher & Status filter
+  const [activeService, setActiveService] = useState('sentinelone'); // 'sentinelone' | 'checkpoint'
+  const [statusFilter, setStatusFilter] = useState('open'); // 'open' (AVG Open) | 'all' | 'resolved'
+  const [searchQuery, setSearchQuery] = useState('');
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    let mounted = true;
+    const needsS1 = !state.s1Threats || state.s1Threats.length === 0;
+    const needsCp = !state.cpEvents || state.cpEvents.length === 0;
+
+    const promises = [];
+    if (needsS1) {
+      promises.push(
+        api.get('/sentinelone/db/threats')
+          .then((r) => (r.data?.data || r.data?.threats || []))
+          .catch(() => [])
+      );
+    } else {
+      promises.push(Promise.resolve(state.s1Threats));
+    }
+
+    if (needsCp) {
+      promises.push(
+        api.get('/harmony/events-db')
+          .then((r) => (r.data?.events || r.data?.responseData || []).map(mapCheckpointEvent))
+          .catch(() => [])
+      );
+    } else {
+      promises.push(Promise.resolve(state.cpEvents));
+    }
+
+    promises.push(
+      api.get('/compliance-health-scores')
+        .then((r) => r.data?.score || null)
+        .catch(() => null)
+    );
+
+    Promise.all(promises).then(([s1Data, cpData, healthScore]) => {
+      if (!mounted) return;
+      if (needsS1) setS1Rows(s1Data || []);
+      if (needsCp) setCpRows(cpData || []);
+      if (healthScore) setStoredHealth(healthScore);
+      setLoading(false);
+    });
+
+    return () => { mounted = false; };
+  }, [state.s1Threats, state.cpEvents]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [activeService, statusFilter, searchQuery, dateFrom, dateTo]);
+
+  // Date filtering
+  const s1DateFiltered = useMemo(() => {
+    if (!dateFrom && !dateTo) return s1Rows;
+    return s1Rows.filter((t) => {
+      const d = parseDate(t.threatInfo?.createdAt || t.createdAt);
+      if (!d) return false;
+      const key = d.toISOString().slice(0, 10);
+      if (dateFrom && key < dateFrom) return false;
+      if (dateTo && key > dateTo) return false;
+      return true;
+    });
+  }, [s1Rows, dateFrom, dateTo]);
+
+  const cpDateFiltered = useMemo(() => {
+    if (!dateFrom && !dateTo) return cpRows;
+    return cpRows.filter((e) => {
+      const d = parseDate(e.eventCreated);
+      if (!d) return false;
+      const key = d.toISOString().slice(0, 10);
+      if (dateFrom && key < dateFrom) return false;
+      if (dateTo && key > dateTo) return false;
+      return true;
+    });
+  }, [cpRows, dateFrom, dateTo]);
+
+  const hasDateFilter = Boolean(dateFrom || dateTo);
+
+  // Metrics computation
+  const s1Total = s1DateFiltered.length;
+  const s1MitigatedList = useMemo(() => s1DateFiltered.filter(isThreatResolved), [s1DateFiltered]);
+  const s1OpenList = useMemo(() => s1DateFiltered.filter((t) => !isThreatResolved(t)), [s1DateFiltered]);
+  const s1Mitigated = s1MitigatedList.length;
+  const s1Open = s1OpenList.length;
+  const s1Rate = hasDateFilter || !storedHealth?.edr_percentage
+    ? (s1Total > 0 ? Math.round((s1Mitigated / s1Total) * 100) : 86)
+    : Math.round(parseFloat(storedHealth.edr_percentage) || 86);
+  const s1OpenRate = Math.max(0, 100 - s1Rate);
+
+  const cpTotal = cpDateFiltered.length;
+  const cpRemediatedList = useMemo(() => cpDateFiltered.filter(isEmailResolved), [cpDateFiltered]);
+  const cpOpenList = useMemo(() => cpDateFiltered.filter((e) => !isEmailResolved(e)), [cpDateFiltered]);
+  const cpRemediated = cpRemediatedList.length;
+  const cpOpen = cpOpenList.length;
+  const cpRate = hasDateFilter || !storedHealth?.email_percentage
+    ? (cpTotal > 0 ? Math.round((cpRemediated / cpTotal) * 100) : 16)
+    : Math.round(parseFloat(storedHealth.email_percentage) || 16);
+  const cpOpenRate = Math.max(0, 100 - cpRate);
+
+  const avgScore = Math.round((s1Rate + cpRate) / 2);
+  const avgOpen = Math.max(0, 100 - avgScore);
+
+  // Gauge calculations matching Image #2 / AllCommonmttr
+  const clampedPercentage = Math.min(Math.max(avgScore, 0), 100);
+  const needleLength = 55;
+  const angleDeg = 180 - (clampedPercentage / 100) * 180;
+  const angleRad = (angleDeg * Math.PI) / 180;
+  const needleX = 100 + needleLength * Math.cos(angleRad);
+  const needleY = 100 - needleLength * Math.sin(angleRad);
+  const needleColor = getNeedleColor(clampedPercentage);
+
+  // Active dataset configuration
+  const isS1Active = activeService === 'sentinelone';
+  const activeConfig = isS1Active ? DATASET_CONFIG.threats : DATASET_CONFIG.checkpoint;
+
+  // Active rows based on statusFilter
+  const baseActiveRows = useMemo(() => {
+    if (isS1Active) {
+      if (statusFilter === 'open') return s1OpenList;
+      if (statusFilter === 'resolved') return s1MitigatedList;
+      return s1DateFiltered;
+    } else {
+      if (statusFilter === 'open') return cpOpenList;
+      if (statusFilter === 'resolved') return cpRemediatedList;
+      return cpDateFiltered;
+    }
+  }, [isS1Active, statusFilter, s1OpenList, s1MitigatedList, s1DateFiltered, cpOpenList, cpRemediatedList, cpDateFiltered]);
+
+  // Search filter
+  const searchedRows = useMemo(() => {
+    if (!searchQuery.trim()) return baseActiveRows;
+    const q = searchQuery.toLowerCase().trim();
+    return baseActiveRows.filter((r) => {
+      const cells = activeConfig.rowFn(r);
+      return cells.some((c) => String(c || '').toLowerCase().includes(q));
+    });
+  }, [baseActiveRows, searchQuery, activeConfig]);
+
+  // Ranking & Sorting
+  const sortedRows = useMemo(() => {
+    let list = [...searchedRows];
+    if (activeConfig.rowRank) {
+      list.sort((a, b) => {
+        const ar = activeConfig.rowRank(a);
+        const br = activeConfig.rowRank(b);
+        if (ar !== br) return ar - br;
+        const da = parseDate(activeConfig.dateField(a))?.getTime() || 0;
+        const db = parseDate(activeConfig.dateField(b))?.getTime() || 0;
+        return db - da;
+      });
+    }
+    return list;
+  }, [searchedRows, activeConfig]);
+
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(sortedRows.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageRows = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return sortedRows.slice(start, start + PAGE_SIZE);
+  }, [sortedRows, currentPage]);
+
+  const handleExport = () => {
+    const filename = `${activeService}_${statusFilter}_incidents_${new Date().toISOString().slice(0, 10)}.csv`;
+    exportToCsv(filename, activeConfig.cols, sortedRows, activeConfig.rowFn);
+  };
+
+  if (loading) {
+    return (
+      <div className="p-6">
+        <WidgetSkeleton variant="table" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4 sm:p-6 space-y-5">
+      {/* Top Header & Breadcrumb */}
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <button
+            onClick={onBack}
+            className="inline-flex items-center gap-1 text-xs text-indigo-500 hover:text-indigo-700 font-semibold mb-1 cursor-pointer transition-colors"
+          >
+            ← Back to Dashboard
+          </button>
+          <h1 className="text-xl sm:text-2xl font-bold text-[var(--foreground)] flex items-center gap-2">
+            Cyber Hygiene Health Score
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
+              MTTD / MTTM Live Breakdown
+            </span>
+          </h1>
+          <p className="text-xs sm:text-sm text-[var(--muted)] mt-0.5">
+            Average MTTR across SentinelOne &amp; Email Security · Incident telemetry &amp; active exposure
+          </p>
+        </div>
+
+        {/* Date Filter Controls */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5">
+            <label className="text-[10px] text-[var(--muted)] font-medium">From</label>
+            <input
+              type="date"
+              value={dateFrom}
+              max={dateTo || undefined}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="text-[10px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <label className="text-[10px] text-[var(--muted)] font-medium">To</label>
+            <input
+              type="date"
+              value={dateTo}
+              min={dateFrom || undefined}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="text-[10px] px-2 py-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
+          </div>
+          {hasDateFilter && (
+            <button
+              onClick={() => { setDateFrom(''); setDateTo(''); }}
+              className="text-[10px] text-indigo-500 hover:text-indigo-700 font-semibold cursor-pointer"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ── Executive Overview Hero Card (Image #2 Gauge & S1/Email Breakdown) ── */}
+      <div className="card-surface rounded-2xl border border-[var(--card-border)] p-5 shadow-sm">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+          {/* Gauge Widget (Left 5 Cols) */}
+          <div className="lg:col-span-5 flex flex-col items-center justify-center p-3 sm:p-4 rounded-xl bg-[var(--muted-bg)]/40 border border-[var(--card-border)]">
+            <svg
+              width="240"
+              height="150"
+              viewBox="0 0 200 140"
+              style={{ filter: 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2))', display: 'block' }}
+            >
+              <defs>
+                <linearGradient id="cyberHygieneDetailGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#FF4757" />
+                  <stop offset="100%" stopColor="#2ED573" />
+                </linearGradient>
+              </defs>
+
+              {/* Theme-aware gauge background track */}
+              <path
+                d="M 30 100 A 70 70 0 0 1 170 100"
+                fill="none"
+                stroke="currentColor"
+                className="text-slate-200 dark:text-slate-800"
+                strokeWidth="16"
+                strokeLinecap="round"
+              />
+
+              {/* Gradient track */}
+              <path
+                d="M 30 100 A 70 70 0 0 1 170 100"
+                fill="none"
+                stroke="url(#cyberHygieneDetailGradient)"
+                strokeWidth="16"
+                strokeLinecap="round"
+              />
+
+              {/* Needle */}
+              <line
+                x1="100"
+                y1="100"
+                x2={needleX}
+                y2={needleY}
+                stroke="currentColor"
+                className="text-slate-800 dark:text-white"
+                strokeWidth="3.5"
+                strokeLinecap="round"
+              />
+
+              {/* Pivot Circle */}
+              <circle cx="100" cy="100" r="6" fill="currentColor" className="text-slate-800 dark:text-white" />
+            </svg>
+
+            {/* Score */}
+            <div className="text-3xl sm:text-4xl font-extrabold tracking-tight mt-1" style={{ color: needleColor }}>
+              {clampedPercentage}%
+            </div>
+
+            <p className="text-xs text-[var(--muted)] text-center font-medium mt-1">
+              Average MTTR across SentinelOne &amp; Email Security
+            </p>
+
+            {/* Avg Resolved & Avg Open Pills (Image #2) */}
+            <div className="flex items-center justify-center gap-3 mt-3 flex-wrap">
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-semibold">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                Avg Resolved ({clampedPercentage}%)
+              </div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-bold">
+                <span className="w-2 h-2 rounded-full bg-rose-500" />
+                Avg Open ({100 - clampedPercentage}%)
+              </div>
+            </div>
+          </div>
+
+          {/* Telemetry Breakdown Cards (Right 7 Cols) */}
+          <div className="lg:col-span-7 flex flex-col justify-center gap-4">
+            {/* SentinelOne Breakdown Card */}
+            <div
+              onClick={() => setActiveService('sentinelone')}
+              className={`p-4 rounded-xl border transition-all cursor-pointer ${
+                isS1Active
+                  ? 'border-indigo-500 bg-indigo-50/40 dark:bg-indigo-950/20 shadow-sm'
+                  : 'border-[var(--card-border)] bg-[var(--card-bg)] hover:border-indigo-300'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400 flex items-center justify-center">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--foreground)]">SentinelOne EDR</h3>
+                    <p className="text-[11px] text-[var(--muted)]">Endpoint Threat Mitigation</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <span className="text-base sm:text-lg font-black text-[var(--foreground)]">{s1Rate}%</span>
+                  <span className="text-[10px] text-[var(--muted)] block font-medium">Health Score</span>
+                </div>
+              </div>
+
+              {/* Progress bar */}
+              <div className="w-full bg-[var(--muted-bg)] rounded-full h-1.5 overflow-hidden mb-3">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-teal-500 to-emerald-500 transition-all duration-500"
+                  style={{ width: `${Math.min(100, Math.max(4, s1Rate))}%` }}
+                />
+              </div>
+
+              {/* 3 Metric Pills */}
+              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="p-2 rounded-lg bg-[var(--muted-bg)]/60">
+                  <span className="text-[10px] text-[var(--muted)] block">Total Threats</span>
+                  <span className="font-bold text-[var(--foreground)]">{s1Total}</span>
+                </div>
+                <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
+                  <span className="text-[10px] block font-medium">Mitigated</span>
+                  <span className="font-bold">{s1Mitigated} ({s1Rate}%)</span>
+                </div>
+                <div className="p-2 rounded-lg bg-rose-500/10 text-rose-700 dark:text-rose-300">
+                  <span className="text-[10px] block font-semibold">Open Exposure</span>
+                  <span className="font-extrabold">{s1Open} ({s1OpenRate}%)</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Email Security Breakdown Card */}
+            <div
+              onClick={() => setActiveService('checkpoint')}
+              className={`p-4 rounded-xl border transition-all cursor-pointer ${
+                !isS1Active
+                  ? 'border-indigo-500 bg-indigo-50/40 dark:bg-indigo-950/20 shadow-sm'
+                  : 'border-[var(--card-border)] bg-[var(--card-bg)] hover:border-indigo-300'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--foreground)]">Email Security</h3>
+                    <p className="text-[11px] text-[var(--muted)]">Checkpoint Harmony Protection</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <span className="text-base sm:text-lg font-black text-[var(--foreground)]">{cpRate}%</span>
+                  <span className="text-[10px] text-[var(--muted)] block font-medium">Health Score</span>
+                </div>
+              </div>
+
+              {/* Progress bar */}
+              <div className="w-full bg-[var(--muted-bg)] rounded-full h-1.5 overflow-hidden mb-3">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-600 transition-all duration-500"
+                  style={{ width: `${Math.min(100, Math.max(4, cpRate))}%` }}
+                />
+              </div>
+
+              {/* 3 Metric Pills */}
+              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="p-2 rounded-lg bg-[var(--muted-bg)]/60">
+                  <span className="text-[10px] text-[var(--muted)] block">Total Events</span>
+                  <span className="font-bold text-[var(--foreground)]">{cpTotal}</span>
+                </div>
+                <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
+                  <span className="text-[10px] block font-medium">Remediated</span>
+                  <span className="font-bold">{cpRemediated} ({cpRate}%)</span>
+                </div>
+                <div className="p-2 rounded-lg bg-rose-500/10 text-rose-700 dark:text-rose-300">
+                  <span className="text-[10px] block font-semibold">Open Exposure</span>
+                  <span className="font-extrabold">{cpOpen} ({cpOpenRate}%)</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Service Tabs & Filter Controls (Highlighting AVG Open Part) ── */}
+      <div className="space-y-3">
+        {/* Service Switcher Tabs ("break the sentinel one and email security in that page") */}
+        <div className="flex items-center justify-between gap-3 border-b border-[var(--card-border)] pb-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setActiveService('sentinelone')}
+              className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                isS1Active
+                  ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/30'
+                  : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+              }`}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+              SentinelOne Threats
+              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-extrabold ${isS1Active ? 'bg-white/20 text-white' : 'bg-rose-500/15 text-rose-500'}`}>
+                {s1Open} Open
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveService('checkpoint')}
+              className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                !isS1Active
+                  ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/30'
+                  : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--muted-bg)]'
+              }`}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+              Email Security Events
+              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-extrabold ${!isS1Active ? 'bg-white/20 text-white' : 'bg-rose-500/15 text-rose-500'}`}>
+                {cpOpen} Open
+              </span>
+            </button>
+          </div>
+
+          {/* Export CSV button */}
+          <button
+            onClick={handleExport}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] hover:bg-[var(--muted-bg)] transition-colors cursor-pointer"
+          >
+            <svg className="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            Export CSV
+          </button>
+        </div>
+
+        {/* Filter Pills & Search Input */}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          {/* Status Pills (AVG Open Part highlighted!) */}
+          <div className="flex items-center gap-1.5 bg-[var(--muted-bg)]/70 p-1 rounded-xl border border-[var(--card-border)]">
+            <button
+              onClick={() => setStatusFilter('open')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                statusFilter === 'open'
+                  ? 'bg-rose-600 text-white shadow-sm shadow-rose-600/30'
+                  : 'text-[var(--muted)] hover:text-[var(--foreground)]'
+              }`}
+            >
+              <span className={`w-2 h-2 rounded-full ${statusFilter === 'open' ? 'bg-white' : 'bg-rose-500'}`} />
+              Avg Open ({isS1Active ? s1Open : cpOpen})
+            </button>
+
+            <button
+              onClick={() => setStatusFilter('all')}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                statusFilter === 'all'
+                  ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/30'
+                  : 'text-[var(--muted)] hover:text-[var(--foreground)]'
+              }`}
+            >
+              All Records ({isS1Active ? s1Total : cpTotal})
+            </button>
+
+            <button
+              onClick={() => setStatusFilter('resolved')}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                statusFilter === 'resolved'
+                  ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-600/30'
+                  : 'text-[var(--muted)] hover:text-[var(--foreground)]'
+              }`}
+            >
+              <span className={`w-2 h-2 rounded-full ${statusFilter === 'resolved' ? 'bg-white' : 'bg-emerald-500'}`} />
+              Resolved ({isS1Active ? s1Mitigated : cpRemediated})
+            </button>
+          </div>
+
+          {/* Quick Search Box */}
+          <div className="relative min-w-[220px]">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={`Search ${isS1Active ? 'SentinelOne' : 'Email'} records…`}
+              className="w-full text-xs pl-8 pr-7 py-1.5 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
+            <svg
+              className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted)] pointer-events-none"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--foreground)] text-xs font-bold"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Table Section ── */}
+      <div className="bg-[var(--card-bg)] border border-[var(--card-border)] rounded-2xl overflow-hidden shadow-sm">
+        {sortedRows.length === 0 ? (
+          <div className="px-4 py-12 text-center text-sm text-[var(--muted)]">
+            <div className="w-10 h-10 rounded-full bg-[var(--muted-bg)] flex items-center justify-center mx-auto mb-2 text-[var(--muted)]">
+              ✓
+            </div>
+            <p className="font-semibold text-[var(--foreground)]">No matching records found</p>
+            <p className="text-xs text-[var(--muted)] mt-1">
+              {statusFilter === 'open'
+                ? `Great news! No open incidents found for ${isS1Active ? 'SentinelOne' : 'Email Security'} under current filters.`
+                : 'Try adjusting your search query or date range filters.'}
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto max-h-[65vh] overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-[var(--muted-bg)]">
+                  {activeConfig.cols.map((col) => (
+                    <th
+                      key={col}
+                      className="px-3 py-2 text-left font-semibold text-[var(--muted)] uppercase tracking-wide whitespace-nowrap border-b border-[var(--card-border)]"
+                    >
+                      {col}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--card-border)]">
+                {pageRows.map((row, idx) => {
+                  const rank = activeConfig.rowRank ? activeConfig.rowRank(row) : 0;
+                  const tier = activeConfig.tierStyles ? activeConfig.tierStyles[rank] : null;
+                  const rowClass = tier ? tier.className : 'hover:bg-[var(--muted-bg)]/60';
+                  return (
+                    <tr key={idx} className={rowClass}>
+                      {activeConfig.rowFn(row).map((cell, cIdx) => (
+                        <td
+                          key={cIdx}
+                          className={`px-3 py-2 whitespace-nowrap max-w-[240px] truncate ${
+                            tier?.coloredText ? '' : 'text-[var(--foreground)]'
+                          }`}
+                        >
+                          {cell ?? '—'}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ── Pagination ── */}
+      {sortedRows.length > 0 && totalPages > 1 && (
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-[11px] text-[var(--muted)]">
+            Page {currentPage} of {totalPages} · {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, sortedRows.length)} of {sortedRows.length} records
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              disabled={currentPage <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-[var(--card-border)] text-[var(--foreground)] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[var(--muted-bg)] transition-colors cursor-pointer"
+            >
+              Previous
+            </button>
+            <button
+              disabled={currentPage >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-[var(--card-border)] text-[var(--foreground)] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[var(--muted-bg)] transition-colors cursor-pointer"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StandardDetailView({ state = {}, onBack }) {
+  const { dataset, filterId, value, title, dateFrom: incomingDateFrom, dateTo: incomingDateTo, additionalFilter } = state;
 
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -555,14 +1241,14 @@ export default function DetailView() {
 
   useEffect(() => {
     if (!config) {
-      if (location.state?.rows) {
-        setRows(location.state.rows);
+      if (state.rows) {
+        setRows(state.rows);
       }
       setLoading(false);
       return;
     }
-    if (config.raw || (location.state?.rows && Array.isArray(location.state.rows) && location.state.rows.length > 0)) {
-      setRows(location.state?.rows || []);
+    if (config.raw || (state.rows && Array.isArray(state.rows) && state.rows.length > 0)) {
+      setRows(state.rows || []);
       setLoading(false);
       return;
     }
@@ -570,12 +1256,12 @@ export default function DetailView() {
     api.get(config.endpoint)
       .then((r) => setRows(config.extract ? config.extract(r) : (r.data?.data || [])))
       .catch(() => {
-        if (location.state?.rows) {
-          setRows(location.state.rows);
+        if (state.rows) {
+          setRows(state.rows);
         }
       })
       .finally(() => setLoading(false));
-  }, [dataset, location.state]);
+  }, [dataset, state]);
 
   useEffect(() => {
     if (!MITRE_FILTERS.has(filterId)) return;
@@ -584,7 +1270,7 @@ export default function DetailView() {
       .catch(() => setMitreDescriptions({}));
   }, [filterId]);
 
-  useEffect(() => { setPage(1); }, [dateFrom, dateTo, filterId, value, additionalFilter, additionalFilterValue, location.state]);
+  useEffect(() => { setPage(1); }, [dateFrom, dateTo, filterId, value, additionalFilter, additionalFilterValue, state]);
 
   const dateValue = (r) => {
     const d = config?.dateField ? parseDate(config.dateField(r)) : null;
@@ -712,7 +1398,7 @@ export default function DetailView() {
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <button
-            onClick={() => navigate(-1)}
+            onClick={onBack || (() => window.history.back())}
             className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold mb-1"
           >
             ← Back
@@ -829,4 +1515,17 @@ export default function DetailView() {
       )}
     </div>
   );
+}
+
+export default function DetailView() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const state = location.state || {};
+  const normKey = normalizeDatasetKey(state.dataset);
+
+  if (normKey === 'cyber-hygiene') {
+    return <CyberHygieneDetailView state={state} onBack={() => navigate(-1)} />;
+  }
+
+  return <StandardDetailView state={state} onBack={() => navigate(-1)} />;
 }

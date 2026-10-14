@@ -157,19 +157,19 @@ function compactLegacyS1WidgetHeights(items) {
 
 function mapCpEvent(e) {
   return {
-    eventId: e.event_id,
+    eventId: e.event_id || e.eventId,
     type: e.type,
     state: e.state,
     severity: e.severity,
-    confidenceIndicator: e.confidence_indicator,
+    confidenceIndicator: e.confidence_indicator || e.confidenceIndicator,
     description: e.description,
-    senderAddress: e.sender_address,
+    senderAddress: e.sender_address || e.senderAddress,
     saas: e.saas,
-    entityId: e.entity_id,
-    entityLink: e.entity_link,
-    additionalData: e.additional_data,
+    entityId: e.entity_id || e.entityId,
+    entityLink: e.entity_link || e.entityLink,
+    additionalData: e.additional_data || e.additionalData,
     actions: e.actions,
-    eventCreated: e.event_created,
+    eventCreated: e.event_created || e.eventCreated,
   };
 }
 
@@ -329,80 +329,143 @@ export default function Dashboard() {
     }, 800);
   }, []);
 
-  // ── Aggregate data fetch ─────────────────────────────────────────────────────
+  // ── Aggregate data fetch with multi-tier fallback ────────────────────────────
   const [aggSource, setAggSource] = useState(null);
   useEffect(() => {
     if (!currentOrg) return;
-    api.get('/cache/dashboard-aggregate')
-      .then((r) => {
-        setAggSource(r.data.source);
-        const agg = r.data.data;
 
-        // Layout
-        if (agg.layout) {
-          const saved = Array.isArray(agg.layout?.pgboxes) ? agg.layout.pgboxes : [];
-          setBoxes(compactLegacyS1WidgetHeights(normalizeSavedBoxes(saved)));
-          const savedOrder = agg.layout?.sectionOrder;
-          if (Array.isArray(savedOrder) && savedOrder.length > 0) {
-            // merge with any new sections
-            const merged = Array.from(new Set([...savedOrder, ...ALL_SECTIONS]));
-            setSectionOrder(merged);
-            sectionOrderRef.current = merged;
-          }
-          if (Array.isArray(agg.layout?.visibleS1Widgets) && agg.layout.visibleS1Widgets.length > 0) {
-            setVisibleS1Widgets(agg.layout.visibleS1Widgets);
-            visibleS1Ref.current = agg.layout.visibleS1Widgets;
-          }
-          if (agg.layout?.s1WidgetConfigs && typeof agg.layout.s1WidgetConfigs === 'object') {
-            setS1WidgetConfigs((prev) => ({ ...prev, ...agg.layout.s1WidgetConfigs }));
-            s1ConfigsRef.current = { ...s1ConfigsRef.current, ...agg.layout.s1WidgetConfigs };
-          }
-          if (Array.isArray(agg.layout?.visibleCpWidgets)) {
-            setVisibleCpWidgets(agg.layout.visibleCpWidgets);
-            visibleCpRef.current = agg.layout.visibleCpWidgets;
-          }
+    let isMounted = true;
+
+    const fetchAggregate = async () => {
+      let r = null;
+      try {
+        r = await api.get('/dashboard/aggregate');
+      } catch {
+        try {
+          r = await api.get('/cache/dashboard-aggregate');
+        } catch (err2) {
+          console.warn('[dashboard] aggregate fetch error:', err2?.message);
         }
-        setLayoutLoaded(true);
+      }
 
-        // S1
-        if (Array.isArray(agg.sentinelone?.threats)) setS1Data(agg.sentinelone.threats);
-        if (Array.isArray(agg.sentinelone?.agents)) setAgentData(agg.sentinelone.agents);
-        if (Array.isArray(agg.sentinelone?.applicationAgent)) setAppAgentData(agg.sentinelone.applicationAgent);
-        if (Array.isArray(agg.sentinelone?.applicationCve)) setAppCveData(agg.sentinelone.applicationCve);
-        if (Array.isArray(agg.sentinelone?.deviceControl)) setDeviceControlData(agg.sentinelone.deviceControl);
-        if (Array.isArray(agg.sentinelone?.rss)) setRssData(agg.sentinelone.rss);
-        if (Array.isArray(agg.sentinelone?.customAlerts)) setCustomAlertData(agg.sentinelone.customAlerts);
+      const agg = r?.data?.data || r?.data || {};
+      if (r?.data?.source && isMounted) setAggSource(r.data.source);
 
-        // Harmony
-        if (Array.isArray(agg.harmony?.events)) setCpEvents(agg.harmony.events.map(mapCpEvent));
-
-        // Ticketing
-        if (Array.isArray(agg.ticketing?.tickets)) setTicketData(agg.ticketing.tickets);
-
-        // MDM
-        if (Array.isArray(agg.mdm?.devices)) setMdmData(agg.mdm.devices);
-
-        // Firewall
-        if (Array.isArray(agg.firewall?.widgets)) {
-          setFwWidgets(agg.firewall.widgets.map((w) => ({
-            ...w,
-            x: Number(w.x ?? 0), y: Number(w.y ?? 45),
-            w: Number(w.w ?? 7), h: Number(w.h ?? 44),
-          })));
+      // Layout
+      if (agg.layout && isMounted) {
+        const saved = Array.isArray(agg.layout?.pgboxes) ? agg.layout.pgboxes : [];
+        setBoxes(compactLegacyS1WidgetHeights(normalizeSavedBoxes(saved)));
+        const savedOrder = agg.layout?.sectionOrder;
+        if (Array.isArray(savedOrder) && savedOrder.length > 0) {
+          // merge with any new sections
+          const merged = Array.from(new Set([...savedOrder, ...ALL_SECTIONS]));
+          setSectionOrder(merged);
+          sectionOrderRef.current = merged;
         }
+        if (Array.isArray(agg.layout?.visibleS1Widgets) && agg.layout.visibleS1Widgets.length > 0) {
+          setVisibleS1Widgets(agg.layout.visibleS1Widgets);
+          visibleS1Ref.current = agg.layout.visibleS1Widgets;
+        }
+        if (agg.layout?.s1WidgetConfigs && typeof agg.layout.s1WidgetConfigs === 'object') {
+          setS1WidgetConfigs((prev) => ({ ...prev, ...agg.layout.s1WidgetConfigs }));
+          s1ConfigsRef.current = { ...s1ConfigsRef.current, ...agg.layout.s1WidgetConfigs };
+        }
+        if (Array.isArray(agg.layout?.visibleCpWidgets)) {
+          setVisibleCpWidgets(agg.layout.visibleCpWidgets);
+          visibleCpRef.current = agg.layout.visibleCpWidgets;
+        }
+      }
+      if (isMounted) setLayoutLoaded(true);
 
-        // Clear loading
+      // S1
+      let hasS1Threats = false;
+      if (Array.isArray(agg.sentinelone?.threats) && agg.sentinelone.threats.length > 0) {
+        if (isMounted) setS1Data(agg.sentinelone.threats);
+        hasS1Threats = true;
+      }
+      if (Array.isArray(agg.sentinelone?.agents) && isMounted) setAgentData(agg.sentinelone.agents);
+      if (Array.isArray(agg.sentinelone?.applicationAgent) && isMounted) setAppAgentData(agg.sentinelone.applicationAgent);
+      if (Array.isArray(agg.sentinelone?.applicationCve) && isMounted) setAppCveData(agg.sentinelone.applicationCve);
+      if (Array.isArray(agg.sentinelone?.deviceControl) && isMounted) setDeviceControlData(agg.sentinelone.deviceControl);
+      if (Array.isArray(agg.sentinelone?.rss) && isMounted) setRssData(agg.sentinelone.rss);
+      if (Array.isArray(agg.sentinelone?.customAlerts) && isMounted) setCustomAlertData(agg.sentinelone.customAlerts);
+
+      // Harmony
+      let hasCpEvents = false;
+      if (Array.isArray(agg.harmony?.events) && agg.harmony.events.length > 0) {
+        if (isMounted) setCpEvents(agg.harmony.events.map(mapCpEvent));
+        hasCpEvents = true;
+      }
+
+      // Ticketing
+      if (Array.isArray(agg.ticketing?.tickets) && isMounted) setTicketData(agg.ticketing.tickets);
+
+      // MDM
+      if (Array.isArray(agg.mdm?.devices) && isMounted) setMdmData(agg.mdm.devices);
+
+      // Firewall
+      if (Array.isArray(agg.firewall?.widgets) && isMounted) {
+        setFwWidgets(agg.firewall.widgets.map((w) => ({
+          ...w,
+          x: Number(w.x ?? 0), y: Number(w.y ?? 45),
+          w: Number(w.w ?? 7), h: Number(w.h ?? 44),
+        })));
+      }
+
+      // Fallback fetches if S1 threats or Harmony events are missing from aggregate
+      const fallbackPromises = [];
+      if (!hasS1Threats) {
+        fallbackPromises.push(
+          api.get('/sentinelone/db/threats')
+            .then((res) => {
+              const list = res.data?.data || res.data?.threats || [];
+              if (isMounted && Array.isArray(list) && list.length > 0) setS1Data(list);
+            })
+            .catch(() => {})
+        );
+        fallbackPromises.push(
+          api.get('/sentinelone/db/agents')
+            .then((res) => {
+              const list = res.data?.data || res.data?.agents || [];
+              if (isMounted && Array.isArray(list) && list.length > 0) setAgentData(list);
+            })
+            .catch(() => {})
+        );
+      }
+
+      if (!hasCpEvents) {
+        fallbackPromises.push(
+          api.get('/harmony/events-db')
+            .then((res) => {
+              const list = res.data?.events || res.data?.responseData || [];
+              if (isMounted && Array.isArray(list) && list.length > 0) setCpEvents(list.map(mapCpEvent));
+            })
+            .catch(() => {})
+        );
+      }
+
+      if (fallbackPromises.length > 0) {
+        await Promise.allSettled(fallbackPromises);
+      }
+
+      if (isMounted) {
         setS1Loading(false); setAgentLoading(false); setAppAgentLoading(false);
         setAppCveLoading(false); setDeviceControlLoading(false); setRssLoading(false);
         setCustomAlertLoading(false);
         setCpEventsLoading(false); setTicketLoading(false); setMdmLoading(false);
-      })
-      .catch(() => {
+      }
+    };
+
+    fetchAggregate().catch(() => {
+      if (isMounted) {
         setS1Loading(false); setAgentLoading(false); setAppAgentLoading(false);
         setAppCveLoading(false); setDeviceControlLoading(false); setRssLoading(false);
         setCustomAlertLoading(false);
         setCpEventsLoading(false); setTicketLoading(false); setMdmLoading(false); setLayoutLoaded(true);
-      });
+      }
+    });
+
+    return () => { isMounted = false; };
   }, [currentOrg?.id]);
 
   // ── Ticketing data (background refresh & polling) ─────────────────────────

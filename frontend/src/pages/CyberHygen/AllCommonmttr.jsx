@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../../api';
 
 // Returns an interpolated red -> orange -> yellow -> green color for a 0-100 value
@@ -27,6 +28,7 @@ const getNeedleColor = (pct) => {
 };
 
 const AllCommonmttr = () => {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [edrPct, setEdrPct] = useState(0);
   const [emailPct, setEmailPct] = useState(0);
@@ -122,7 +124,9 @@ const AllCommonmttr = () => {
     borderRadius: '16px',
     border: '1px solid var(--card-border)',
     width: '100%',
-    minHeight: 'auto'
+    minHeight: 'auto',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
   };
 
   const gaugeContainerStyle = {
@@ -185,8 +189,27 @@ const AllCommonmttr = () => {
     averagePercentage: clampedPercentage.toFixed(2)
   });
 
+  const handleClick = () => {
+    navigate('/dashboard/detail', {
+      state: {
+        dataset: 'cyber-hygiene',
+        filterId: 'open',
+        title: 'Cyber Hygiene Health Score & MTTR Breakdown',
+        avgScore: Math.round(clampedPercentage),
+        avgOpen: Math.round(unmitigatedPercentage),
+        s1Rate: Math.round(edrPct),
+        emailRate: Math.round(emailPct),
+      },
+    });
+  };
+
   return (
-    <div style={containerStyle}>
+    <div
+      style={containerStyle}
+      onClick={handleClick}
+      title="Click to view Cyber Hygiene MTTR Breakdown & Open Incidents"
+      className="hover:shadow-md transition-shadow"
+    >
       {loading ? (
         <div style={{ color: '#94a3b8', textAlign: 'center', padding: '32px 16px' }}>Loading health score...</div>
       ) : (
