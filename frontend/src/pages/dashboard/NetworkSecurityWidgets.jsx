@@ -8,6 +8,7 @@ import {
   DaysFilter,
   categoryTimeSeries,
 } from '../security/widgetViews.jsx';
+import { WIDGET_KEYS, readWidgetDb, writeWidgetDb, getInMemoryWidget } from './cache.js';
 
 const APP_TRAFFIC_COLORS = {
   'web-browsing': '#3b82f6',
@@ -36,17 +37,11 @@ export default function NetworkSecurityWidgets({
   const navigate = useNavigate();
 
   const activeOrgId = session.getOrgId() || 'default';
-  const trafficCacheKey = `ciso_widget_${activeOrgId}_top_applications`;
 
   const [appChartView, setAppChartView] = useState('donut');
   const [actionChartView, setActionChartView] = useState('bar');
   const [trafficData, setTrafficData] = useState(() => {
-    try {
-      const raw = localStorage.getItem(trafficCacheKey);
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
-    }
+    return getInMemoryWidget(activeOrgId, WIDGET_KEYS.TOP_APPLICATIONS) || [];
   });
   const [loading, setLoading] = useState(() => trafficData.length === 0);
   const [appDays, setAppDays] = useState(14);
@@ -57,6 +52,15 @@ export default function NetworkSecurityWidgets({
 
   useEffect(() => {
     let cancelled = false;
+
+    // Load from IndexedDB
+    readWidgetDb(activeOrgId, WIDGET_KEYS.TOP_APPLICATIONS).then((cached) => {
+      if (!cancelled && Array.isArray(cached)) {
+        setTrafficData(cached);
+        setLoading(false);
+      }
+    });
+
     api.get('/firewall/reports/top-applications')
       .then((r) => {
         if (!cancelled && r.data?.data) {
@@ -65,9 +69,7 @@ export default function NetworkSecurityWidgets({
           const entry = raw?.report?.result?.entry || raw?.response?.result?.entry || raw?.entry || [];
           const rows = Array.isArray(entry) ? entry : [entry].filter(Boolean);
           setTrafficData(rows);
-          try {
-            localStorage.setItem(trafficCacheKey, JSON.stringify(rows));
-          } catch (_) {}
+          writeWidgetDb(activeOrgId, WIDGET_KEYS.TOP_APPLICATIONS, rows);
         }
       })
       .catch(() => {})
@@ -75,7 +77,7 @@ export default function NetworkSecurityWidgets({
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [trafficCacheKey]);
+  }, [activeOrgId]);
 
   // 1. Top Applications by Bandwidth / Sessions
   const appBreakdown = useMemo(() => {

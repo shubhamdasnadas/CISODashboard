@@ -635,15 +635,7 @@ export default function AppLayout() {
   const location = useLocation();
   const isSuperAdminConsole = location.pathname === '/superadmin-console';
   const isDashboard = location.pathname === '/dashboard' || location.pathname === '/';
-  const hasCachedDashboard = isDashboard && (() => {
-    try {
-      const orgId = currentOrg?.id || session.getOrgId() || 'default';
-      return Boolean(localStorage.getItem(`ciso_widget_${orgId}_meta`));
-    } catch {
-      return false;
-    }
-  })();
-  const shouldSkipLoader = isSuperAdminConsole || hasCachedDashboard;
+  const shouldSkipLoader = isSuperAdminConsole || isDashboard;
 
   const [transitionState, setTransitionState] = useState({
     activePath: location.pathname,
@@ -654,11 +646,11 @@ export default function AppLayout() {
   useEffect(() => {
     if (prevOrgIdRef.current !== currentOrg?.id) {
       prevOrgIdRef.current = currentOrg?.id;
-      if (!isSuperAdminConsole && !hasCachedDashboard) {
+      if (!isSuperAdminConsole && !isDashboard) {
         setTransitionState((prev) => ({ ...prev, isTransitioning: true }));
       }
     }
-  }, [currentOrg?.id, isSuperAdminConsole, hasCachedDashboard]);
+  }, [currentOrg?.id, isSuperAdminConsole, isDashboard]);
 
   // Synchronously intercept route change during render phase so the loader appears instantly
   // without allowing the target page (e.g. Dashboard) to render or paint first

@@ -89,7 +89,7 @@ router.get('/db/threats', async (req, res) => {
       conditions.push(`(data->'threatInfo'->>'createdAt')::date <= $${params.length}::date`);
     }
     if (conditions.length) query += ' WHERE ' + conditions.join(' AND ');
-    query += ' ORDER BY synced_at DESC';
+    query += ' ORDER BY synced_at DESC LIMIT 300';
     const { rows } = await req.orgPool.query(query, params);
     res.json({ threats: rows.map(r => r.data) });
   } catch (err) {
@@ -113,7 +113,7 @@ router.get('/db/agents/removed-count', async (req, res) => {
 router.get('/db/agents', async (req, res) => {
   try {
     const { rows } = await req.orgPool.query(
-      'SELECT data FROM s1_agents WHERE removed_at IS NULL ORDER BY synced_at DESC'
+      'SELECT data FROM s1_agents WHERE removed_at IS NULL ORDER BY synced_at DESC LIMIT 350'
     );
     res.json({ agents: rows.map(r => r.data) });
   } catch (err) {
@@ -124,7 +124,7 @@ router.get('/db/agents', async (req, res) => {
 // GET /api/sentinelone/db/application-agent
 router.get('/db/application-agent', async (req, res) => {
   try {
-    const { rows } = await req.orgPool.query('SELECT data FROM s1_application_agent ORDER BY synced_at DESC');
+    const { rows } = await req.orgPool.query('SELECT data FROM s1_application_agent ORDER BY synced_at DESC LIMIT 300');
     res.json({ data: rows.map(r => r.data) });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -134,7 +134,7 @@ router.get('/db/application-agent', async (req, res) => {
 // GET /api/sentinelone/db/application-cve
 router.get('/db/application-cve', async (req, res) => {
   try {
-    const { rows } = await req.orgPool.query('SELECT data FROM s1_application_cve ORDER BY synced_at DESC');
+    const { rows } = await req.orgPool.query('SELECT data FROM s1_application_cve ORDER BY synced_at DESC LIMIT 300');
     res.json({ data: rows.map(r => r.data) });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -144,7 +144,7 @@ router.get('/db/application-cve', async (req, res) => {
 // GET /api/sentinelone/db/device-control
 router.get('/db/device-control', async (req, res) => {
   try {
-    const { rows } = await req.orgPool.query('SELECT data FROM s1_device_control ORDER BY synced_at DESC');
+    const { rows } = await req.orgPool.query('SELECT data FROM s1_device_control ORDER BY synced_at DESC LIMIT 100');
     res.json({ data: rows.map(r => r.data) });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -154,7 +154,7 @@ router.get('/db/device-control', async (req, res) => {
 // GET /api/sentinelone/db/rss
 router.get('/db/rss', async (req, res) => {
   try {
-    const { rows } = await req.orgPool.query('SELECT data FROM s1_rss ORDER BY synced_at DESC');
+    const { rows } = await req.orgPool.query('SELECT data FROM s1_rss ORDER BY synced_at DESC LIMIT 100');
     res.json({ data: rows.map(r => r.data) });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -162,10 +162,10 @@ router.get('/db/rss', async (req, res) => {
 });
 
 // GET /api/sentinelone/db/custom-alert
-// Returns EVERY stored cloud-detection alert (no LIMIT — full table).
+// Returns stored cloud-detection alerts (limited to recent items).
 router.get('/db/custom-alert', async (req, res) => {
   try {
-    const { rows } = await req.orgPool.query('SELECT data FROM s1_custome_alert ORDER BY synced_at DESC');
+    const { rows } = await req.orgPool.query('SELECT data FROM s1_custome_alert ORDER BY synced_at DESC LIMIT 200');
     res.json({ data: rows.map(r => r.data) });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -173,15 +173,14 @@ router.get('/db/custom-alert', async (req, res) => {
 });
 
 // GET /api/sentinelone/recent
-// Combined feed: ALL threats + ALL custom alerts merged into one time-sorted
-// list, newest first. No LIMIT — returns the full contents of both tables.
+// Combined feed: threats + custom alerts merged into one time-sorted list, newest first.
 // Optional `from` / `to` ISO date params filter by event time.
 router.get('/recent', async (req, res) => {
   try {
     const { from, to } = req.query;
     const [threatsRes, alertsRes] = await Promise.all([
-      req.orgPool.query('SELECT data FROM s1_threats'),
-      req.orgPool.query('SELECT data FROM s1_custome_alert'),
+      req.orgPool.query('SELECT data FROM s1_threats ORDER BY synced_at DESC LIMIT 200'),
+      req.orgPool.query('SELECT data FROM s1_custome_alert ORDER BY synced_at DESC LIMIT 200'),
     ]);
 
     // Map a cloud-detection alert's status to mitigated / not_mitigated.

@@ -9,6 +9,7 @@ import {
   categoryTimeSeries,
   withinRange,
 } from '../security/widgetViews.jsx';
+import { WIDGET_KEYS, readWidgetDb, writeWidgetDb, getInMemoryWidget } from './cache.js';
 
 const SEVERITY_COLORS = {
   'Critical (9.0 - 10.0)': '#ef4444',
@@ -32,15 +33,9 @@ export default function ThreatIntelWidgets({
   const navigate = useNavigate();
 
   const activeOrgId = session.getOrgId() || 'default';
-  const cveCacheKey = `ciso_widget_${activeOrgId}_threat_intel_cves`;
 
   const [nvdCves, setNvdCves] = useState(() => {
-    try {
-      const raw = localStorage.getItem(cveCacheKey);
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
-    }
+    return getInMemoryWidget(activeOrgId, WIDGET_KEYS.THREAT_INTEL_CVES) || [];
   });
   const [loading, setLoading] = useState(() => nvdCves.length === 0);
   const [chartView, setChartView] = useState('donut');
@@ -50,6 +45,15 @@ export default function ThreatIntelWidgets({
   // Fetch real-time NVD/CVE alerts from DB or CVE endpoint
   useEffect(() => {
     let cancelled = false;
+
+    // Load from IndexedDB
+    readWidgetDb(activeOrgId, WIDGET_KEYS.THREAT_INTEL_CVES).then((cached) => {
+      if (!cancelled && Array.isArray(cached)) {
+        setNvdCves(cached);
+        setLoading(false);
+      }
+    });
+
     api.get('/nvd/db?limit=50')
       .then((r) => {
         if (!cancelled) {
@@ -69,9 +73,7 @@ export default function ThreatIntelWidgets({
             publishedDate: c.published || c.publishedDate,
           }));
           setNvdCves(normalized);
-          try {
-            localStorage.setItem(cveCacheKey, JSON.stringify(normalized));
-          } catch (_) {}
+          writeWidgetDb(activeOrgId, WIDGET_KEYS.THREAT_INTEL_CVES, normalized);
         }
       })
       .catch(() => {})
@@ -79,7 +81,7 @@ export default function ThreatIntelWidgets({
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [cveCacheKey]);
+  }, [activeOrgId]);
 
   const getCveDate = (c) => {
     const val = c.publishedDate || c.published || c.createdAt || c.lastModifiedDate || c.last_modified;

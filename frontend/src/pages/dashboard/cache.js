@@ -1,15 +1,19 @@
 /**
- * Multi-tier dashboard cache (Redis + localStorage)
+ * Multi-Tier Dashboard Caching Architecture (Redis + IndexedDB + UI)
  *
- * Tier 1: Browser localStorage per-widget storage for 0ms instantaneous UI hydration.
- * Tier 2: Backend Redis cache layer serving aggregated responses in 5–7 second polling cycles.
+ * Tier 1 (Backend): Backend Database / PostgreSQL -> Accelerated by Redis cache layer
+ * Tier 2 (Client Storage): IndexedDB ('ciso_dashboard_db', store 'dashboard_widgets')
+ * Tier 3 (Client Presentation): Dashboard UI components rendering from IndexedDB
  *
  * Flow:
- * 1. On page mount, read from localStorage to immediately show all widgets.
- * 2. If no localStorage cache exists (first time), fetch from Redis via /api/dashboard/aggregate.
- * 3. Save incoming data into localStorage for EACH and EVERY widget of the dashboard.
- * 4. Background polling runs every 5 to 7 seconds checking Redis.
- * 5. If data updated in Redis, automatically update localStorage and refresh the widgets.
+ * 1. Initial load / revisits: Dashboard UI immediately loads and renders from IndexedDB.
+ * 2. First-time load: Data fetched from Redis (/api/dashboard/aggregate) ->
+ *    stored into IndexedDB -> rendered in UI from IndexedDB.
+ * 3. Background synchronization: Client polls Redis every 5 to 7 seconds (6s).
+ *    When Redis has updated data, data transfers from Redis to IndexedDB,
+ *    and the UI re-renders with the fresh data from IndexedDB.
+ * 4. User actions (layout edit, add/delete widgets) update IndexedDB and backend.
+ * 5. LocalStorage widget cache is completely eliminated.
  */
 
 export const WIDGET_KEYS = {
@@ -26,173 +30,449 @@ export const WIDGET_KEYS = {
   FW_WIDGETS: 'fw_widgets',
   LAYOUT: 'layout',
   ALL_TOOLS: 'all_tools',
+  TOP_APPLICATIONS: 'top_applications',
+  THREAT_INTEL_CVES: 'threat_intel_cves',
   META: 'meta',
   AGGREGATE: 'aggregate',
 };
 
-const STORAGE_PREFIX = 'ciso_widget_';
+const DB_NAME = 'ciso_dashboard_db';
+const DB_VERSION = 1;
+const STORE_NAME = 'dashboard_widgets';
 
-export function getWidgetStorageKey(orgKey, widgetId) {
-  const safeOrg = orgKey || 'default';
-  return `${STORAGE_PREFIX}${safeOrg}_${widgetId}`;
-}
+let dbInstance = null;
+let dbOpenPromise = null;
 
-export function readWidgetStorage(orgKey, widgetId) {
-  if (typeof window === 'undefined' || !window.localStorage) return null;
+// Synchronous in-memory mirror so React components have 0ms instant data access
+// during rapid re-renders while IndexedDB completes its asynchronous read/write.
+const memoryCache = new Map();
+
+/**
+ * Safely serialize any payload to ensure pure JSON compliance
+ * (guarantees IndexedDB structured clone algorithm will never throw DataCloneError).
+ */
+export function safeSerialize(data) {
+  if (data === undefined || data === null) return null;
   try {
-    const raw = window.localStorage.getItem(getWidgetStorageKey(orgKey, widgetId));
-    if (!raw) return null;
-    return JSON.parse(raw);
+    return JSON.parse(JSON.stringify(data));
   } catch (err) {
-    console.warn(`[dashboard-cache] Failed to read ${widgetId}:`, err?.message);
+    console.warn('[IndexedDB] Serialization error:', err?.message);
     return null;
   }
 }
 
-export function writeWidgetStorage(orgKey, widgetId, data) {
-  if (typeof window === 'undefined' || !window.localStorage) return false;
-  try {
-    const key = getWidgetStorageKey(orgKey, widgetId);
-    if (data === undefined || data === null) {
-      window.localStorage.removeItem(key);
-    } else {
-      window.localStorage.setItem(key, JSON.stringify(data));
+/**
+ * Open or initialize the IndexedDB database
+ */
+export function openDashboardDb() {
+  if (typeof window === 'undefined' || !window.indexedDB) {
+    return Promise.resolve(null);
+  }
+
+  if (dbInstance) {
+    return Promise.resolve(dbInstance);
+  }
+
+  if (dbOpenPromise) {
+    return dbOpenPromise;
+  }
+
+  dbOpenPromise = new Promise((resolve) => {
+    try {
+      const request = window.indexedDB.open(DB_NAME, DB_VERSION);
+
+      request.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          const store = db.createObjectStore(STORE_NAME, { keyPath: 'key' });
+          store.createIndex('orgKey', 'orgKey', { unique: false });
+          store.createIndex('widgetId', 'widgetId', { unique: false });
+          store.createIndex('updatedAt', 'updatedAt', { unique: false });
+        }
+      };
+
+      request.onsuccess = (event) => {
+        dbInstance = event.target.result;
+        dbInstance.onversionchange = () => {
+          dbInstance.close();
+          dbInstance = null;
+          dbOpenPromise = null;
+        };
+        resolve(dbInstance);
+      };
+
+      request.onerror = (event) => {
+        console.error('[IndexedDB] Open error:', event.target.error);
+        dbOpenPromise = null;
+        resolve(null);
+      };
+    } catch (err) {
+      console.error('[IndexedDB] Initialization exception:', err);
+      dbOpenPromise = null;
+      resolve(null);
     }
-    return true;
-  } catch (err) {
-    console.warn(`[dashboard-cache] Failed to write ${widgetId}:`, err?.message);
-    return false;
-  }
+  });
+
+  return dbOpenPromise;
 }
 
 /**
- * Load all widget data from localStorage for instant 0ms dashboard hydration.
+ * Purge any legacy localStorage widget cache keys to ensure zero localStorage usage
  */
-export function loadAllWidgetsFromStorage(orgKey) {
-  const meta = readWidgetStorage(orgKey, WIDGET_KEYS.META);
-  const s1Threats = readWidgetStorage(orgKey, WIDGET_KEYS.S1_THREATS);
-  const s1Agents = readWidgetStorage(orgKey, WIDGET_KEYS.S1_AGENTS);
-  const s1AppAgent = readWidgetStorage(orgKey, WIDGET_KEYS.S1_APP_AGENT);
-  const s1AppCve = readWidgetStorage(orgKey, WIDGET_KEYS.S1_APP_CVE);
-  const s1DeviceControl = readWidgetStorage(orgKey, WIDGET_KEYS.S1_DEVICE_CONTROL);
-  const s1Rss = readWidgetStorage(orgKey, WIDGET_KEYS.S1_RSS);
-  const s1CustomAlerts = readWidgetStorage(orgKey, WIDGET_KEYS.S1_CUSTOM_ALERTS);
-  const cpEvents = readWidgetStorage(orgKey, WIDGET_KEYS.CP_EVENTS);
-  const ticketData = readWidgetStorage(orgKey, WIDGET_KEYS.TICKET_DATA);
-  const mdmData = readWidgetStorage(orgKey, WIDGET_KEYS.MDM_DATA);
-  const fwWidgets = readWidgetStorage(orgKey, WIDGET_KEYS.FW_WIDGETS);
-  const layout = readWidgetStorage(orgKey, WIDGET_KEYS.LAYOUT);
-  const allTools = readWidgetStorage(orgKey, WIDGET_KEYS.ALL_TOOLS);
-
-  const hasCache = Boolean(
-    (Array.isArray(s1Threats) && s1Threats.length > 0) ||
-    (Array.isArray(s1Agents) && s1Agents.length > 0) ||
-    (Array.isArray(cpEvents) && cpEvents.length > 0) ||
-    (Array.isArray(ticketData) && ticketData.length > 0) ||
-    (Array.isArray(mdmData) && mdmData.length > 0) ||
-    (Array.isArray(fwWidgets) && fwWidgets.length > 0) ||
-    layout !== null ||
-    meta !== null
-  );
-
-  return {
-    hasCache,
-    meta,
-    s1Threats: Array.isArray(s1Threats) ? s1Threats : null,
-    s1Agents: Array.isArray(s1Agents) ? s1Agents : null,
-    s1AppAgent: Array.isArray(s1AppAgent) ? s1AppAgent : null,
-    s1AppCve: Array.isArray(s1AppCve) ? s1AppCve : null,
-    s1DeviceControl: Array.isArray(s1DeviceControl) ? s1DeviceControl : null,
-    s1Rss: Array.isArray(s1Rss) ? s1Rss : null,
-    s1CustomAlerts: Array.isArray(s1CustomAlerts) ? s1CustomAlerts : null,
-    cpEvents: Array.isArray(cpEvents) ? cpEvents : null,
-    ticketData: Array.isArray(ticketData) ? ticketData : null,
-    mdmData: Array.isArray(mdmData) ? mdmData : null,
-    fwWidgets: Array.isArray(fwWidgets) ? fwWidgets : null,
-    layout: layout || null,
-    allTools: allTools || null,
-  };
+export function purgeLegacyLocalStorageWidgetCache() {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    const keysToRemove = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (k && (k.startsWith('ciso_widget_') || k.includes('_threat_intel_cves') || k.includes('_top_applications'))) {
+        keysToRemove.push(k);
+      }
+    }
+    keysToRemove.forEach((k) => window.localStorage.removeItem(k));
+  } catch (_) {}
 }
 
 /**
- * Persist every single widget from the aggregate payload into its dedicated localStorage key.
+ * Read a single widget from IndexedDB
  */
-export function saveAllWidgetsToStorage(orgKey, agg, source = 'redis') {
-  if (!orgKey || !agg) return;
+export async function readWidgetDb(orgKey, widgetId) {
+  const safeOrg = String(orgKey || 'default');
+  const cacheKey = `${safeOrg}_${widgetId}`;
 
-  const sentinelone = agg.sentinelone || {};
-  const harmony = agg.harmony || {};
-  const firewall = agg.firewall || {};
-  const ticketing = agg.ticketing || {};
-  const mdm = agg.mdm || {};
-
-  // 1. SentinelOne threats & widgets
-  if (Array.isArray(sentinelone.threats)) {
-    writeWidgetStorage(orgKey, WIDGET_KEYS.S1_THREATS, sentinelone.threats);
-  }
-  if (Array.isArray(sentinelone.agents)) {
-    writeWidgetStorage(orgKey, WIDGET_KEYS.S1_AGENTS, sentinelone.agents);
-  }
-  if (Array.isArray(sentinelone.applicationAgent)) {
-    writeWidgetStorage(orgKey, WIDGET_KEYS.S1_APP_AGENT, sentinelone.applicationAgent);
-  }
-  if (Array.isArray(sentinelone.applicationCve)) {
-    writeWidgetStorage(orgKey, WIDGET_KEYS.S1_APP_CVE, sentinelone.applicationCve);
-  }
-  if (Array.isArray(sentinelone.deviceControl)) {
-    writeWidgetStorage(orgKey, WIDGET_KEYS.S1_DEVICE_CONTROL, sentinelone.deviceControl);
-  }
-  if (Array.isArray(sentinelone.rss)) {
-    writeWidgetStorage(orgKey, WIDGET_KEYS.S1_RSS, sentinelone.rss);
-  }
-  if (Array.isArray(sentinelone.customAlerts)) {
-    writeWidgetStorage(orgKey, WIDGET_KEYS.S1_CUSTOM_ALERTS, sentinelone.customAlerts);
+  // Check in-memory mirror first
+  if (memoryCache.has(cacheKey)) {
+    return memoryCache.get(cacheKey);
   }
 
-  // 2. Checkpoint events
-  if (Array.isArray(harmony.events)) {
-    writeWidgetStorage(orgKey, WIDGET_KEYS.CP_EVENTS, harmony.events);
+  const db = await openDashboardDb();
+  if (!db) return null;
+
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.get(cacheKey);
+
+      req.onsuccess = () => {
+        const val = req.result?.data ?? null;
+        if (val !== null) {
+          memoryCache.set(cacheKey, val);
+        }
+        resolve(val);
+      };
+      req.onerror = () => resolve(null);
+    } catch (err) {
+      console.warn(`[IndexedDB] Read error for ${widgetId}:`, err?.message);
+      resolve(null);
+    }
+  });
+}
+
+/**
+ * Write a single widget to IndexedDB
+ */
+export async function writeWidgetDb(orgKey, widgetId, data) {
+  const safeOrg = String(orgKey || 'default');
+  const cacheKey = `${safeOrg}_${widgetId}`;
+
+  // Update memory mirror immediately for 0ms access
+  if (data === null || data === undefined) {
+    memoryCache.delete(cacheKey);
+  } else {
+    memoryCache.set(cacheKey, data);
   }
+
+  const db = await openDashboardDb();
+  if (!db) return false;
+
+  return new Promise((resolve) => {
+    let finished = false;
+    const finish = (result) => {
+      if (!finished) {
+        finished = true;
+        resolve(result);
+      }
+    };
+    const timer = setTimeout(() => finish(false), 2000);
+
+    try {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+
+      if (data === null || data === undefined) {
+        store.delete(cacheKey);
+      } else {
+        const cleanData = safeSerialize(data);
+        store.put({
+          key: cacheKey,
+          orgKey: safeOrg,
+          widgetId,
+          data: cleanData,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+
+      tx.oncomplete = () => {
+        clearTimeout(timer);
+        finish(true);
+      };
+      tx.onerror = () => {
+        clearTimeout(timer);
+        finish(false);
+      };
+      tx.onabort = () => {
+        clearTimeout(timer);
+        finish(false);
+      };
+    } catch (err) {
+      clearTimeout(timer);
+      console.warn(`[IndexedDB] Write error for ${widgetId}:`, err?.message);
+      finish(false);
+    }
+  });
+}
+
+/**
+ * Load all widget data from IndexedDB for a given organization
+ */
+export async function loadAllWidgetsFromDb(orgKey) {
+  const safeOrg = String(orgKey || 'default');
+  const db = await openDashboardDb();
+  if (!db) {
+    return { hasCache: false };
+  }
+
+  return new Promise((resolve) => {
+    let finished = false;
+    const finish = (result) => {
+      if (!finished) {
+        finished = true;
+        resolve(result);
+      }
+    };
+    const timer = setTimeout(() => finish({ hasCache: false }), 2000);
+
+    try {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.getAll();
+
+      req.onsuccess = () => {
+        clearTimeout(timer);
+        const allItems = req.result || [];
+        const items = allItems.filter(
+          (item) => String(item.orgKey) === safeOrg || String(item.key || '').startsWith(`${safeOrg}_`)
+        );
+        const map = {};
+        items.forEach((item) => {
+          map[item.widgetId] = item.data;
+          memoryCache.set(item.key, item.data);
+        });
+
+        const hasCache = items.length > 0;
+
+        finish({
+          hasCache,
+          meta: map[WIDGET_KEYS.META] ?? null,
+          s1Threats: map[WIDGET_KEYS.S1_THREATS] ?? null,
+          s1Agents: map[WIDGET_KEYS.S1_AGENTS] ?? null,
+          s1AppAgent: map[WIDGET_KEYS.S1_APP_AGENT] ?? null,
+          s1AppCve: map[WIDGET_KEYS.S1_APP_CVE] ?? null,
+          s1DeviceControl: map[WIDGET_KEYS.S1_DEVICE_CONTROL] ?? null,
+          s1Rss: map[WIDGET_KEYS.S1_RSS] ?? null,
+          s1CustomAlerts: map[WIDGET_KEYS.S1_CUSTOM_ALERTS] ?? null,
+          cpEvents: map[WIDGET_KEYS.CP_EVENTS] ?? null,
+          ticketData: map[WIDGET_KEYS.TICKET_DATA] ?? null,
+          mdmData: map[WIDGET_KEYS.MDM_DATA] ?? null,
+          fwWidgets: map[WIDGET_KEYS.FW_WIDGETS] ?? null,
+          layout: map[WIDGET_KEYS.LAYOUT] ?? null,
+          allTools: map[WIDGET_KEYS.ALL_TOOLS] ?? null,
+          topApplications: map[WIDGET_KEYS.TOP_APPLICATIONS] ?? null,
+          threatIntelCves: map[WIDGET_KEYS.THREAT_INTEL_CVES] ?? null,
+          aggregate: map[WIDGET_KEYS.AGGREGATE] ?? null,
+        });
+      };
+
+      req.onerror = () => {
+        clearTimeout(timer);
+        finish({ hasCache: false });
+      };
+      tx.onabort = () => {
+        clearTimeout(timer);
+        finish({ hasCache: false });
+      };
+    } catch (err) {
+      clearTimeout(timer);
+      console.warn('[IndexedDB] Load all error:', err?.message);
+      finish({ hasCache: false });
+    }
+  });
+}
+
+/**
+ * Persist every single widget from the Redis aggregate payload into IndexedDB
+ */
+export async function saveAllWidgetsToDb(orgKey, agg, source = 'redis') {
+  if (!orgKey || !agg) return false;
+  const safeOrg = String(orgKey || 'default');
+
+  const root = agg.data || agg;
+  const s1 = root.sentinelone || {};
+  const harmony = root.harmony || {};
+  const firewall = root.firewall || {};
+  const ticketing = root.ticketing || {};
+  const mdm = root.mdm || {};
+
+  // 1. SentinelOne threats & endpoint postures
+  const threats = s1.threats ?? root.threats ?? root.s1Threats ?? [];
+  const agents = s1.agents ?? root.agents ?? root.s1Agents ?? [];
+  const appAgent = s1.applicationAgent ?? root.applicationAgent ?? root.appAgent ?? root.apps ?? [];
+  const appCve = s1.applicationCve ?? root.applicationCve ?? root.appCve ?? root.cves ?? [];
+  const deviceControl = s1.deviceControl ?? root.deviceControl ?? [];
+  const rss = s1.rss ?? root.rss ?? [];
+  const customAlerts = s1.customAlerts ?? root.customAlerts ?? [];
+
+  // 2. Harmony Checkpoint events
+  const cpEvents = harmony.events ?? root.events ?? root.cpEvents ?? [];
 
   // 3. Ticketing tickets
-  if (Array.isArray(ticketing.tickets)) {
-    writeWidgetStorage(orgKey, WIDGET_KEYS.TICKET_DATA, ticketing.tickets);
-  }
+  const tickets = ticketing.tickets ?? root.tickets ?? root.zohoTickets ?? [];
 
   // 4. MDM devices
-  if (Array.isArray(mdm.devices)) {
-    writeWidgetStorage(orgKey, WIDGET_KEYS.MDM_DATA, mdm.devices);
-  }
+  const devices = mdm.devices ?? root.devices ?? root.mdmDevices ?? [];
 
   // 5. Firewall widgets
-  if (Array.isArray(firewall.widgets)) {
-    writeWidgetStorage(orgKey, WIDGET_KEYS.FW_WIDGETS, firewall.widgets);
-  }
+  const fwWidgets = firewall.widgets ?? root.widgets ?? root.fwWidgets ?? [];
 
   // 6. Layout
-  if (agg.layout) {
-    writeWidgetStorage(orgKey, WIDGET_KEYS.LAYOUT, agg.layout);
-  }
+  const layout = root.layout ?? agg.layout ?? null;
 
   // 7. All Tools summary
-  if (agg.allTools) {
-    writeWidgetStorage(orgKey, WIDGET_KEYS.ALL_TOOLS, agg.allTools);
-  }
+  const allTools = root.allTools ?? agg.allTools ?? null;
 
-  // 8. Meta info
+  // 8. Firewall Top Applications
+  const topApps = root.topApplications ?? root.firewall?.topApplications ?? agg.topApplications ?? firewall.topApplications ?? null;
+
+  // 9. Threat Intel CVEs
+  const cves = root.threatIntelCves ?? root.nvdCves ?? agg.threatIntelCves ?? null;
+
+  // 10. Meta info
   const meta = {
-    syncedAt: agg.syncedAt || null,
-    source: source || agg.source || 'redis',
+    syncedAt: root.syncedAt || agg.syncedAt || null,
+    source: source || root.source || agg.source || 'redis',
     cachedAt: new Date().toISOString(),
   };
-  writeWidgetStorage(orgKey, WIDGET_KEYS.META, meta);
 
-  // 9. Aggregate raw snapshot
-  writeWidgetStorage(orgKey, WIDGET_KEYS.AGGREGATE, agg);
+  const widgetMap = {
+    [WIDGET_KEYS.S1_THREATS]: threats,
+    [WIDGET_KEYS.S1_AGENTS]: agents,
+    [WIDGET_KEYS.S1_APP_AGENT]: appAgent,
+    [WIDGET_KEYS.S1_APP_CVE]: appCve,
+    [WIDGET_KEYS.S1_DEVICE_CONTROL]: deviceControl,
+    [WIDGET_KEYS.S1_RSS]: rss,
+    [WIDGET_KEYS.S1_CUSTOM_ALERTS]: customAlerts,
+    [WIDGET_KEYS.CP_EVENTS]: cpEvents,
+    [WIDGET_KEYS.TICKET_DATA]: tickets,
+    [WIDGET_KEYS.MDM_DATA]: devices,
+    [WIDGET_KEYS.FW_WIDGETS]: fwWidgets,
+    [WIDGET_KEYS.META]: meta,
+  };
+  if (layout) widgetMap[WIDGET_KEYS.LAYOUT] = layout;
+  if (allTools) widgetMap[WIDGET_KEYS.ALL_TOOLS] = allTools;
+  if (topApps) widgetMap[WIDGET_KEYS.TOP_APPLICATIONS] = topApps;
+  if (cves) widgetMap[WIDGET_KEYS.THREAT_INTEL_CVES] = cves;
+  widgetMap[WIDGET_KEYS.AGGREGATE] = {
+    syncedAt: meta.syncedAt,
+    source: meta.source,
+    cachedAt: meta.cachedAt,
+    widgetCount: Object.keys(widgetMap).length,
+  };
+
+  // Immediate in-memory cache update for 0ms instant UI rendering
+  Object.entries(widgetMap).forEach(([widgetId, data]) => {
+    if (data !== undefined && data !== null) {
+      memoryCache.set(`${safeOrg}_${widgetId}`, data);
+    }
+  });
+
+  const db = await openDashboardDb();
+  if (!db) return false;
+
+  // Asynchronous persistent write to IndexedDB
+  return new Promise((resolve) => {
+    let finished = false;
+    const finish = (result) => {
+      if (!finished) {
+        finished = true;
+        resolve(result);
+      }
+    };
+    // Safety watchdog timer: never block the background sync loop
+    const timer = setTimeout(() => finish(false), 2500);
+
+    try {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      const now = new Date().toISOString();
+
+      Object.entries(widgetMap).forEach(([widgetId, rawData]) => {
+        if (rawData === undefined || rawData === null) return;
+        try {
+          const cleanData = safeSerialize(rawData);
+          store.put({
+            key: `${safeOrg}_${widgetId}`,
+            orgKey: safeOrg,
+            widgetId,
+            data: cleanData,
+            updatedAt: now,
+          });
+        } catch (cloneErr) {
+          console.warn(`[IndexedDB] Serialization put error for ${widgetId}:`, cloneErr?.message);
+        }
+      });
+
+      tx.oncomplete = () => {
+        clearTimeout(timer);
+        finish(true);
+      };
+      tx.onerror = (e) => {
+        clearTimeout(timer);
+        console.warn('[IndexedDB] Transaction error in saveAllWidgetsToDb:', e?.target?.error);
+        // Fallback: write individually so failure of one does not lose the others
+        Promise.all(
+          Object.entries(widgetMap).map(([id, d]) => writeWidgetDb(safeOrg, id, d))
+        ).then(() => finish(true)).catch(() => finish(false));
+      };
+      tx.onabort = (e) => {
+        clearTimeout(timer);
+        console.warn('[IndexedDB] Transaction abort in saveAllWidgetsToDb:', e?.target?.error);
+        // Fallback: write individually
+        Promise.all(
+          Object.entries(widgetMap).map(([id, d]) => writeWidgetDb(safeOrg, id, d))
+        ).then(() => finish(true)).catch(() => finish(false));
+      };
+    } catch (err) {
+      clearTimeout(timer);
+      console.warn('[IndexedDB] Save all exception:', err?.message);
+      // Fallback: write individually
+      Promise.all(
+        Object.entries(widgetMap).map(([id, d]) => writeWidgetDb(safeOrg, id, d))
+      ).then(() => finish(true)).catch(() => finish(false));
+    }
+  });
 }
 
 /**
- * Fast comparison to determine if data has changed between polling intervals
+ * Synchronous in-memory lookup for instant rendering if the database has already loaded
+ */
+export function getInMemoryWidget(orgKey, widgetId) {
+  const safeOrg = String(orgKey || 'default');
+  return memoryCache.get(`${safeOrg}_${widgetId}`) || null;
+}
+
+/**
+ * Fast comparison to determine if data from Redis has changed
  */
 export function isDifferentData(a, b) {
   if (a === b) return false;
@@ -200,7 +480,6 @@ export function isDifferentData(a, b) {
   if (Array.isArray(a) && Array.isArray(b)) {
     if (a.length !== b.length) return true;
     if (a.length === 0) return false;
-    // Compare first, middle, and last item for high-performance detection
     const firstSame = JSON.stringify(a[0]) === JSON.stringify(b[0]);
     if (!firstSame) return true;
     const lastSame = JSON.stringify(a[a.length - 1]) === JSON.stringify(b[b.length - 1]);
@@ -210,3 +489,6 @@ export function isDifferentData(a, b) {
   }
   return JSON.stringify(a) !== JSON.stringify(b);
 }
+
+// Purge any stale localStorage widget items on module initialization
+purgeLegacyLocalStorageWidgetCache();

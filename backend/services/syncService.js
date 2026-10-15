@@ -131,19 +131,21 @@ async function fetchDashboardAggregate(orgSlug) {
   const [
     threatsRows, agentsRows, appAgentRows, appCveRows,
     deviceControlRows, rssRows, customAlertRows, harmonyRows, fwWidgetsRows,
-    zohoRows, hexnodeRows,
+    zohoRows, hexnodeRows, fwReportRows, nvdRows,
   ] = await Promise.all([
-    pool.query('SELECT data FROM s1_threats ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
-    pool.query('SELECT data FROM s1_agents ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
-    pool.query('SELECT data FROM s1_application_agent ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
-    pool.query('SELECT data FROM s1_application_cve ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
-    pool.query('SELECT data FROM s1_device_control ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
-    pool.query('SELECT data FROM s1_rss ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
-    pool.query('SELECT data FROM s1_custome_alert ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
-    pool.query('SELECT * FROM checkpoint_events ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+    pool.query('SELECT data FROM s1_threats ORDER BY synced_at DESC LIMIT 300').catch(() => ({ rows: [] })),
+    pool.query('SELECT data FROM s1_agents ORDER BY synced_at DESC LIMIT 350').catch(() => ({ rows: [] })),
+    pool.query('SELECT data FROM s1_application_agent ORDER BY synced_at DESC LIMIT 200').catch(() => ({ rows: [] })),
+    pool.query('SELECT data FROM s1_application_cve ORDER BY synced_at DESC LIMIT 200').catch(() => ({ rows: [] })),
+    pool.query('SELECT data FROM s1_device_control ORDER BY synced_at DESC LIMIT 100').catch(() => ({ rows: [] })),
+    pool.query('SELECT data FROM s1_rss ORDER BY synced_at DESC LIMIT 100').catch(() => ({ rows: [] })),
+    pool.query('SELECT data FROM s1_custome_alert ORDER BY synced_at DESC LIMIT 150').catch(() => ({ rows: [] })),
+    pool.query('SELECT * FROM checkpoint_events ORDER BY synced_at DESC LIMIT 200').catch(() => ({ rows: [] })),
     pool.query('SELECT * FROM firewall_widgets ORDER BY created_at ASC').catch(() => ({ rows: [] })),
     pool.query("SELECT data FROM zohotable WHERE data_name = 'ticket_data' LIMIT 1").catch(() => ({ rows: [] })),
-    pool.query('SELECT data FROM hexnode_devices ORDER BY synced_at DESC').catch(() => ({ rows: [] })),
+    pool.query('SELECT data FROM hexnode_devices ORDER BY synced_at DESC LIMIT 100').catch(() => ({ rows: [] })),
+    pool.query("SELECT data FROM firewall_reports WHERE report_name = 'top-applications' LIMIT 1").catch(() => ({ rows: [] })),
+    pool.query("SELECT * FROM nvd ORDER BY published DESC NULLS LAST LIMIT 50").catch(() => ({ rows: [] })),
   ]);
 
   // Per-tool current vs previous-month counts (delta drives the badge).
@@ -156,6 +158,22 @@ async function fetchDashboardAggregate(orgSlug) {
   }
 
   const devices = hexnodeRows.rows.map((r) => r.data).filter(Boolean);
+
+  let topApplications = null;
+  if (fwReportRows.rows[0]?.data) {
+    const raw = fwReportRows.rows[0].data;
+    const entry = raw?.report?.result?.entry || raw?.response?.result?.entry || raw?.entry || [];
+    topApplications = Array.isArray(entry) ? entry : [entry].filter(Boolean);
+  }
+
+  const threatIntelCves = (nvdRows.rows || []).map((c) => ({
+    ...c,
+    cveId: c.cve_id || c.cveId,
+    baseScore: c.cvss_base_score != null ? c.cvss_base_score : (c.baseScore || c.cvssScore),
+    severity: c.cvss_base_severity || c.severity || (c.cvss_base_score >= 9 ? 'CRITICAL' : c.cvss_base_score >= 7 ? 'HIGH' : c.cvss_base_score >= 4 ? 'MEDIUM' : 'LOW'),
+    description: c.description_en || c.description,
+    publishedDate: c.published || c.publishedDate,
+  }));
 
   // NOTE: the per-user dashboard_layout is intentionally excluded here — it is
   // user-specific and fetched live from the DB on the client, not cached
@@ -171,9 +189,14 @@ async function fetchDashboardAggregate(orgSlug) {
       customAlerts: customAlertRows.rows.map((r) => r.data),
     },
     harmony: { events: harmonyRows.rows },
-    firewall: { widgets: fwWidgetsRows.rows },
+    firewall: {
+      widgets: fwWidgetsRows.rows,
+      topApplications,
+    },
     ticketing: { tickets },
     mdm: { devices },
+    topApplications,
+    threatIntelCves,
     allTools,
     syncedAt: new Date().toISOString(),
   };

@@ -106,7 +106,7 @@ router.get('/events', async (req, res) => {
 router.get('/events-db', async (req, res) => {
   try {
     const { rows } = await req.orgPool.query(
-      'SELECT * FROM checkpoint_events ORDER BY event_created DESC NULLS LAST, synced_at DESC'
+      'SELECT * FROM checkpoint_events ORDER BY event_created DESC NULLS LAST, synced_at DESC LIMIT 250'
     );
     const lastSyncedAt = rows.length > 0 ? rows.reduce((latest, r) => {
       const t = r.synced_at ? new Date(r.synced_at) : null;
