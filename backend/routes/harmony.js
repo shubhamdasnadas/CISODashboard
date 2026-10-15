@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { syncHarmony, getHarmonyToken } = require('../services/harmony');
+const redis = require('../lib/redis');
 
 // GET /api/harmony/credentials
 router.get('/credentials', async (req, res) => {
@@ -69,6 +70,18 @@ router.post('/sync', async (req, res) => {
 
     const { eventTypes } = req.body;
     const result = await syncHarmony(req.orgSlug, rows[0].credentials, eventTypes);
+
+    // Invalidate Redis cache on fresh sync
+    if (req.orgSlug) {
+      try {
+        const client = await redis.getRedisClient();
+        if (client) {
+          const cacheKey = redis.buildCacheKey(req.orgSlug, 'harmony-events');
+          await client.del(cacheKey);
+        }
+      } catch (_) {}
+    }
+
     res.json({ success: true, message: `Synced ${result.upserted} events`, ...result });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -78,7 +91,7 @@ router.post('/sync', async (req, res) => {
 // GET /api/harmony/events  — read from DB with optional filters
 router.get('/events', async (req, res) => {
   try {
-    const { type, state, severity, limit = 200, offset = 0 } = req.query;
+    const { type, state, severity, limit = 20000, offset = 0 } = req.query;
     const conditions = [];
     const params = [];
     let i = 1;
@@ -102,17 +115,63 @@ router.get('/events', async (req, res) => {
   }
 });
 
-// GET /api/harmony/events-db  — full event list from DB
+// GET /api/harmony/events-db  — full event list from DB (accelerated by Redis)
 router.get('/events-db', async (req, res) => {
   try {
+    const orgSlug = req.orgSlug;
+    const forceRefresh = req.query.refresh === 'true' || req.query.fresh === '1';
+
+    // Check Redis cache first
+    if (orgSlug && !forceRefresh) {
+      try {
+        const client = await redis.getRedisClient();
+        if (client) {
+          const cacheKey = redis.buildCacheKey(orgSlug, 'harmony-events');
+          const hit = await client.get(cacheKey);
+          if (hit) {
+            const parsed = JSON.parse(hit);
+            const events = Array.isArray(parsed)
+              ? parsed
+              : (Array.isArray(parsed?.events) ? parsed.events : null);
+            // If cached data was from the old 350-limit build, bypass and refresh with full DB rows
+            if (events && Array.isArray(events) && events.length !== 350) {
+              return res.json({
+                source: 'redis',
+                events,
+                lastSyncedAt: parsed.lastSyncedAt || null,
+              });
+            }
+          }
+        }
+      } catch (redisErr) {
+        console.warn('[harmony/events-db] Redis read fallback:', redisErr.message);
+      }
+    }
+
     const { rows } = await req.orgPool.query(
-      'SELECT * FROM checkpoint_events ORDER BY event_created DESC NULLS LAST, synced_at DESC LIMIT 250'
+      'SELECT * FROM checkpoint_events ORDER BY event_created DESC NULLS LAST, synced_at DESC'
     );
     const lastSyncedAt = rows.length > 0 ? rows.reduce((latest, r) => {
       const t = r.synced_at ? new Date(r.synced_at) : null;
       return t && (!latest || t > latest) ? t : latest;
     }, null) : null;
-    res.json({ events: rows, lastSyncedAt: lastSyncedAt?.toISOString() ?? null });
+
+    // Write all events to Redis cache with 300s TTL
+    if (orgSlug) {
+      try {
+        const client = await redis.getRedisClient();
+        if (client) {
+          const cacheKey = redis.buildCacheKey(orgSlug, 'harmony-events');
+          await client.set(
+            cacheKey,
+            JSON.stringify({ events: rows, lastSyncedAt: lastSyncedAt?.toISOString() ?? null }),
+            { EX: 300 }
+          );
+        }
+      } catch (_) {}
+    }
+
+    res.json({ source: 'postgres', events: rows, lastSyncedAt: lastSyncedAt?.toISOString() ?? null });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

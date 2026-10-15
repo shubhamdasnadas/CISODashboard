@@ -4,6 +4,16 @@ import api from '../../api';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import CheckpointDashboard from './CheckpointDashboard';
 import { useProviders } from '../../context/ProviderContext.jsx';
+import { useOrg } from '../../context/OrgContext.jsx';
+import * as session from '../../utils/session.js';
+import {
+  readEmailSecurityWidgetDb,
+  writeEmailSecurityWidgetDb,
+  EMAIL_SECURITY_SECTION_KEYS,
+  readWidgetDb,
+  writeWidgetDb,
+  WIDGET_KEYS,
+} from '../dashboard/cache.js';
 import Emailsecuritymttr from '../CyberHygen/Emailsecuritymttr.jsx';
 import AnalyticsLaunchButton from '../../components/AnalyticsLaunchButton.jsx';
 import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
@@ -238,6 +248,11 @@ export default function CheckpointPage() {
   const navigate = useNavigate();
   const { selectedProviders } = useProviders();
   const activeTool = selectedProviders.emailSecurity || 'Check Point Harmony';
+
+  const { currentOrg } = useOrg();
+  const activeOrgId = currentOrg?.id || session.getOrgId();
+  const orgKey = activeOrgId || currentOrg?.slug || currentOrg?.org_slug || 'default';
+
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -260,32 +275,123 @@ export default function CheckpointPage() {
   const [chartTypes, setChartTypes] = useState(['phishing','malware','dlp']);
   const [chartMode, setChartMode] = useState('bar');
 
-  const loadFromDb = async () => {
-    setLoading(true); setError('');
-    try {
-      const r = await api.get('/harmony/events-db');
-      const rows = r.data.events || r.data.responseData || [];
-      setEvents(rows.map(mapEvent));
-      setLastSyncedAt(r.data.lastSyncedAt ?? null);
-    } catch (e) {
-      setError(e.response?.data?.error || e.message || 'Failed to load events');
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Multi-tier data synchronization (Redis -> IndexedDB -> UI)
+  useEffect(() => {
+    let isMounted = true;
+    let isFetching = false;
+    const currentOrgKey = orgKey;
 
-  useEffect(() => { loadFromDb(); }, []);
+    // 1. Instantly read and render UI from IndexedDB (0ms delay) - checks emailsecurity_widget first
+    readEmailSecurityWidgetDb(currentOrgKey, EMAIL_SECURITY_SECTION_KEYS.EVENTS).then((cached) => {
+      if (!isMounted) return;
+      if (Array.isArray(cached) && cached.length > 0) {
+        setEvents(cached.map(mapEvent));
+        setLoading(false);
+      } else {
+        readWidgetDb(currentOrgKey, WIDGET_KEYS.CP_EVENTS).then((fallback) => {
+          if (!isMounted) return;
+          if (Array.isArray(fallback) && fallback.length > 0) {
+            setEvents(fallback.map(mapEvent));
+            setLoading(false);
+          }
+        });
+      }
+      // 2. Fetch from Redis (populate IndexedDB or check for fresh updates)
+      syncFromRedis();
+    });
+
+    // 3. 5 to 7s background synchronization loop (Redis -> IndexedDB -> UI)
+    const syncFromRedis = async () => {
+      if (isFetching) return;
+      isFetching = true;
+      try {
+        const r = await api.get('/harmony/events-db');
+        const rawData = r.data;
+        const rows = Array.isArray(rawData)
+          ? rawData
+          : (Array.isArray(rawData?.events)
+            ? rawData.events
+            : (Array.isArray(rawData?.responseData) ? rawData.responseData : []));
+        if (!isMounted) return;
+
+        if (Array.isArray(rows) && rows.length > 0) {
+          const phishingEvents = rows.filter(e => e.type === 'phishing' || e.type === 'suspicious_phishing');
+          const malwareEvents = rows.filter(e => e.type === 'malware' || e.type === 'suspicious_malware');
+          const dlpEvents = rows.filter(e => e.type === 'dlp');
+
+          // Transfer Redis/DB data directly into emailsecurity_widget (and dashboard_widgets)
+          await Promise.all([
+            writeEmailSecurityWidgetDb(currentOrgKey, EMAIL_SECURITY_SECTION_KEYS.EVENTS, rows),
+            writeEmailSecurityWidgetDb(currentOrgKey, EMAIL_SECURITY_SECTION_KEYS.PHISHING, phishingEvents),
+            writeEmailSecurityWidgetDb(currentOrgKey, EMAIL_SECURITY_SECTION_KEYS.MALWARE, malwareEvents),
+            writeEmailSecurityWidgetDb(currentOrgKey, EMAIL_SECURITY_SECTION_KEYS.DLP, dlpEvents),
+            writeWidgetDb(currentOrgKey, WIDGET_KEYS.CP_EVENTS, rows),
+          ]);
+
+          // Verify and render fresh data from IndexedDB emailsecurity_widget
+          const fromDb = await readEmailSecurityWidgetDb(currentOrgKey, EMAIL_SECURITY_SECTION_KEYS.EVENTS);
+          if (isMounted) {
+            const dataToRender = fromDb || rows;
+            setEvents(dataToRender.map(mapEvent));
+            if (r.data.lastSyncedAt) setLastSyncedAt(r.data.lastSyncedAt);
+            setError('');
+          }
+        }
+      } catch (e) {
+        console.warn('[EmailSecurity] 5-7s sync error:', e?.message);
+        if (isMounted && events.length === 0) {
+          setError(e.response?.data?.error || e.message || 'Failed to load events');
+        }
+      } finally {
+        isFetching = false;
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    // Revalidate every 6 seconds (5 to 7s interval)
+    const interval = setInterval(syncFromRedis, 6000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [orgKey]);
 
   const handleSync = async () => {
     setSyncing(true); setSyncMsg(null);
     try {
       await api.post('/harmony/sync-db').catch(() => api.post('/harmony/sync'));
       setSyncMsg({ text: 'Sync complete', ok: true });
-      await loadFromDb();
+      // Fetch fresh data and write directly into emailsecurity_widget
+      const r = await api.get('/harmony/events-db');
+      const rawData = r.data;
+      const rows = Array.isArray(rawData)
+        ? rawData
+        : (Array.isArray(rawData?.events)
+          ? rawData.events
+          : (Array.isArray(rawData?.responseData) ? rawData.responseData : []));
+      if (Array.isArray(rows) && rows.length > 0) {
+        const phishingEvents = rows.filter(e => e.type === 'phishing' || e.type === 'suspicious_phishing');
+        const malwareEvents = rows.filter(e => e.type === 'malware' || e.type === 'suspicious_malware');
+        const dlpEvents = rows.filter(e => e.type === 'dlp');
+
+        await Promise.all([
+          writeEmailSecurityWidgetDb(orgKey, EMAIL_SECURITY_SECTION_KEYS.EVENTS, rows),
+          writeEmailSecurityWidgetDb(orgKey, EMAIL_SECURITY_SECTION_KEYS.PHISHING, phishingEvents),
+          writeEmailSecurityWidgetDb(orgKey, EMAIL_SECURITY_SECTION_KEYS.MALWARE, malwareEvents),
+          writeEmailSecurityWidgetDb(orgKey, EMAIL_SECURITY_SECTION_KEYS.DLP, dlpEvents),
+          writeWidgetDb(orgKey, WIDGET_KEYS.CP_EVENTS, rows),
+        ]);
+        const fromDb = await readEmailSecurityWidgetDb(orgKey, EMAIL_SECURITY_SECTION_KEYS.EVENTS);
+        setEvents((fromDb || rows).map(mapEvent));
+        if (r.data.lastSyncedAt) setLastSyncedAt(r.data.lastSyncedAt);
+        setError('');
+      }
     } catch {
       setSyncMsg({ text: 'Sync failed — configure credentials in Settings', ok: false });
     } finally {
-      setSyncing(false); }
+      setSyncing(false);
+    }
   };
 
   const toggleCard = (key) => setOpenCard(prev => prev === key ? null : key);

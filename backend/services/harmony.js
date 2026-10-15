@@ -1,4 +1,5 @@
 const { getOrgPool } = require('../db');
+const redis = require('../lib/redis');
 
 const CHECKPOINT_AUTH_URL =
   'https://cloudinfra-gw.in.portal.checkpoint.com/auth/external';
@@ -114,6 +115,18 @@ async function syncHarmony(orgSlug, creds, eventTypes = DEFAULT_EVENT_TYPES) {
   console.log(
     `[Harmony sync][org=${orgSlug}] Fetched ${allRecords.length}, upserted ${upserted}`
   );
+
+  // Invalidate Redis cache on fresh sync
+  if (orgSlug) {
+    try {
+      const client = await redis.getRedisClient();
+      if (client) {
+        const cacheKey = redis.buildCacheKey(orgSlug, 'harmony-events');
+        await client.del(cacheKey);
+      }
+    } catch (_) {}
+  }
+
   return {
     fetched: allRecords.length,
     upserted,

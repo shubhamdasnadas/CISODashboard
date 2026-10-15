@@ -85,9 +85,26 @@ async function fetchSentinelOneCustomAlerts(orgSlug) {
 async function fetchHarmonyEvents(orgSlug) {
   const { syncHarmony } = require('./harmony');
   const creds = await readCreds(orgSlug, 'harmony');
-  if (!creds) throw new Error('Harmony not configured');
-  const r = await syncHarmony(orgSlug, creds);
-  return { events: r.events || r, syncedAt: new Date().toISOString() };
+  if (creds) {
+    try {
+      await syncHarmony(orgSlug, creds);
+    } catch (e) {
+      console.warn(`[Harmony sync][org=${orgSlug}] external sync error:`, e.message);
+    }
+  }
+  const pool = getOrgPool(orgSlug);
+  const { rows } = await pool.query(
+    'SELECT * FROM checkpoint_events ORDER BY event_created DESC NULLS LAST, synced_at DESC'
+  );
+  const lastSyncedAt = rows.length > 0 ? rows.reduce((latest, r) => {
+    const t = r.synced_at ? new Date(r.synced_at) : null;
+    return t && (!latest || t > latest) ? t : latest;
+  }, null) : null;
+  return {
+    events: rows,
+    lastSyncedAt: lastSyncedAt?.toISOString() ?? new Date().toISOString(),
+    syncedAt: new Date().toISOString(),
+  };
 }
 
 async function fetchFirewallReports(orgSlug) {

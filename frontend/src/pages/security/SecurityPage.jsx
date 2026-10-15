@@ -44,6 +44,13 @@ export default function SecurityPage() {
     if (newTabId === activeTab) return;
     setActiveTab(newTabId);
     setIsTabTransitioning(true);
+    // Reset scroll to top of scroll container when switching sections
+    const mainEl = document.querySelector('main');
+    if (mainEl) {
+      mainEl.scrollTo({ top: 0, behavior: 'instant' });
+    } else {
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
   };
 
   const getTabStatusText = (tabId) => {
@@ -94,7 +101,7 @@ export default function SecurityPage() {
       </div>
 
       {/* Tab content */}
-      <div className="flex-1 relative min-h-[500px]">
+      <div className="flex-1 relative min-h-[calc(100vh-14rem)]">
         {isTabTransitioning && (
           <PageTransitionLoader
             key={activeTab}
@@ -105,7 +112,13 @@ export default function SecurityPage() {
             onComplete={() => setIsTabTransitioning(false)}
           />
         )}
-        <div className={`transition-opacity duration-200 ${isTabTransitioning ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+        <div
+          className={`transition-opacity duration-200 ${
+            isTabTransitioning
+              ? 'opacity-0 pointer-events-none max-h-[calc(100vh-14rem)] overflow-hidden'
+              : 'opacity-100'
+          }`}
+        >
           {activeTab === 'threats' && <Threats />}
           {activeTab === 'cve'     && <S1Cve />}
           {activeTab === 'agents'  && <S1Agent />}

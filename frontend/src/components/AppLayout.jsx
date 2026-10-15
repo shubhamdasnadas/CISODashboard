@@ -720,7 +720,7 @@ export default function AppLayout() {
               onComplete={() => setTransitionState(prev => ({ ...prev, isTransitioning: false }))}
             />
           )}
-          <div className={`w-full min-h-full transition-opacity duration-200 ${(transitionState.isTransitioning && !isSuperAdminConsole) ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+          <div className={`w-full min-h-full transition-opacity duration-200 ${(transitionState.isTransitioning && !isSuperAdminConsole) ? 'opacity-0 pointer-events-none max-h-[calc(100vh-5rem)] overflow-hidden' : 'opacity-100'}`}>
             {guardedOutlet}
           </div>
         </main>

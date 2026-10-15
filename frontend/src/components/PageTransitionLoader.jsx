@@ -127,52 +127,54 @@ export default function PageTransitionLoader({
 
   return (
     <div className={`${containerPosition} flex flex-col items-center justify-center bg-[var(--background)] bg-app-glow transition-all duration-200 animate-fadeIn will-change-[opacity]`}>
-      {/* Ambient background glow behind logo */}
-      <div className="absolute w-80 h-44 rounded-full bg-gradient-to-r from-blue-600/30 via-indigo-500/30 to-cyan-400/30 blur-3xl pointer-events-none animate-pulse will-change-[transform,opacity]" />
+      <div className="sticky top-1/2 -translate-y-1/2 flex flex-col items-center justify-center my-auto w-full max-w-lg px-4 pointer-events-auto">
+        {/* Ambient background glow behind logo */}
+        <div className="absolute w-80 h-44 rounded-full bg-gradient-to-r from-blue-600/30 via-indigo-500/30 to-cyan-400/30 blur-3xl pointer-events-none animate-pulse will-change-[transform,opacity]" />
 
-      {/* Main Logo Container with Matching Pill Ripple & Lighting Effect */}
-      <div className="relative flex items-center justify-center">
-        {/* Animated Matching Pill Ripple Waves */}
-        <div className="absolute -inset-2.5 rounded-[2rem] bg-gradient-to-r from-blue-500/15 via-indigo-500/20 to-cyan-400/20 animate-ping duration-1000 pointer-events-none will-change-[transform,opacity]" />
-        <div className="absolute -inset-1.5 rounded-[1.75rem] bg-gradient-to-r from-blue-500/30 via-indigo-500/35 to-cyan-400/35 blur-md animate-pulse pointer-events-none will-change-[transform,opacity]" />
+        {/* Main Logo Container with Matching Pill Ripple & Lighting Effect */}
+        <div className="relative flex items-center justify-center">
+          {/* Animated Matching Pill Ripple Waves */}
+          <div className="absolute -inset-2.5 rounded-[2rem] bg-gradient-to-r from-blue-500/15 via-indigo-500/20 to-cyan-400/20 animate-ping duration-1000 pointer-events-none will-change-[transform,opacity]" />
+          <div className="absolute -inset-1.5 rounded-[1.75rem] bg-gradient-to-r from-blue-500/30 via-indigo-500/35 to-cyan-400/35 blur-md animate-pulse pointer-events-none will-change-[transform,opacity]" />
 
-        {/* Central Drishti360 Brand Logo with Direct Cyan/Blue Lighting Glow */}
-        <div className="relative z-10 px-8 py-5 rounded-3xl bg-[var(--card-bg)]/90 backdrop-blur-md flex items-center justify-center shadow-[0_0_35px_rgba(59,130,246,0.35),0_0_60px_rgba(6,182,212,0.25)] border border-cyan-400/30 dark:border-cyan-400/40 transform transition-transform hover:scale-105 animate-logoBounce will-change-[transform]">
-          <img
-            src={drishtiLightImg}
-            alt="Drishti360"
-            className="h-11 w-auto max-w-[220px] object-contain dark:hidden drop-shadow-[0_0_12px_rgba(59,130,246,0.35)]"
-          />
-          <img
-            src={drishtiDarkImg}
-            alt="Drishti360"
-            className="h-11 w-auto max-w-[220px] object-contain hidden dark:block drop-shadow-[0_0_16px_rgba(56,189,248,0.55)]"
-          />
+          {/* Central Drishti360 Brand Logo with Direct Cyan/Blue Lighting Glow */}
+          <div className="relative z-10 px-8 py-5 rounded-3xl bg-[var(--card-bg)]/90 backdrop-blur-md flex items-center justify-center shadow-[0_0_35px_rgba(59,130,246,0.35),0_0_60px_rgba(6,182,212,0.25)] border border-cyan-400/30 dark:border-cyan-400/40 transform transition-transform hover:scale-105 animate-logoBounce will-change-[transform]">
+            <img
+              src={drishtiLightImg}
+              alt="Drishti360"
+              className="h-11 w-auto max-w-[220px] object-contain dark:hidden drop-shadow-[0_0_12px_rgba(59,130,246,0.35)]"
+            />
+            <img
+              src={drishtiDarkImg}
+              alt="Drishti360"
+              className="h-11 w-auto max-w-[220px] object-contain hidden dark:block drop-shadow-[0_0_16px_rgba(56,189,248,0.55)]"
+            />
+          </div>
         </div>
-      </div>
 
-      {/* Brand & Loading Indicator */}
-      <div className="mt-8 text-center z-10 space-y-2 px-4 max-w-sm">
-        <div className="flex items-center justify-center gap-2">
-          <p className="font-extrabold text-lg text-[var(--foreground)] tracking-tight">
-            {title}
+        {/* Brand & Loading Indicator */}
+        <div className="mt-8 text-center z-10 space-y-2 px-4 max-w-sm">
+          <div className="flex items-center justify-center gap-2">
+            <p className="font-extrabold text-lg text-[var(--foreground)] tracking-tight">
+              {title}
+            </p>
+            {badge && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+                {badge}
+              </span>
+            )}
+          </div>
+          <p className="text-xs font-medium text-[var(--muted)] animate-pulse">
+            {currentStatus}
           </p>
-          {badge && (
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
-              {badge}
-            </span>
-          )}
-        </div>
-        <p className="text-xs font-medium text-[var(--muted)] animate-pulse">
-          {currentStatus}
-        </p>
 
-        {/* Real-Time Progress Bar */}
-        <div className="w-56 h-1.5 bg-[var(--card-border)] rounded-full overflow-hidden mx-auto mt-3 border border-indigo-500/20">
-          <div
-            className="h-full bg-gradient-to-r from-indigo-600 via-indigo-400 to-indigo-500 rounded-full shadow-[0_0_10px_rgba(99,102,241,0.8)] transition-all duration-150 ease-out"
-            style={{ width: `${progress}%` }}
-          />
+          {/* Real-Time Progress Bar */}
+          <div className="w-56 h-1.5 bg-[var(--card-border)] rounded-full overflow-hidden mx-auto mt-3 border border-indigo-500/20">
+            <div
+              className="h-full bg-gradient-to-r from-indigo-600 via-indigo-400 to-indigo-500 rounded-full shadow-[0_0_10px_rgba(99,102,241,0.8)] transition-all duration-150 ease-out"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
         </div>
       </div>
     </div>

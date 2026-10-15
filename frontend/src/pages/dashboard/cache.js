@@ -37,14 +37,22 @@ export const WIDGET_KEYS = {
 };
 
 const DB_NAME = 'ciso_dashboard_db';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 export const STORE_NAME = 'dashboard_widgets';
 export const EDR_STORE_NAME = 'edr_widget';
+export const EMAIL_SECURITY_STORE_NAME = 'emailsecurity_widget';
 
 export const EDR_SECTION_KEYS = {
   THREATS: 'threats',
   CVE: 'cve',
   AGENTS: 'agents',
+};
+
+export const EMAIL_SECURITY_SECTION_KEYS = {
+  EVENTS: 'events',
+  PHISHING: 'phishing',
+  MALWARE: 'malware',
+  DLP: 'dlp',
 };
 
 let dbInstance = null;
@@ -101,6 +109,12 @@ export function openDashboardDb() {
           edrStore.createIndex('orgKey', 'orgKey', { unique: false });
           edrStore.createIndex('section', 'section', { unique: false });
           edrStore.createIndex('updatedAt', 'updatedAt', { unique: false });
+        }
+        if (!db.objectStoreNames.contains(EMAIL_SECURITY_STORE_NAME)) {
+          const emailStore = db.createObjectStore(EMAIL_SECURITY_STORE_NAME, { keyPath: 'key' });
+          emailStore.createIndex('orgKey', 'orgKey', { unique: false });
+          emailStore.createIndex('section', 'section', { unique: false });
+          emailStore.createIndex('updatedAt', 'updatedAt', { unique: false });
         }
         // Remove duplicate edr_widgets object store so only edr_widget exists
         if (db.objectStoreNames.contains('edr_widgets')) {
@@ -357,6 +371,112 @@ export async function writeEdrWidgetDb(orgKey, sectionKey, data) {
 }
 
 /**
+ * Read an Email Security section from IndexedDB ('emailsecurity_widget' store)
+ */
+export async function readEmailSecurityWidgetDb(orgKey, sectionKey = EMAIL_SECURITY_SECTION_KEYS.EVENTS) {
+  const safeOrg = String(orgKey || 'default');
+  const cacheKey = `${safeOrg}_emailsecurity_${sectionKey}`;
+
+  if (memoryCache.has(cacheKey)) {
+    return memoryCache.get(cacheKey);
+  }
+
+  const db = await openDashboardDb();
+  if (!db) return null;
+
+  return new Promise((resolve) => {
+    try {
+      const storeName = db.objectStoreNames.contains(EMAIL_SECURITY_STORE_NAME)
+        ? EMAIL_SECURITY_STORE_NAME
+        : STORE_NAME;
+
+      const tx = db.transaction(storeName, 'readonly');
+      const store = tx.objectStore(storeName);
+      const req = store.get(cacheKey);
+
+      req.onsuccess = () => {
+        const val = req.result?.data ?? null;
+        if (val !== null) {
+          memoryCache.set(cacheKey, val);
+        }
+        resolve(val);
+      };
+      req.onerror = () => resolve(null);
+    } catch (err) {
+      console.warn(`[IndexedDB] Read error for emailsecurity ${sectionKey}:`, err?.message);
+      resolve(null);
+    }
+  });
+}
+
+/**
+ * Write an Email Security section to IndexedDB ('emailsecurity_widget' store)
+ */
+export async function writeEmailSecurityWidgetDb(orgKey, sectionKey = EMAIL_SECURITY_SECTION_KEYS.EVENTS, data) {
+  const safeOrg = String(orgKey || 'default');
+  const cacheKey = `${safeOrg}_emailsecurity_${sectionKey}`;
+
+  if (data === null || data === undefined) {
+    memoryCache.delete(cacheKey);
+  } else {
+    memoryCache.set(cacheKey, data);
+  }
+
+  const db = await openDashboardDb();
+  if (!db) return false;
+
+  return new Promise((resolve) => {
+    let finished = false;
+    const finish = (result) => {
+      if (!finished) {
+        finished = true;
+        resolve(result);
+      }
+    };
+    const timer = setTimeout(() => finish(false), 2000);
+
+    try {
+      const storeName = db.objectStoreNames.contains(EMAIL_SECURITY_STORE_NAME)
+        ? EMAIL_SECURITY_STORE_NAME
+        : STORE_NAME;
+
+      const tx = db.transaction(storeName, 'readwrite');
+      const store = tx.objectStore(storeName);
+
+      if (data === null || data === undefined) {
+        store.delete(cacheKey);
+      } else {
+        const cleanData = safeSerialize(data);
+        store.put({
+          key: cacheKey,
+          orgKey: safeOrg,
+          section: sectionKey,
+          data: cleanData,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+
+      tx.oncomplete = () => {
+        clearTimeout(timer);
+        finish(true);
+      };
+      tx.onerror = () => {
+        clearTimeout(timer);
+        finish(false);
+      };
+      tx.onabort = () => {
+        clearTimeout(timer);
+        finish(false);
+      };
+    } catch (err) {
+      clearTimeout(timer);
+      console.warn(`[IndexedDB] Write error for emailsecurity ${sectionKey}:`, err?.message);
+      finish(false);
+    }
+  });
+}
+
+/**
  * Load all widget data from IndexedDB for a given organization
  */
 export async function loadAllWidgetsFromDb(orgKey) {
@@ -535,7 +655,11 @@ export async function saveAllWidgetsToDb(orgKey, agg, source = 'redis') {
     const timer = setTimeout(() => finish(false), 2500);
 
     try {
-      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const availableStores = [STORE_NAME];
+      if (db.objectStoreNames.contains(EDR_STORE_NAME)) availableStores.push(EDR_STORE_NAME);
+      if (db.objectStoreNames.contains(EMAIL_SECURITY_STORE_NAME)) availableStores.push(EMAIL_SECURITY_STORE_NAME);
+
+      const tx = db.transaction(availableStores, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
       const now = new Date().toISOString();
 
@@ -555,38 +679,67 @@ export async function saveAllWidgetsToDb(orgKey, agg, source = 'redis') {
         }
       });
 
-      tx.oncomplete = () => {
-        // Also populate the dedicated edr_widget store
+      // Also populate the dedicated edr_widget store in the same transaction
+      if (db.objectStoreNames.contains(EDR_STORE_NAME)) {
         try {
-          const edrStoreName = db.objectStoreNames.contains(EDR_STORE_NAME)
-            ? EDR_STORE_NAME
-            : null;
-          if (edrStoreName) {
-            const edrTx = db.transaction(edrStoreName, 'readwrite');
-            const edrStore = edrTx.objectStore(edrStoreName);
-            const edrSections = [
-              { key: EDR_SECTION_KEYS.THREATS, data: threats },
-              { key: EDR_SECTION_KEYS.CVE, data: appCve },
-              { key: EDR_SECTION_KEYS.AGENTS, data: agents },
-            ];
-            edrSections.forEach(({ key, data }) => {
-              if (data !== undefined && data !== null) {
-                const clean = safeSerialize(data);
-                edrStore.put({
-                  key: `${safeOrg}_edr_${key}`,
-                  orgKey: safeOrg,
-                  section: key,
-                  data: clean,
-                  updatedAt: now,
-                });
-                memoryCache.set(`${safeOrg}_edr_${key}`, clean);
-              }
-            });
-          }
+          const edrStore = tx.objectStore(EDR_STORE_NAME);
+          const edrSections = [
+            { key: EDR_SECTION_KEYS.THREATS, data: threats },
+            { key: EDR_SECTION_KEYS.CVE, data: appCve },
+            { key: EDR_SECTION_KEYS.AGENTS, data: agents },
+          ];
+          edrSections.forEach(({ key, data }) => {
+            if (data !== undefined && data !== null) {
+              const clean = safeSerialize(data);
+              edrStore.put({
+                key: `${safeOrg}_edr_${key}`,
+                orgKey: safeOrg,
+                section: key,
+                data: clean,
+                updatedAt: now,
+              });
+              memoryCache.set(`${safeOrg}_edr_${key}`, clean);
+            }
+          });
         } catch (edrErr) {
           console.warn('[IndexedDB] edr_widget save error in saveAllWidgetsToDb:', edrErr?.message);
         }
+      }
 
+      // Also populate the dedicated emailsecurity_widget store in the same transaction
+      if (db.objectStoreNames.contains(EMAIL_SECURITY_STORE_NAME)) {
+        try {
+          const emailStore = tx.objectStore(EMAIL_SECURITY_STORE_NAME);
+          const emailEvents = Array.isArray(cpEvents) ? cpEvents : [];
+          const phishingEvents = emailEvents.filter(e => e.type === 'phishing' || e.type === 'suspicious_phishing');
+          const malwareEvents = emailEvents.filter(e => e.type === 'malware' || e.type === 'suspicious_malware');
+          const dlpEvents = emailEvents.filter(e => e.type === 'dlp');
+
+          const emailSections = [
+            { key: EMAIL_SECURITY_SECTION_KEYS.EVENTS, data: emailEvents },
+            { key: EMAIL_SECURITY_SECTION_KEYS.PHISHING, data: phishingEvents },
+            { key: EMAIL_SECURITY_SECTION_KEYS.MALWARE, data: malwareEvents },
+            { key: EMAIL_SECURITY_SECTION_KEYS.DLP, data: dlpEvents },
+          ];
+          emailSections.forEach(({ key, data }) => {
+            if (data !== undefined && data !== null) {
+              const clean = safeSerialize(data);
+              emailStore.put({
+                key: `${safeOrg}_emailsecurity_${key}`,
+                orgKey: safeOrg,
+                section: key,
+                data: clean,
+                updatedAt: now,
+              });
+              memoryCache.set(`${safeOrg}_emailsecurity_${key}`, clean);
+            }
+          });
+        } catch (emailErr) {
+          console.warn('[IndexedDB] emailsecurity_widget save error in saveAllWidgetsToDb:', emailErr?.message);
+        }
+      }
+
+      tx.oncomplete = () => {
         clearTimeout(timer);
         finish(true);
       };
