@@ -22,6 +22,7 @@ import ZohoTicketMatrix from './zoho/ZohoTicketMatrix.jsx';
 import ZohoServiceDeskWidgets from './dashboard/ZohoServiceDeskWidgets.jsx';
 import AllCommonmttr from './CyberHygen/AllCommonmttr.jsx';
 import FrameworkScore from './dashboard/FrameworkScore.jsx';
+import PageTransitionLoader from '../components/PageTransitionLoader.jsx';
 
 // ── Enhanced & New Domain Widgets ──────────────────────────────────────────────
 import ExecutiveKpiStrip from './dashboard/ExecutiveKpiStrip.jsx';
@@ -227,6 +228,10 @@ export default function Dashboard() {
     return Array.isArray(cachedCp) ? cachedCp.map(mapCpEvent) : [];
   });
   const [cpEventsLoading, setCpEventsLoading] = useState(() => !getInMemoryWidget(orgKey, WIDGET_KEYS.CP_EVENTS));
+
+  // ── IndexedDB Data Hydration Gate ───────────────────────────────────────────
+  // Holds PageTransitionLoader until widgets are loaded from IndexedDB upon selecting an organization
+  const [dbLoading, setDbLoading] = useState(true);
 
   // ── Firewall ─────────────────────────────────────────────────────────────────
   const [fwWidgets, setFwWidgets] = useState(() => getInMemoryWidget(orgKey, WIDGET_KEYS.FW_WIDGETS) || []);
@@ -465,12 +470,26 @@ export default function Dashboard() {
     const currentOrgKey = orgKey;
     let isMounted = true;
     let isFetching = false;
+    const loadStart = Date.now();
+
+    // Start with loading screen while hydrating data from IndexedDB
+    setDbLoading(true);
+
+    // Safety watchdog: ensure loader never hangs if IndexedDB or network has an unexpected delay
+    const safetyTimer = setTimeout(() => {
+      if (isMounted) setDbLoading(false);
+    }, 3000);
 
     // 1. Instantly read and render UI from IndexedDB (0ms delay)
     loadAllWidgetsFromDb(currentOrgKey).then((cached) => {
       if (!isMounted) return;
       if (cached && cached.hasCache) {
         applyDbDataToState(cached);
+        const elapsed = Date.now() - loadStart;
+        const remaining = Math.max(0, 350 - elapsed);
+        setTimeout(() => {
+          if (isMounted) setDbLoading(false);
+        }, remaining);
       }
       // 2. Fetch from Redis (populate IndexedDB or check for fresh updates)
       syncFromRedis();
@@ -662,6 +681,7 @@ export default function Dashboard() {
           setCustomAlertLoading(false);
           setCpEventsLoading(false); setTicketLoading(false); setMdmLoading(false);
           setLayoutLoaded(true);
+          setDbLoading(false);
         }
       }
     };
@@ -671,6 +691,7 @@ export default function Dashboard() {
 
     return () => {
       isMounted = false;
+      clearTimeout(safetyTimer);
       clearInterval(interval);
     };
   }, [orgKey, applyDbDataToState]);
@@ -1056,6 +1077,21 @@ export default function Dashboard() {
           <h3 className="font-semibold text-amber-800 dark:text-amber-300">No Organization Selected</h3>
           <p className="text-amber-700 dark:text-amber-400 mt-1 text-sm">Select an organization from the top bar to view the dashboard.</p>
         </div>
+      </div>
+    );
+  }
+
+  // ── Loading state: show animated icon loader until data is loaded from IndexedDB ──
+  if (dbLoading) {
+    return (
+      <div className="relative min-h-[calc(100vh-5rem)] w-full flex items-center justify-center">
+        <PageTransitionLoader
+          isLoading={true}
+          fullScreen={false}
+          title={currentOrg?.org_name || 'SecureHub'}
+          badge="Enterprise"
+          statusText="Loading dashboard data from IndexedDB…"
+        />
       </div>
     );
   }
