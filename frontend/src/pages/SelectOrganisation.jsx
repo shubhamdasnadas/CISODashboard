@@ -4,6 +4,8 @@ import api from '../api';
 import * as session from '../utils/session.js';
 import { useOrg } from '../context/OrgContext.jsx';
 import PageTransitionLoader from '../components/PageTransitionLoader.jsx';
+import drishtiLightImg from '../../image/Drishti360DarkMode.png';
+import drishtiDarkImg from '../../image/Drishti360Lightmode.png';
 
 /**
  * Client-side helper to decode and inspect custom binary key format:
@@ -239,7 +241,7 @@ export default function SelectOrganisation() {
       <PageTransitionLoader
         isLoading={true}
         fullScreen={true}
-        title="SecureHub"
+        title="Drishti360"
         badge="Enterprise"
         statusText="Initializing Workspace Telemetry & Dashboard Data…"
       />
@@ -250,15 +252,22 @@ export default function SelectOrganisation() {
     <div className="min-h-screen flex items-center justify-center bg-[var(--background)] p-6 transition-colors duration-200 relative">
       <div className="w-full max-w-2xl bg-[var(--card-bg)] rounded-2xl p-8 border border-[var(--card-border)] shadow-xl">
         {/* Logo */}
-        <div className="flex items-center gap-3 mb-8">
-          <div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center flex-shrink-0">
-            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-            </svg>
+        <div className="flex items-center justify-between gap-4 mb-8">
+          <div className="flex items-center">
+            <img
+              src={drishtiLightImg}
+              alt="Drishti360"
+              className="h-9 w-auto max-w-[180px] object-contain dark:hidden"
+            />
+            <img
+              src={drishtiDarkImg}
+              alt="Drishti360"
+              className="h-9 w-auto max-w-[180px] object-contain hidden dark:block"
+            />
           </div>
-          <div>
-            <h1 className="text-xl font-bold text-[var(--foreground)]">Select Organisation</h1>
-            <p className="text-[var(--muted)] text-sm">Choose which organisation you want to work with</p>
+          <div className="text-right">
+            <h1 className="text-lg font-bold text-[var(--foreground)]">Select Organisation</h1>
+            <p className="text-[var(--muted)] text-xs">Choose which organisation you want to work with</p>
           </div>
         </div>
 

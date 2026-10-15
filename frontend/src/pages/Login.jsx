@@ -4,6 +4,8 @@ import api from '../api';
 import * as session from '../utils/session.js';
 import PageTransitionLoader from '../components/PageTransitionLoader.jsx';
 import OtpNotificationToast from '../components/OtpNotificationToast.jsx';
+import drishtiLightImg from '../../image/Drishti360DarkMode.png';
+import drishtiDarkImg from '../../image/Drishti360Lightmode.png';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -358,7 +360,7 @@ export default function Login() {
         <PageTransitionLoader
           isLoading={true}
           fullScreen={true}
-          title="SecureHub"
+          title="Drishti360"
           badge="Enterprise"
           messages={[
             'Verifying credentials…',
@@ -371,16 +373,18 @@ export default function Login() {
 
       <div className="w-full max-w-md bg-[var(--card-bg)] rounded-2xl p-8 border border-[var(--card-border)] shadow-xl">
         {/* Logo */}
-        <div className="flex items-center gap-3 mb-8">
-          <div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center flex-shrink-0">
-            <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-            </svg>
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-[var(--foreground)]">SecureHub</h1>
-            <p className="text-[var(--muted)] text-sm">Sign in to continue</p>
-          </div>
+        <div className="flex flex-col items-center justify-center gap-2 mb-8">
+          <img
+            src={drishtiLightImg}
+            alt="Drishti360"
+            className="h-10 w-auto max-w-[200px] object-contain dark:hidden"
+          />
+          <img
+            src={drishtiDarkImg}
+            alt="Drishti360"
+            className="h-10 w-auto max-w-[200px] object-contain hidden dark:block"
+          />
+          <p className="text-[var(--muted)] text-xs font-medium">Sign in to continue</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">

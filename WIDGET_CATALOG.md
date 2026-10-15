@@ -1,6 +1,6 @@
 # 🛡️ CISO Dashboard — Comprehensive Page-Wise Widget Catalog & Logic Architecture Guide
 
-This document provides a complete, pointwise architectural reference for every visual widget in the **SecureHub CISO Security Operations & Analytics Platform**, ordered page-by-page from **Dashboard** through **Ticketing**.
+This document provides a complete, pointwise architectural reference for every visual widget in the **Drishti360 CISO Security Operations & Analytics Platform**, ordered page-by-page from **Dashboard** through **Ticketing**.
 
 For every widget across all 8 core domains, this guide details:
 1. **Widget Visual Layout / Mockup**: ASCII visual diagram showcasing structure, controls, metrics, badges, and layout dimensions.
@@ -1736,4 +1736,4 @@ Comprehensive ITIL incident management, MTTR analysis, engineer performance trac
 | **8. Ticketing** | `/zoho` | `Zohoone.jsx`, `ZohoTicketMatrix.jsx` | `GET /api/zoho/tickets-db` | `zoho_tickets` | Zoho Desk REST API |
 
 ---
-*Created as part of the SecureHub CISO Architecture Documentation.*
+*Created as part of the Drishti360 CISO Architecture Documentation.*

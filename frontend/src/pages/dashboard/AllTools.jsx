@@ -1,6 +1,6 @@
 import ToolBubbleChart from './ToolBubbleChart.jsx';
 
-// Catalog of every security tool / data source integrated into SecureHub.
+// Catalog of every security tool / data source integrated into Drishti360.
 // `value` is the live count, injected from the Dashboard aggregate data.
 export const TOOL_CATALOG = [
   { key: 'security',    label: 'EDR',       category: 'Threats',         path: '/dashboard/detail', state: { dataset: 'threats', filterId: 'all', title: 'SentinelOne Threat Telemetry' }, color: '#10b981' },

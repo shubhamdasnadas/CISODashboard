@@ -70,7 +70,7 @@ SMTP_PORT=587
 SMTP_SECURE=false
 SMTP_USER=sithdalvi123@gmail.com
 SMTP_PASS=muttqztelmccmmfz
-SMTP_FROM="SecureHub <sithdalvi123@gmail.com>"
+SMTP_FROM="Drishti360 <sithdalvi123@gmail.com>"
 
 # Frontend URL
 APP_URL=http://localhost:5173

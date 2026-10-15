@@ -224,7 +224,7 @@ export default function OtpVerify() {
         <PageTransitionLoader
           isLoading={true}
           fullScreen={true}
-          title="SecureHub"
+          title="Drishti360"
           badge="Enterprise"
           statusText={
             sendingOtp

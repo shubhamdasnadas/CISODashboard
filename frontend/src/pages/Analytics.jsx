@@ -4307,7 +4307,7 @@ export default function Analytics({ printMode: printModeProp = false }) {
     return (
       <PageTransitionLoader
         isLoading={true}
-        title="SecureHub"
+        title="Drishti360"
         badge="Analytics"
         statusText="Aggregating Analytics & Multi-Module Telemetry…"
       />
@@ -4663,7 +4663,7 @@ export default function Analytics({ printMode: printModeProp = false }) {
             <PageTransitionLoader
               key={activeTab}
               isLoading={true}
-              title="SecureHub"
+              title="Drishti360"
               badge={getTabBadge(activeTab)}
               statusText={getTabStatusText(activeTab)}
               onComplete={() => setIsTabTransitioning(false)}

@@ -99,7 +99,7 @@ export default function SecurityPage() {
           <PageTransitionLoader
             key={activeTab}
             isLoading={true}
-            title="SecureHub"
+            title="Drishti360"
             badge={activeTool}
             statusText={getTabStatusText(activeTab)}
             onComplete={() => setIsTabTransitioning(false)}

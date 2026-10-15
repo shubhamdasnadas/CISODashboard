@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, cloneElement } from 'react';
-import { Outlet, NavLink, Navigate, useNavigate, useLocation, useOutlet } from 'react-router-dom';
+import { NavLink, Navigate, useNavigate, useLocation, useOutlet } from 'react-router-dom';
 import api from '../api';
 import * as session from '../utils/session.js';
 import { PAGES } from '../constants/navPages.js';
@@ -7,6 +7,8 @@ import { useOrg } from '../context/OrgContext.jsx';
 import { useTheme } from '../context/ThemeContext.jsx';
 import PageTransitionLoader from './PageTransitionLoader.jsx';
 import SuperAdminBanner from './SuperAdminBanner.jsx';
+import drishtiLightImg from '../../image/Drishti360DarkMode.png';
+import drishtiDarkImg from '../../image/Drishti360Lightmode.png';
 
 const NAV = [
   {
@@ -124,7 +126,7 @@ function Sidebar({ mobileOpen, onClose, allowedPages, collapsed = false, onToggl
       <button
         onClick={onToggleCollapse}
         title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        className="hidden lg:flex absolute -right-3 top-14 -translate-y-1/2 w-6 h-6 rounded-full bg-[var(--elevated)] hover:bg-[var(--card-bg)] border border-[var(--sidebar-border)] shadow-md items-center justify-center text-[var(--foreground)] z-50 transition-all duration-200 hover:scale-110 cursor-pointer"
+        className="hidden lg:flex absolute -right-3 top-16 -translate-y-1/2 w-6 h-6 rounded-full bg-[var(--elevated)] hover:bg-[var(--card-bg)] border border-[var(--sidebar-border)] shadow-md items-center justify-center text-[var(--foreground)] z-50 transition-all duration-200 hover:scale-110 cursor-pointer"
       >
         {collapsed ? (
           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -138,28 +140,39 @@ function Sidebar({ mobileOpen, onClose, allowedPages, collapsed = false, onToggl
       </button>
 
       {/* Logo & Header */}
-      <div className={`h-14 px-3 border-b border-[var(--sidebar-border)] flex items-center ${collapsed ? 'justify-center' : 'justify-between'} transition-all flex-shrink-0`}>
+      <div className={`h-16 px-3 border-b border-[var(--sidebar-border)] flex items-center justify-center relative transition-all flex-shrink-0`}>
         {collapsed ? (
-          <div className="w-8 h-8 bg-indigo-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm shadow-indigo-500/30" title="SecureHub Enterprise">
-            <svg className="w-4.5 h-4.5 text-white" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-            </svg>
+          <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" title="Drishti360">
+            <img
+              src={drishtiLightImg}
+              alt="Drishti360"
+              className="h-8 w-auto max-w-[58px] object-contain dark:hidden"
+            />
+            <img
+              src={drishtiDarkImg}
+              alt="Drishti360"
+              className="h-8 w-auto max-w-[58px] object-contain hidden dark:block"
+            />
           </div>
         ) : (
           <>
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 bg-indigo-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm shadow-indigo-500/30">
-                <svg className="w-4.5 h-4.5 text-white" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
-              </div>
-              <div className="truncate">
-                <p className="font-bold text-[var(--foreground)] text-xs leading-tight">SecureHub</p>
-                <p className="text-[10px] text-[var(--muted)] leading-tight">Enterprise Platform</p>
-              </div>
+            <div className="w-full flex items-center justify-center">
+              <img
+                src={drishtiLightImg}
+                alt="Drishti360"
+                className="h-[60px] w-auto max-w-[225px] object-contain scale-110 dark:hidden"
+              />
+              <img
+                src={drishtiDarkImg}
+                alt="Drishti360"
+                className="h-[60px] w-auto max-w-[225px] object-contain scale-110 hidden dark:block"
+              />
             </div>
             {onClose && (
-              <button onClick={onClose} className="lg:hidden p-1.5 rounded-lg hover:bg-[var(--muted-bg)] text-[var(--muted)]">
+              <button
+                onClick={onClose}
+                className="lg:hidden absolute right-2.5 p-1.5 rounded-lg hover:bg-[var(--muted-bg)] text-[var(--muted)]"
+              >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -256,7 +269,7 @@ function Sidebar({ mobileOpen, onClose, allowedPages, collapsed = false, onToggl
 }
 
 function TopBar({ onMenuClick }) {
-  const { organisations, currentOrg, switchOrg, setCurrentOrg } = useOrg();
+  const { organisations, currentOrg, switchOrg } = useOrg();
   const { theme, toggleTheme } = useTheme();
   const user = session.getUser();
   const [open, setOpen] = useState(false);
@@ -319,7 +332,7 @@ function TopBar({ onMenuClick }) {
   };
 
   return (
-    <div className="h-14 topbar-surface flex items-center justify-between px-4 sm:px-6 flex-shrink-0 z-30 transition-colors duration-200">
+    <div className="h-16 topbar-surface flex items-center justify-between px-4 sm:px-6 flex-shrink-0 z-30 transition-colors duration-200">
       {/* Left */}
       <div className="flex items-center gap-3">
         {/* Mobile menu button */}
@@ -701,7 +714,7 @@ export default function AppLayout() {
             <PageTransitionLoader
               key={location.pathname}
               isLoading={true}
-              title="SecureHub"
+              title="Drishti360"
               badge={loaderMeta.badge}
               statusText={loaderMeta.statusText}
               onComplete={() => setTransitionState(prev => ({ ...prev, isTransitioning: false }))}
