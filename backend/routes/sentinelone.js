@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { syncSentinelOne, syncCustomAlerts } = require('../services/sentinelone');
+const redis = require('../lib/redis');
 
 // GET /api/sentinelone/credentials
 router.get('/credentials', async (req, res) => {
@@ -77,6 +78,27 @@ router.post('/sync-custom-alerts', async (req, res) => {
 router.get('/db/threats', async (req, res) => {
   try {
     const { from, to } = req.query;
+    const orgSlug = req.orgSlug;
+    const isUnfiltered = !from && !to;
+
+    // Check Redis cache first for fast response (<10ms)
+    if (isUnfiltered && orgSlug) {
+      try {
+        const client = await redis.getRedisClient();
+        if (client) {
+          const cacheKey = redis.buildCacheKey(orgSlug, 'sentinelone-threats');
+          const hit = await client.get(cacheKey);
+          if (hit) {
+            const parsed = JSON.parse(hit);
+            const threatsList = parsed.threats || parsed;
+            return res.json({ source: 'redis', threats: threatsList });
+          }
+        }
+      } catch (redisErr) {
+        console.warn('[sentinelone/db/threats] Redis read fallback:', redisErr.message);
+      }
+    }
+
     let query = 'SELECT data FROM s1_threats';
     const params = [];
     const conditions = [];
@@ -89,9 +111,22 @@ router.get('/db/threats', async (req, res) => {
       conditions.push(`(data->'threatInfo'->>'createdAt')::date <= $${params.length}::date`);
     }
     if (conditions.length) query += ' WHERE ' + conditions.join(' AND ');
-    query += ' ORDER BY synced_at DESC LIMIT 300';
+    query += ' ORDER BY synced_at DESC';
     const { rows } = await req.orgPool.query(query, params);
-    res.json({ threats: rows.map(r => r.data) });
+    const threats = rows.map(r => r.data);
+
+    // Populate Redis cache so subsequent reads hit Redis instantly
+    if (isUnfiltered && orgSlug) {
+      try {
+        const client = await redis.getRedisClient();
+        if (client) {
+          const cacheKey = redis.buildCacheKey(orgSlug, 'sentinelone-threats');
+          await client.set(cacheKey, JSON.stringify({ threats }), { EX: 300 });
+        }
+      } catch (_) {}
+    }
+
+    res.json({ source: 'postgres', threats });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

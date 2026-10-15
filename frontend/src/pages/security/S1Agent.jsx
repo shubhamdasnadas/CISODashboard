@@ -2,6 +2,15 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 import api from '../../api.js';
+import { useOrg } from '../../context/OrgContext.jsx';
+import {
+  readEdrWidgetDb,
+  writeEdrWidgetDb,
+  EDR_SECTION_KEYS,
+  readWidgetDb,
+  writeWidgetDb,
+  WIDGET_KEYS,
+} from '../dashboard/cache.js';
 import {
   MultiViewChart,
   ChartViewDropdown,
@@ -106,12 +115,64 @@ export default function S1Agent() {
   const [netDays, setNetDays] = useState(30);
   const [scanDays, setScanDays] = useState(30);
 
+  const { currentOrg } = useOrg();
+  const orgKey = currentOrg?.id || currentOrg?.org_slug || 'default';
+
   useEffect(() => {
-    api.get('/sentinelone/db/agents')
-      .then((r) => setAgents(r.data?.agents || r.data?.data || []))
-      .catch(() => { })
-      .finally(() => setLoading(false));
-  }, []);
+    let isMounted = true;
+    let isFetching = false;
+    const currentOrgKey = orgKey;
+
+    // 1. Instantly read and render UI from IndexedDB (0ms delay) - checks edr_widget first
+    readEdrWidgetDb(currentOrgKey, EDR_SECTION_KEYS.AGENTS).then((cached) => {
+      if (!isMounted) return;
+      if (Array.isArray(cached) && cached.length > 0) {
+        setAgents(cached);
+        setLoading(false);
+      } else {
+        readWidgetDb(currentOrgKey, WIDGET_KEYS.S1_AGENTS).then((fallback) => {
+          if (!isMounted) return;
+          if (Array.isArray(fallback) && fallback.length > 0) {
+            setAgents(fallback);
+            setLoading(false);
+          }
+        });
+      }
+      syncFromRedis();
+    });
+
+    // 2. Fetch from Redis / DB and sync to IndexedDB
+    const syncFromRedis = async () => {
+      if (isFetching) return;
+      isFetching = true;
+      try {
+        const r = await api.get('/sentinelone/db/agents');
+        const fresh = r.data?.agents || r.data?.data || [];
+        if (!isMounted) return;
+        if (Array.isArray(fresh)) {
+          await Promise.all([
+            writeEdrWidgetDb(currentOrgKey, EDR_SECTION_KEYS.AGENTS, fresh),
+            writeWidgetDb(currentOrgKey, WIDGET_KEYS.S1_AGENTS, fresh),
+          ]);
+          const fromDb = await readEdrWidgetDb(currentOrgKey, EDR_SECTION_KEYS.AGENTS);
+          if (isMounted) {
+            setAgents(fromDb || fresh);
+          }
+        }
+      } catch (err) {
+        console.warn('[S1Agent] 5-7s sync error:', err?.message);
+      } finally {
+        isFetching = false;
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    const interval = setInterval(syncFromRedis, 6000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [orgKey]);
 
   const inactiveDays = (a) => {
     const d = parseRecordDate(a.lastActiveDate);

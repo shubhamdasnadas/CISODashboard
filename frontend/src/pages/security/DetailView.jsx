@@ -486,8 +486,20 @@ const FILTERS = {
   },
   // Threats dataset filters
   total_threats:    () => true,
-  mitigated:        (t, value) => (t.threatInfo?.mitigationStatus || '').toLowerCase() === (value || '').toLowerCase(),
-  unresolved_threats:       (t) => ['unresolved', 'active'].includes(t.threatInfo?.incidentStatus),
+  mitigated:        (t) => {
+    const s = String(t?.threatInfo?.mitigationStatus || t?.mitigationStatus || '').toLowerCase();
+    const inc = String(t?.threatInfo?.incidentStatus || t?.incidentStatus || '').toLowerCase();
+    const isMit = t?.mitigated === true || t?.status === 'mitigated' || t?.analysis === 'Clean';
+    return s.includes('mitigated') || s.includes('resolved') || s.includes('fixed') || isMit || inc === 'resolved';
+  },
+  unresolved_threats: (t) => {
+    const s = String(t?.threatInfo?.mitigationStatus || t?.mitigationStatus || '').toLowerCase();
+    const inc = String(t?.threatInfo?.incidentStatus || t?.incidentStatus || '').toLowerCase();
+    const isMit = t?.mitigated === true || t?.status === 'mitigated' || t?.analysis === 'Clean';
+    const isMitigated = s.includes('mitigated') || s.includes('resolved') || s.includes('fixed') || isMit || inc === 'resolved';
+    if (isMitigated) return false;
+    return ['unresolved', 'active', 'in_progress', 'open'].includes(inc) || !inc;
+  },
   fileless:         (t) => t.threatInfo?.isFileless === true,
   fileless_type:    (t, value) => {
     // fileless_type value would be 'true' or 'false' from the pie chart

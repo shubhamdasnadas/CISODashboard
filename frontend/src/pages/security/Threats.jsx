@@ -1,6 +1,15 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api.js';
+import { useOrg } from '../../context/OrgContext.jsx';
+import {
+  readEdrWidgetDb,
+  writeEdrWidgetDb,
+  EDR_SECTION_KEYS,
+  readWidgetDb,
+  writeWidgetDb,
+  WIDGET_KEYS,
+} from '../dashboard/cache.js';
 import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 import S1Mttr from '../CyberHygen/S1Mttr.jsx';
 import {
@@ -250,6 +259,9 @@ function MitreMatrix({ matrix, onTechniqueClick, onTacticClick }) {
 
 export default function Threats() {
   const navigate = useNavigate();
+  const { currentOrg } = useOrg();
+  const orgKey = currentOrg?.id || currentOrg?.org_slug || 'default';
+
   const [threats, setThreats] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedDays, setSelectedDays] = useState('all');
@@ -276,13 +288,69 @@ export default function Threats() {
   const [siteDays, setSiteDays] = useState(30);
   const [groupDays, setGroupDays] = useState(30);
 
+  // Multi-tier data synchronization (Redis -> IndexedDB -> UI)
   useEffect(() => {
-    setLoading(true);
-    api.get('/sentinelone/db/threats')
-      .then((r) => setThreats(r.data?.data || r.data?.threats || []))
-      .catch(() => { })
-      .finally(() => setLoading(false));
-  }, []);
+    let isMounted = true;
+    let isFetching = false;
+    const currentOrgKey = orgKey;
+
+    // 1. Instantly read and render UI from IndexedDB (0ms delay) - checks edr_widget first
+    readEdrWidgetDb(currentOrgKey, EDR_SECTION_KEYS.THREATS).then((cached) => {
+      if (!isMounted) return;
+      if (Array.isArray(cached) && cached.length > 0) {
+        setThreats(cached);
+        setLoading(false);
+      } else {
+        readWidgetDb(currentOrgKey, WIDGET_KEYS.S1_THREATS).then((fallback) => {
+          if (!isMounted) return;
+          if (Array.isArray(fallback) && fallback.length > 0) {
+            setThreats(fallback);
+            setLoading(false);
+          }
+        });
+      }
+      // 2. Fetch from Redis (populate IndexedDB or check for fresh updates)
+      syncFromRedis();
+    });
+
+    // 3. 5 to 7s background synchronization loop (Redis -> IndexedDB -> UI)
+    const syncFromRedis = async () => {
+      if (isFetching) return;
+      isFetching = true;
+      try {
+        const res = await api.get('/sentinelone/db/threats');
+        const fresh = res.data?.threats || res.data?.data || [];
+        if (!isMounted) return;
+
+        if (Array.isArray(fresh)) {
+          // Transfer Redis/DB data directly into edr_widget (and dashboard_widgets)
+          await Promise.all([
+            writeEdrWidgetDb(currentOrgKey, EDR_SECTION_KEYS.THREATS, fresh),
+            writeWidgetDb(currentOrgKey, WIDGET_KEYS.S1_THREATS, fresh),
+          ]);
+
+          // Verify and render fresh data from IndexedDB edr_widget
+          const fromDb = await readEdrWidgetDb(currentOrgKey, EDR_SECTION_KEYS.THREATS);
+          if (isMounted) {
+            setThreats(fromDb || fresh);
+          }
+        }
+      } catch (err) {
+        console.warn('[Threats] 5-7s sync error:', err?.message);
+      } finally {
+        isFetching = false;
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    // Revalidate every 6 seconds (5 to 7s interval)
+    const interval = setInterval(syncFromRedis, 6000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [orgKey]);
 
   // Maps a threat to its creation date (Date or null) for the rolling
   // Line/Area/Comparison views.
@@ -291,8 +359,24 @@ export default function Threats() {
   const computeThreatMetrics = (arr) => {
     if (!arr || arr.length === 0) return { total: 0, mitigated: 0, unresolved: 0, fileless: 0, avgMttd: 0, avgMttm: 0 };
     const total = arr.length;
-    const mitigated = arr.filter((t) => t.threatInfo?.mitigationStatus === 'mitigated').length;
-    const unresolved = arr.filter((t) => ['unresolved', 'active'].includes(t.threatInfo?.incidentStatus)).length;
+
+    // Accurate mitigation check: matches database and executive standard
+    const isMitigated = (t) => {
+      const s = String(t?.threatInfo?.mitigationStatus || t?.mitigationStatus || '').toLowerCase();
+      const inc = String(t?.threatInfo?.incidentStatus || t?.incidentStatus || '').toLowerCase();
+      const isMit = t?.mitigated === true || t?.status === 'mitigated' || t?.analysis === 'Clean';
+      return s.includes('mitigated') || s.includes('resolved') || s.includes('fixed') || isMit || inc === 'resolved';
+    };
+
+    const mitigated = arr.filter(isMitigated).length;
+
+    // Unresolved: threats that are still active / open / unresolved and NOT yet mitigated
+    const unresolved = arr.filter((t) => {
+      if (isMitigated(t)) return false;
+      const inc = String(t?.threatInfo?.incidentStatus || t?.incidentStatus || '').toLowerCase();
+      return ['unresolved', 'active', 'in_progress', 'open'].includes(inc) || !inc;
+    }).length;
+
     const fileless = arr.filter((t) => t.threatInfo?.isFileless).length;
 
     let mttdSum = 0, mttdCount = 0;
@@ -641,6 +725,7 @@ export default function Threats() {
           cur={curKpis.unresolved}
           prev={prevKpis?.unresolved}
           accent="#ef4444"
+          subtitle={`${curKpis.total > 0 ? Math.round((curKpis.unresolved / curKpis.total) * 100) : 0}% of total`}
           goodWhenUp={false}
           onClick={() => navigate('/security/detail', { state: { dataset: 'threats', filterId: 'unresolved_threats', title: 'Unresolved Threats' } })}
         />

@@ -111,6 +111,16 @@ async function syncSentinelOne(orgSlug, creds) {
     );
   }
 
+  // Update Redis cache immediately with the fresh synced threats
+  try {
+    const redis = require('../lib/redis');
+    const client = await redis.getRedisClient();
+    if (client) {
+      const cacheKey = redis.buildCacheKey(orgSlug, 'sentinelone-threats');
+      await client.set(cacheKey, JSON.stringify({ threats }), { EX: 300 });
+    }
+  } catch (_) {}
+
   const fetchedAgentIds = new Set(agents.map(a => String(a.id)).filter(Boolean));
   for (const a of agents) {
     const id = a.id || null;

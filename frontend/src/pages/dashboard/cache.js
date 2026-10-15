@@ -37,8 +37,15 @@ export const WIDGET_KEYS = {
 };
 
 const DB_NAME = 'ciso_dashboard_db';
-const DB_VERSION = 1;
-const STORE_NAME = 'dashboard_widgets';
+const DB_VERSION = 3;
+export const STORE_NAME = 'dashboard_widgets';
+export const EDR_STORE_NAME = 'edr_widget';
+
+export const EDR_SECTION_KEYS = {
+  THREATS: 'threats',
+  CVE: 'cve',
+  AGENTS: 'agents',
+};
 
 let dbInstance = null;
 let dbOpenPromise = null;
@@ -88,6 +95,16 @@ export function openDashboardDb() {
           store.createIndex('orgKey', 'orgKey', { unique: false });
           store.createIndex('widgetId', 'widgetId', { unique: false });
           store.createIndex('updatedAt', 'updatedAt', { unique: false });
+        }
+        if (!db.objectStoreNames.contains(EDR_STORE_NAME)) {
+          const edrStore = db.createObjectStore(EDR_STORE_NAME, { keyPath: 'key' });
+          edrStore.createIndex('orgKey', 'orgKey', { unique: false });
+          edrStore.createIndex('section', 'section', { unique: false });
+          edrStore.createIndex('updatedAt', 'updatedAt', { unique: false });
+        }
+        // Remove duplicate edr_widgets object store so only edr_widget exists
+        if (db.objectStoreNames.contains('edr_widgets')) {
+          db.deleteObjectStore('edr_widgets');
         }
       };
 
@@ -228,6 +245,112 @@ export async function writeWidgetDb(orgKey, widgetId, data) {
     } catch (err) {
       clearTimeout(timer);
       console.warn(`[IndexedDB] Write error for ${widgetId}:`, err?.message);
+      finish(false);
+    }
+  });
+}
+
+/**
+ * Read an EDR section from IndexedDB ('edr_widget' store)
+ */
+export async function readEdrWidgetDb(orgKey, sectionKey) {
+  const safeOrg = String(orgKey || 'default');
+  const cacheKey = `${safeOrg}_edr_${sectionKey}`;
+
+  if (memoryCache.has(cacheKey)) {
+    return memoryCache.get(cacheKey);
+  }
+
+  const db = await openDashboardDb();
+  if (!db) return null;
+
+  return new Promise((resolve) => {
+    try {
+      const storeName = db.objectStoreNames.contains(EDR_STORE_NAME)
+        ? EDR_STORE_NAME
+        : STORE_NAME;
+
+      const tx = db.transaction(storeName, 'readonly');
+      const store = tx.objectStore(storeName);
+      const req = store.get(cacheKey);
+
+      req.onsuccess = () => {
+        const val = req.result?.data ?? null;
+        if (val !== null) {
+          memoryCache.set(cacheKey, val);
+        }
+        resolve(val);
+      };
+      req.onerror = () => resolve(null);
+    } catch (err) {
+      console.warn(`[IndexedDB] Read error for edr ${sectionKey}:`, err?.message);
+      resolve(null);
+    }
+  });
+}
+
+/**
+ * Write an EDR section to IndexedDB ('edr_widget' store)
+ */
+export async function writeEdrWidgetDb(orgKey, sectionKey, data) {
+  const safeOrg = String(orgKey || 'default');
+  const cacheKey = `${safeOrg}_edr_${sectionKey}`;
+
+  if (data === null || data === undefined) {
+    memoryCache.delete(cacheKey);
+  } else {
+    memoryCache.set(cacheKey, data);
+  }
+
+  const db = await openDashboardDb();
+  if (!db) return false;
+
+  return new Promise((resolve) => {
+    let finished = false;
+    const finish = (result) => {
+      if (!finished) {
+        finished = true;
+        resolve(result);
+      }
+    };
+    const timer = setTimeout(() => finish(false), 2000);
+
+    try {
+      const storeName = db.objectStoreNames.contains(EDR_STORE_NAME)
+        ? EDR_STORE_NAME
+        : STORE_NAME;
+
+      const tx = db.transaction(storeName, 'readwrite');
+      const store = tx.objectStore(storeName);
+
+      if (data === null || data === undefined) {
+        store.delete(cacheKey);
+      } else {
+        const cleanData = safeSerialize(data);
+        store.put({
+          key: cacheKey,
+          orgKey: safeOrg,
+          section: sectionKey,
+          data: cleanData,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+
+      tx.oncomplete = () => {
+        clearTimeout(timer);
+        finish(true);
+      };
+      tx.onerror = () => {
+        clearTimeout(timer);
+        finish(false);
+      };
+      tx.onabort = () => {
+        clearTimeout(timer);
+        finish(false);
+      };
+    } catch (err) {
+      clearTimeout(timer);
+      console.warn(`[IndexedDB] Write error for edr ${sectionKey}:`, err?.message);
       finish(false);
     }
   });
@@ -433,6 +556,37 @@ export async function saveAllWidgetsToDb(orgKey, agg, source = 'redis') {
       });
 
       tx.oncomplete = () => {
+        // Also populate the dedicated edr_widget store
+        try {
+          const edrStoreName = db.objectStoreNames.contains(EDR_STORE_NAME)
+            ? EDR_STORE_NAME
+            : null;
+          if (edrStoreName) {
+            const edrTx = db.transaction(edrStoreName, 'readwrite');
+            const edrStore = edrTx.objectStore(edrStoreName);
+            const edrSections = [
+              { key: EDR_SECTION_KEYS.THREATS, data: threats },
+              { key: EDR_SECTION_KEYS.CVE, data: appCve },
+              { key: EDR_SECTION_KEYS.AGENTS, data: agents },
+            ];
+            edrSections.forEach(({ key, data }) => {
+              if (data !== undefined && data !== null) {
+                const clean = safeSerialize(data);
+                edrStore.put({
+                  key: `${safeOrg}_edr_${key}`,
+                  orgKey: safeOrg,
+                  section: key,
+                  data: clean,
+                  updatedAt: now,
+                });
+                memoryCache.set(`${safeOrg}_edr_${key}`, clean);
+              }
+            });
+          }
+        } catch (edrErr) {
+          console.warn('[IndexedDB] edr_widget save error in saveAllWidgetsToDb:', edrErr?.message);
+        }
+
         clearTimeout(timer);
         finish(true);
       };

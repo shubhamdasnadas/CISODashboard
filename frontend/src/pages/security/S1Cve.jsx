@@ -1,6 +1,15 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api.js';
+import { useOrg } from '../../context/OrgContext.jsx';
+import {
+  readEdrWidgetDb,
+  writeEdrWidgetDb,
+  EDR_SECTION_KEYS,
+  readWidgetDb,
+  writeWidgetDb,
+  WIDGET_KEYS,
+} from '../dashboard/cache.js';
 import WidgetSkeleton from '../dashboard/WidgetSkeleton.jsx';
 import {
   MultiViewChart, ChartViewDropdown, DaysFilter, DEFAULT_DAY_OPTIONS, useViewState, rangeComparison, withinRange,
@@ -65,15 +74,65 @@ export default function S1Cve() {
   const [impactDays, setImpactDays]     = useState(30);
   const [vendorDays, setVendorDays]     = useState(30);
 
+  const { currentOrg } = useOrg();
+  const orgKey = currentOrg?.id || currentOrg?.org_slug || 'default';
+
   useEffect(() => {
-    api.get('/sentinelone/db/application-cve')
-      .then((r) => {
-        setApps(r.data?.data || r.data?.cves || []);
-        if (r.data?.lastSyncedAt) setLastSync(r.data.lastSyncedAt);
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+    let isMounted = true;
+    let isFetching = false;
+    const currentOrgKey = orgKey;
+
+    // 1. Instantly read and render UI from IndexedDB (0ms delay) - checks edr_widget first
+    readEdrWidgetDb(currentOrgKey, EDR_SECTION_KEYS.CVE).then((cached) => {
+      if (!isMounted) return;
+      if (Array.isArray(cached) && cached.length > 0) {
+        setApps(cached);
+        setLoading(false);
+      } else {
+        readWidgetDb(currentOrgKey, WIDGET_KEYS.S1_APP_CVE).then((fallback) => {
+          if (!isMounted) return;
+          if (Array.isArray(fallback) && fallback.length > 0) {
+            setApps(fallback);
+            setLoading(false);
+          }
+        });
+      }
+      syncFromRedis();
+    });
+
+    // 2. Fetch from Redis / DB and sync to IndexedDB
+    const syncFromRedis = async () => {
+      if (isFetching) return;
+      isFetching = true;
+      try {
+        const r = await api.get('/sentinelone/db/application-cve');
+        const fresh = r.data?.data || r.data?.cves || [];
+        if (!isMounted) return;
+        if (Array.isArray(fresh)) {
+          await Promise.all([
+            writeEdrWidgetDb(currentOrgKey, EDR_SECTION_KEYS.CVE, fresh),
+            writeWidgetDb(currentOrgKey, WIDGET_KEYS.S1_APP_CVE, fresh),
+          ]);
+          const fromDb = await readEdrWidgetDb(currentOrgKey, EDR_SECTION_KEYS.CVE);
+          if (isMounted) {
+            setApps(fromDb || fresh);
+            if (r.data?.lastSyncedAt) setLastSync(r.data.lastSyncedAt);
+          }
+        }
+      } catch (err) {
+        console.warn('[S1Cve] 5-7s sync error:', err?.message);
+      } finally {
+        isFetching = false;
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    const interval = setInterval(syncFromRedis, 6000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [orgKey]);
 
   const dateOfCve = (r) => parseRecordDate(r.detectionDate);
 
