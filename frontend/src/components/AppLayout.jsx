@@ -698,14 +698,14 @@ export default function AppLayout() {
         onToggleCollapse={() => setSidebarCollapsed(v => !v)}
       />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {isSuperAdmin && session.getSuperAdminViewingOrg() && (
+        {/* {isSuperAdmin && session.getSuperAdminViewingOrg() && (
           <SuperAdminBanner
             viewingOrg={session.getSuperAdminViewingOrg()}
             onExit={() => {
               setTransitionState((prev) => ({ ...prev }));
             }}
           />
-        )}
+        )} */}
         <TopBar
           onMenuClick={() => setSidebarOpen(true)}
         />

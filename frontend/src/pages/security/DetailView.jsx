@@ -12,8 +12,23 @@ const yesNo = (v) => (v === true || v === 'true' || v === 1) ? 'Yes' : (v === fa
 
 function parseDate(v) {
   if (!v) return null;
-  const d = new Date(v);
-  return isNaN(d.getTime()) ? null : d;
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  if (typeof v === 'number') {
+    const d = new Date(v < 1e11 ? v * 1000 : v);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (!s || s === '-' || s.toLowerCase() === 'unknown') return null;
+    if (/^\d{10,13}$/.test(s)) {
+      const num = Number(s);
+      const d = new Date(s.length === 10 ? num * 1000 : num);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
 }
 
 const MITRE_FILTERS = new Set(['mitreTechnique', 'mitreTactic']);
@@ -58,14 +73,48 @@ const FIREWALL_COUNT_COLS = ['count', 'nrepeat', 'nsess', 'sessions', 'threats',
 // Raw firewall report keys aren't always self-explanatory — override display
 // labels for known abbreviations while keeping the underlying key for lookup.
 const RAW_COL_LABELS = {
-  nsess: 'Number of sessions',
-  nbytes: 'Bandwidth (Bytes)',
+  '@name': 'Name',
+  name: 'Name',
+  app: 'Application',
+  application: 'Application',
+  sessions: 'Sessions',
+  nsess: 'Sessions',
+  nbytes: 'Bandwidth',
+  bytes: 'Bandwidth',
   threatid: 'Threat ID',
   threat: 'Threat Name',
+  threat_name: 'Threat Name',
   repeatcnt: 'Repeat Count',
   nrepeat: 'Repeat Count',
   risk: 'Risk Score',
+  severity: 'Severity',
+  action: 'Policy Action',
+  rule_action: 'Rule Action',
+  count: 'Event Count',
+  category: 'Category',
+  receive_time: 'Receive Time',
+  'slabbed-receive_time': 'Time Generated',
+  time_generated: 'Time Generated',
+  time: 'Time',
+  date: 'Date',
+  src: 'Source IP',
+  dst: 'Destination IP',
+  sport: 'Source Port',
+  dport: 'Destination Port',
+  proto: 'Protocol',
+  user: 'User / Identity',
+  description: 'Description',
 };
+
+function formatCellBytes(v) {
+  const n = Number(String(v).replace(/,/g, '').trim());
+  if (!Number.isFinite(n) || n === 0) return '0 B';
+  if (n >= 1e12) return `${(n / 1e12).toFixed(2)} TB`;
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)} GB`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)} MB`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)} KB`;
+  return `${n} B`;
+}
 
 function sumFirewallCount(rows) {
   const col = FIREWALL_COUNT_COLS.find((c) => rows.some((r) => r[c] !== undefined && r[c] !== null && r[c] !== ''));
@@ -487,19 +536,30 @@ const FILTERS = {
   cveId:            (c, value) => String(c.cveId || c.cve_id || '').toLowerCase() === String(value || '').toLowerCase(),
   // ── Firewall / Network filters ───────────────────────────────────────────
   app:              (r, value) => {
+    if (!value) return true;
     const name = r['@name'] || r['name'] || r['app'] || r['application'] || '';
-    return String(name).toLowerCase() === String(value || '').toLowerCase() || String(name).toLowerCase().includes(String(value || '').toLowerCase());
+    const n = String(name).toLowerCase().trim();
+    const v = String(value || '').toLowerCase().trim();
+    return n === v || n.includes(v) || v.includes(n);
   },
   action:           (r, value) => {
-    const a = String(r['action'] || r['rule_action'] || '').toLowerCase();
-    return a.includes(String(value || '').toLowerCase());
+    if (!value) return true;
+    const a = String(r['action'] || r['rule_action'] || r['name'] || '').toLowerCase().trim();
+    const v = String(value || '').toLowerCase().trim();
+    return a === v || a.includes(v) || v.includes(a)
+      || (v.includes('allow') && a.includes('allow'))
+      || (v.includes('deny') && a.includes('deny'))
+      || (v.includes('drop') && a.includes('drop'))
+      || (v.includes('reset') && a.includes('reset'));
   },
   threat:           (r, value) => {
-    const t = String(r['threat'] || r['threat_name'] || r['subtype'] || r['threatid'] || r['name'] || r['category'] || '').toLowerCase();
-    const v = String(value || '').toLowerCase();
-    return t.includes(v) || v.includes(t);
+    if (!value) return true;
+    const t = String(r['threat'] || r['threat_name'] || r['subtype'] || r['threatid'] || r['name'] || r['category'] || '').toLowerCase().trim();
+    const v = String(value || '').toLowerCase().trim();
+    return t === v || t.includes(v) || v.includes(t);
   },
   risk:             (r, value) => {
+    if (!value) return true;
     const rk = String(r['risk'] || r['severity'] || r['name'] || '').replace(/risk\s*/i, '').trim();
     const target = String(value || '').replace(/risk\s*/i, '').trim();
     return rk === target || String(r['risk'] || '').includes(target) || (target && String(r['name'] || '').includes(target));
@@ -1399,6 +1459,104 @@ function StandardDetailView({ state = {}, onBack }) {
     return processedRows.slice(start, start + PAGE_SIZE);
   }, [processedRows, currentPage]);
 
+  // Raw rows have no fixed schema — use custom cols/rowFn if provided (e.g.
+  // Zoho), otherwise derive columns from whatever keys are present on the rows.
+  const displayCols = useMemo(() => {
+    if (!config) return [];
+    if (config.cols) return config.cols;
+    if (config.raw) {
+      const keys = Array.from(new Set(rows.flatMap((r) => Object.keys(r || {}))));
+      const cleanKeys = keys.filter((k) => !k.startsWith('_') && k !== 'fill' && k !== 'rowId');
+      const order = [
+        '@name', 'name', 'app', 'application', 'threat', 'threatid',
+        'action', 'rule_action', 'risk', 'severity',
+        'nsess', 'sessions', 'count', 'repeatcnt', 'nrepeat',
+        'nbytes', 'bytes', 'category', 'description', 'src', 'dst', 'sport', 'dport', 'proto',
+        'receive_time', 'slabbed-receive_time', 'time_generated', 'time', 'date'
+      ];
+      cleanKeys.sort((a, b) => {
+        const ia = order.indexOf(a);
+        const ib = order.indexOf(b);
+        if (ia !== -1 && ib !== -1) return ia - ib;
+        if (ia !== -1) return -1;
+        if (ib !== -1) return 1;
+        return a.localeCompare(b);
+      });
+      return cleanKeys;
+    }
+    return [];
+  }, [config, rows]);
+
+  const displayRowFn = useMemo(() => {
+    if (!config) return () => [];
+    if (config.rowFn) return config.rowFn;
+    if (config.raw) return (row) => displayCols.map((c) => row[c]);
+    return () => [];
+  }, [config, displayCols]);
+
+  const renderCellContent = (cell, colKey) => {
+    if (cell === null || cell === undefined || cell === '') return '—';
+    if (typeof cell === 'object') {
+      if (cell instanceof Date) return cell.toLocaleString();
+      return JSON.stringify(cell);
+    }
+    const k = String(colKey || '').toLowerCase();
+    const str = String(cell).trim();
+
+    if (k === 'action' || k === 'rule_action') {
+      const lower = str.toLowerCase();
+      if (lower.includes('allow')) {
+        return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25">Allow</span>;
+      }
+      if (lower.includes('deny')) {
+        return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/25">Deny</span>;
+      }
+      if (lower.includes('drop')) {
+        return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-500/10 text-orange-600 dark:text-orange-400 border border-orange-500/25">Drop</span>;
+      }
+      if (lower.includes('reset')) {
+        return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/25">Reset</span>;
+      }
+    }
+
+    if (k === 'risk') {
+      const num = str.replace(/risk\s*/i, '').trim();
+      const riskColors = {
+        '1': 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25',
+        '2': 'bg-lime-500/10 text-lime-600 dark:text-lime-400 border-lime-500/25',
+        '3': 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/25',
+        '4': 'bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/25',
+        '5': 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/25',
+      };
+      const cls = riskColors[num] || 'bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/25';
+      return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${cls}`}>Risk {num || str}</span>;
+    }
+
+    if (k === 'severity') {
+      const up = str.toUpperCase();
+      if (up === 'CRITICAL') return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/25">Critical</span>;
+      if (up === 'HIGH') return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-500/10 text-orange-600 dark:text-orange-400 border border-orange-500/25">High</span>;
+      if (up === 'MEDIUM') return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/25">Medium</span>;
+      if (up === 'LOW') return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/25">Low</span>;
+    }
+
+    if (k === 'nbytes' || k === 'bytes') {
+      return <span className="font-mono text-xs">{formatCellBytes(cell)}</span>;
+    }
+
+    if (k === 'nsess' || k === 'sessions' || k === 'count' || k === 'repeatcnt' || k === 'nrepeat') {
+      const n = Number(String(cell).replace(/,/g, ''));
+      if (!isNaN(n)) return <span className="font-mono text-xs font-semibold">{n.toLocaleString()}</span>;
+    }
+
+    if (FIREWALL_DATE_COLS.includes(k) || k.includes('time') || k.includes('date')) {
+      const d = parseDate(cell);
+      if (d) return <span className="text-[11px] text-[var(--muted)]">{d.toLocaleString()}</span>;
+    }
+
+    return String(cell);
+  };
+
   if (!config || !filterFn) {
     return (
       <div className="p-6 flex flex-col items-center justify-center min-h-[300px] text-center">
@@ -1416,19 +1574,6 @@ function StandardDetailView({ state = {}, onBack }) {
       </div>
     );
   }
-
-  // Raw rows have no fixed schema — use custom cols/rowFn if provided (e.g.
-  // Zoho), otherwise derive columns from whatever keys are present on the rows.
-  const displayCols = config.cols
-    ? config.cols
-    : config.raw
-      ? Array.from(new Set(rows.flatMap((r) => Object.keys(r))))
-      : config.cols;
-  const displayRowFn = config.rowFn
-    ? config.rowFn
-    : config.raw
-      ? (row) => displayCols.map((c) => row[c])
-      : config.rowFn;
 
   return (
     <div className="p-4 sm:p-6 space-y-4">
@@ -1514,9 +1659,14 @@ function StandardDetailView({ state = {}, onBack }) {
                     const rowClassName = tier ? tier.className : 'hover:bg-[var(--muted-bg)]/60';
                     return (
                       <tr key={i} className={rowClassName}>
-                        {displayRowFn(row).map((cell, j) => (
-                          <td key={j} className={`px-3 py-2 whitespace-nowrap max-w-[220px] truncate ${tier?.coloredText ? '' : 'text-[var(--foreground)]'}`}>{cell ?? '—'}</td>
-                        ))}
+                        {displayRowFn(row).map((cell, j) => {
+                          const colKey = displayCols[j];
+                          return (
+                            <td key={j} className={`px-3 py-2 whitespace-nowrap max-w-[220px] truncate ${tier?.coloredText ? '' : 'text-[var(--foreground)]'}`}>
+                              {config.raw ? renderCellContent(cell, colKey) : (cell ?? '—')}
+                            </td>
+                          );
+                        })}
                       </tr>
                     );
                   })}
