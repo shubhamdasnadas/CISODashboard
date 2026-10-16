@@ -57,7 +57,15 @@ const FIREWALL_COUNT_COLS = ['count', 'nrepeat', 'nsess', 'sessions', 'threats',
 
 // Raw firewall report keys aren't always self-explanatory — override display
 // labels for known abbreviations while keeping the underlying key for lookup.
-const RAW_COL_LABELS = { nsess: 'Number of sessions' };
+const RAW_COL_LABELS = {
+  nsess: 'Number of sessions',
+  nbytes: 'Bandwidth (Bytes)',
+  threatid: 'Threat ID',
+  threat: 'Threat Name',
+  repeatcnt: 'Repeat Count',
+  nrepeat: 'Repeat Count',
+  risk: 'Risk Score',
+};
 
 function sumFirewallCount(rows) {
   const col = FIREWALL_COUNT_COLS.find((c) => rows.some((r) => r[c] !== undefined && r[c] !== null && r[c] !== ''));
@@ -168,6 +176,12 @@ const DATASET_CONFIG = {
   },
   firewall: {
     raw: true,
+    endpoint: '/firewall/reports/top-applications',
+    extract: (r) => {
+      const raw = r.data?.data;
+      const entry = raw?.report?.result?.entry || raw?.response?.result?.entry || raw?.entry || [];
+      return Array.isArray(entry) ? entry : [entry].filter(Boolean);
+    },
     dateField: (row) => getFirstValue(row, FIREWALL_DATE_COLS, null),
   },
   zoho: {
@@ -481,8 +495,14 @@ const FILTERS = {
     return a.includes(String(value || '').toLowerCase());
   },
   threat:           (r, value) => {
-    const t = String(r['threat'] || r['threat_name'] || r['subtype'] || '').toLowerCase();
-    return t.includes(String(value || '').toLowerCase());
+    const t = String(r['threat'] || r['threat_name'] || r['subtype'] || r['threatid'] || r['name'] || r['category'] || '').toLowerCase();
+    const v = String(value || '').toLowerCase();
+    return t.includes(v) || v.includes(t);
+  },
+  risk:             (r, value) => {
+    const rk = String(r['risk'] || r['severity'] || r['name'] || '').replace(/risk\s*/i, '').trim();
+    const target = String(value || '').replace(/risk\s*/i, '').trim();
+    return rk === target || String(r['risk'] || '').includes(target) || (target && String(r['name'] || '').includes(target));
   },
   // Threats dataset filters
   total_threats:    () => true,
@@ -1259,7 +1279,12 @@ function StandardDetailView({ state = {}, onBack }) {
       setLoading(false);
       return;
     }
-    if (config.raw || (state.rows && Array.isArray(state.rows) && state.rows.length > 0)) {
+    if (state.rows && Array.isArray(state.rows) && state.rows.length > 0) {
+      setRows(state.rows);
+      setLoading(false);
+      return;
+    }
+    if (!config.endpoint) {
       setRows(state.rows || []);
       setLoading(false);
       return;

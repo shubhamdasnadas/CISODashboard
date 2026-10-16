@@ -31,6 +31,8 @@ export const WIDGET_KEYS = {
   LAYOUT: 'layout',
   ALL_TOOLS: 'all_tools',
   TOP_APPLICATIONS: 'top_applications',
+  RISK_TREND: 'risk_trend',
+  TOP_ATTACKS: 'top_attacks',
   THREAT_INTEL_CVES: 'threat_intel_cves',
   META: 'meta',
   AGGREGATE: 'aggregate',
@@ -532,6 +534,8 @@ export async function loadAllWidgetsFromDb(orgKey) {
           layout: map[WIDGET_KEYS.LAYOUT] ?? null,
           allTools: map[WIDGET_KEYS.ALL_TOOLS] ?? null,
           topApplications: map[WIDGET_KEYS.TOP_APPLICATIONS] ?? null,
+          riskTrend: map[WIDGET_KEYS.RISK_TREND] ?? null,
+          topAttacks: map[WIDGET_KEYS.TOP_ATTACKS] ?? null,
           threatIntelCves: map[WIDGET_KEYS.THREAT_INTEL_CVES] ?? null,
           aggregate: map[WIDGET_KEYS.AGGREGATE] ?? null,
         });
@@ -594,8 +598,10 @@ export async function saveAllWidgetsToDb(orgKey, agg, source = 'redis') {
   // 7. All Tools summary
   const allTools = root.allTools ?? agg.allTools ?? null;
 
-  // 8. Firewall Top Applications
+  // 8. Firewall Top Applications & Telemetry
   const topApps = root.topApplications ?? root.firewall?.topApplications ?? agg.topApplications ?? firewall.topApplications ?? null;
+  const riskTrend = root.riskTrend ?? root.firewall?.riskTrend ?? agg.riskTrend ?? firewall.riskTrend ?? null;
+  const topAttacks = root.topAttacks ?? root.firewall?.topAttacks ?? agg.topAttacks ?? firewall.topAttacks ?? null;
 
   // 9. Threat Intel CVEs
   const cves = root.threatIntelCves ?? root.nvdCves ?? agg.threatIntelCves ?? null;
@@ -624,6 +630,8 @@ export async function saveAllWidgetsToDb(orgKey, agg, source = 'redis') {
   if (layout) widgetMap[WIDGET_KEYS.LAYOUT] = layout;
   if (allTools) widgetMap[WIDGET_KEYS.ALL_TOOLS] = allTools;
   if (topApps) widgetMap[WIDGET_KEYS.TOP_APPLICATIONS] = topApps;
+  if (riskTrend) widgetMap[WIDGET_KEYS.RISK_TREND] = riskTrend;
+  if (topAttacks) widgetMap[WIDGET_KEYS.TOP_ATTACKS] = topAttacks;
   if (cves) widgetMap[WIDGET_KEYS.THREAT_INTEL_CVES] = cves;
   widgetMap[WIDGET_KEYS.AGGREGATE] = {
     syncedAt: meta.syncedAt,

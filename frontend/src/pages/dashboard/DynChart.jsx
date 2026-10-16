@@ -7,7 +7,7 @@ import { fmtLbl, parseN, fmtBytes, fmtBytesShort, isTimeCol, isBytesCol } from '
 const PCOLS = ['#6366f1', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4'];
 const ts = { background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, color: 'var(--foreground)', fontSize: 12 };
 
-export default function DynChart({ rows, xList, yList, chartType }) {
+export default function DynChart({ rows, xList, yList, chartType, onDataClick }) {
   const xColName = xList[0] ?? '';
   const xIsTime = isTimeCol(xColName);
 
@@ -56,7 +56,15 @@ export default function DynChart({ rows, xList, yList, chartType }) {
   if (isMixed) return (
     <div className="w-full h-full min-h-[200px] p-2">
       <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={data} margin={{ top: 10, right: 55, left: 10, bottom: 55 }}>
+        <ComposedChart
+          data={data}
+          margin={{ top: 10, right: 55, left: 10, bottom: 55 }}
+          onClick={(state) => {
+            if (state && state.activePayload && onDataClick) {
+              onDataClick(state.activePayload[0]?.payload);
+            }
+          }}
+        >
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
           <XAxis dataKey="label" tick={{ fontSize: 10, fill: 'var(--muted)' }} angle={-25} textAnchor="end" height={65} interval="preserveStartEnd" />
           <YAxis yAxisId="left"  orientation="left"  tick={{ fontSize: 10, fill: 'var(--muted)' }} tickFormatter={yTickFmt} width={55} />
@@ -65,8 +73,8 @@ export default function DynChart({ rows, xList, yList, chartType }) {
           <Legend wrapperStyle={{ fontSize: 11 }} />
           {yList.map((y, i) =>
             i === 0
-              ? <Bar  key={y} yAxisId="left"  dataKey={y} name={y} fill={PCOLS[i % PCOLS.length]} barSize={24} radius={[4,4,0,0]} />
-              : <Line key={y} yAxisId="right" type="monotone" dataKey={y} name={y} stroke={PCOLS[i % PCOLS.length]} strokeWidth={2} dot={{ r: 3 }} />
+              ? <Bar  key={y} yAxisId="left"  dataKey={y} name={y} fill={PCOLS[i % PCOLS.length]} barSize={24} radius={[4,4,0,0]} cursor={onDataClick ? 'pointer' : undefined} onClick={onDataClick ? (entry) => onDataClick(entry, y) : undefined} />
+              : <Line key={y} yAxisId="right" type="monotone" dataKey={y} name={y} stroke={PCOLS[i % PCOLS.length]} strokeWidth={2} dot={{ r: 4 }} activeDot={{ r: 6 }} cursor={onDataClick ? 'pointer' : undefined} onClick={onDataClick ? (entry) => onDataClick(entry, y) : undefined} />
           )}
         </ComposedChart>
       </ResponsiveContainer>
@@ -76,13 +84,21 @@ export default function DynChart({ rows, xList, yList, chartType }) {
   if (chartType === 'line') return (
     <div className="w-full h-full min-h-[200px] p-2">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 10, right: 20, left: 10, bottom: 55 }}>
+        <LineChart
+          data={data}
+          margin={{ top: 10, right: 20, left: 10, bottom: 55 }}
+          onClick={(state) => {
+            if (state && state.activePayload && onDataClick) {
+              onDataClick(state.activePayload[0]?.payload);
+            }
+          }}
+        >
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
           <XAxis dataKey="label" tick={{ fontSize: 10, fill: 'var(--muted)' }} angle={-25} textAnchor="end" height={65} interval="preserveStartEnd" />
           <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} tickFormatter={yTickFmt} width={55} />
           <Tooltip contentStyle={ts} formatter={tooltipFmt} labelFormatter={tooltipLabelFmt} />
           <Legend wrapperStyle={{ fontSize: 11 }} />
-          {yList.map((y, i) => <Line key={y} type="monotone" dataKey={y} name={y} stroke={PCOLS[i % PCOLS.length]} strokeWidth={2} dot={{ r: 3 }} />)}
+          {yList.map((y, i) => <Line key={y} type="monotone" dataKey={y} name={y} stroke={PCOLS[i % PCOLS.length]} strokeWidth={2} dot={{ r: 4 }} activeDot={{ r: 6 }} cursor={onDataClick ? 'pointer' : undefined} onClick={onDataClick ? (entry) => onDataClick(entry, y) : undefined} />)}
         </LineChart>
       </ResponsiveContainer>
     </div>
@@ -91,13 +107,21 @@ export default function DynChart({ rows, xList, yList, chartType }) {
   return (
     <div className="w-full h-full min-h-[200px] p-2">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 10, right: 20, left: 10, bottom: 55 }}>
+        <BarChart
+          data={data}
+          margin={{ top: 10, right: 20, left: 10, bottom: 55 }}
+          onClick={(state) => {
+            if (state && state.activePayload && onDataClick) {
+              onDataClick(state.activePayload[0]?.payload);
+            }
+          }}
+        >
           <CartesianGrid strokeDasharray="3 3" stroke="var(--card-border)" />
           <XAxis dataKey="label" tick={{ fontSize: 10, fill: 'var(--muted)' }} angle={-25} textAnchor="end" height={65} interval="preserveStartEnd" />
           <YAxis tick={{ fontSize: 10, fill: 'var(--muted)' }} tickFormatter={yTickFmt} width={55} />
           <Tooltip contentStyle={ts} formatter={tooltipFmt} labelFormatter={tooltipLabelFmt} />
           <Legend wrapperStyle={{ fontSize: 11 }} />
-          {yList.map((y, i) => <Bar key={y} dataKey={y} name={y} fill={PCOLS[i % PCOLS.length]} radius={[4,4,0,0]} />)}
+          {yList.map((y, i) => <Bar key={y} dataKey={y} name={y} fill={PCOLS[i % PCOLS.length]} radius={[4,4,0,0]} cursor={onDataClick ? 'pointer' : undefined} onClick={onDataClick ? (entry) => onDataClick(entry, y) : undefined} />)}
         </BarChart>
       </ResponsiveContainer>
     </div>

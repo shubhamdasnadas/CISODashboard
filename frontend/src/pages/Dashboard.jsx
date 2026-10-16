@@ -655,6 +655,8 @@ export default function Dashboard() {
           layout: root.layout ?? agg.layout ?? null,
           allTools: root.allTools ?? agg.allTools ?? null,
           topApplications: root.topApplications ?? root.firewall?.topApplications ?? null,
+          riskTrend: root.riskTrend ?? root.firewall?.riskTrend ?? null,
+          topAttacks: root.topAttacks ?? root.firewall?.topAttacks ?? null,
           threatIntelCves: root.threatIntelCves ?? root.nvdCves ?? null,
           meta: { source, cachedAt: new Date().toISOString() },
         };

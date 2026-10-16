@@ -149,6 +149,7 @@ async function fetchDashboardAggregate(orgSlug) {
     threatsRows, agentsRows, appAgentRows, appCveRows,
     deviceControlRows, rssRows, customAlertRows, harmonyRows, fwWidgetsRows,
     zohoRows, hexnodeRows, fwReportRows, nvdRows,
+    fwRiskRows, fwAttacksRows,
   ] = await Promise.all([
     pool.query('SELECT data FROM s1_threats ORDER BY synced_at DESC LIMIT 300').catch(() => ({ rows: [] })),
     pool.query('SELECT data FROM s1_agents ORDER BY synced_at DESC LIMIT 350').catch(() => ({ rows: [] })),
@@ -163,6 +164,8 @@ async function fetchDashboardAggregate(orgSlug) {
     pool.query('SELECT data FROM hexnode_devices ORDER BY synced_at DESC LIMIT 100').catch(() => ({ rows: [] })),
     pool.query("SELECT data FROM firewall_reports WHERE report_name = 'top-applications' LIMIT 1").catch(() => ({ rows: [] })),
     pool.query("SELECT * FROM nvd ORDER BY published DESC NULLS LAST LIMIT 50").catch(() => ({ rows: [] })),
+    pool.query("SELECT data FROM firewall_reports WHERE report_name = 'risk-trend' LIMIT 1").catch(() => ({ rows: [] })),
+    pool.query("SELECT data FROM firewall_reports WHERE report_name = 'top-attacks' LIMIT 1").catch(() => ({ rows: [] })),
   ]);
 
   // Per-tool current vs previous-month counts (delta drives the badge).
@@ -181,6 +184,20 @@ async function fetchDashboardAggregate(orgSlug) {
     const raw = fwReportRows.rows[0].data;
     const entry = raw?.report?.result?.entry || raw?.response?.result?.entry || raw?.entry || [];
     topApplications = Array.isArray(entry) ? entry : [entry].filter(Boolean);
+  }
+
+  let riskTrend = null;
+  if (fwRiskRows.rows[0]?.data) {
+    const raw = fwRiskRows.rows[0].data;
+    const entry = raw?.report?.result?.entry || raw?.response?.result?.entry || raw?.entry || [];
+    riskTrend = Array.isArray(entry) ? entry : [entry].filter(Boolean);
+  }
+
+  let topAttacks = null;
+  if (fwAttacksRows.rows[0]?.data) {
+    const raw = fwAttacksRows.rows[0].data;
+    const entry = raw?.report?.result?.entry || raw?.response?.result?.entry || raw?.entry || [];
+    topAttacks = Array.isArray(entry) ? entry : [entry].filter(Boolean);
   }
 
   const threatIntelCves = (nvdRows.rows || []).map((c) => ({
@@ -209,10 +226,14 @@ async function fetchDashboardAggregate(orgSlug) {
     firewall: {
       widgets: fwWidgetsRows.rows,
       topApplications,
+      riskTrend,
+      topAttacks,
     },
     ticketing: { tickets },
     mdm: { devices },
     topApplications,
+    riskTrend,
+    topAttacks,
     threatIntelCves,
     allTools,
     syncedAt: new Date().toISOString(),
